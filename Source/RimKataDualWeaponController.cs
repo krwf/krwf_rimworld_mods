@@ -485,7 +485,8 @@ namespace KRWF.RimKata
             bool killIncappedTarget,
             bool closeCombatContext,
             bool progressiveSearchOnly = false,
-            bool closeTargetResolved = false)
+            bool closeTargetResolved = false,
+            bool allowAutomaticRangedFire = true)
         {
             if (pawn?.InMentalState == true)
             {
@@ -498,6 +499,10 @@ namespace KRWF.RimKata
                 Reset(pawn, true);
                 return;
             }
+
+            allowAutomaticRangedFire = allowAutomaticRangedFire
+                && (!pawn.Drafted
+                    || pawn.drafter?.FireAtWill == true);
 
             RimKataPawnCombatState state = StateFor(pawn, true);
             int currentTick = Find.TickManager.TicksGame;
@@ -590,8 +595,14 @@ namespace KRWF.RimKata
                     pawn,
                     state,
                     playerForced,
-                    killIncappedTarget);
+                    killIncappedTarget,
+                    allowAutomaticRangedFire);
                 return;
+            }
+
+            if (!allowAutomaticRangedFire && !closeCombatContext)
+            {
+                SuppressNewAutomaticRangedTargeting(pawn, state);
             }
 
             RimKataSharedTargetSearch.Prune(
@@ -679,8 +690,8 @@ namespace KRWF.RimKata
             bool primaryProgressiveSearch = progressiveSearchOnly && primarySearchOwner;
             bool secondaryProgressiveSearch = progressiveSearchOnly && !primarySearchOwner;
 
-            PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, primaryProgressiveSearch);
-            PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, secondaryProgressiveSearch);
+            PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, primaryProgressiveSearch, allowAutomaticRangedFire);
+            PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, secondaryProgressiveSearch, allowAutomaticRangedFire);
             if (TryPromotePreparedCounterattackJobTarget(
                 pawn,
                 state,
@@ -692,12 +703,12 @@ namespace KRWF.RimKata
 
             if (!blockedByStance && ReadyToAct(state.primaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext);
+                ExecuteCycle(pawn, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire);
             }
 
             if (!blockedByStance && ReadyToAct(state.secondaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext);
+                ExecuteCycle(pawn, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire);
             }
 
             RefreshDualEngagementState(pawn, state);
@@ -1212,6 +1223,57 @@ namespace KRWF.RimKata
             StateFor(pawn, false)?.ClearDraftedMovementSearchTracking();
         }
 
+        private static void SuppressNewAutomaticRangedTargeting(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            if (state == null)
+            {
+                return;
+            }
+
+            bool primaryNeedsSharedSearch =
+                SuppressNewAutomaticRangedTargeting(
+                    pawn,
+                    state.primaryWeaponCycle);
+            bool secondaryNeedsSharedSearch =
+                SuppressNewAutomaticRangedTargeting(
+                    pawn,
+                    state.secondaryWeaponCycle);
+            if (primaryNeedsSharedSearch || secondaryNeedsSharedSearch)
+            {
+                return;
+            }
+
+            state.sharedTargetSearch?.Reset();
+            state.ClearOpeningRingSearch();
+        }
+
+        private static bool SuppressNewAutomaticRangedTargeting(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle)
+        {
+            if (cycle?.weapon == null)
+            {
+                return false;
+            }
+
+            Verb verb = RimKataWeaponSlotUtility.CombatVerb(
+                pawn,
+                cycle.weapon);
+            if (verb?.IsMeleeAttack == true)
+            {
+                return true;
+            }
+
+            cycle.ClearAutomaticCandidates();
+            cycle.cachedCandidateTarget = null;
+            cycle.cachedCandidateInterception = false;
+            cycle.StopProgressiveSearch();
+            cycle.candidateRetryTicks = 0;
+            return false;
+        }
+
         private static bool MovingFireEnabledForPawn(Pawn pawn)
         {
             return RimKataMod.Settings?.movingFireEnabled != false;
@@ -1661,7 +1723,8 @@ namespace KRWF.RimKata
             Pawn pawn,
             RimKataPawnCombatState state,
             bool playerForced,
-            bool killIncappedTarget)
+            bool killIncappedTarget,
+            bool allowAutomaticRangedFire)
         {
             RimKataWeaponCycleState openingCycle = OpeningCycle(state);
             RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
@@ -1738,7 +1801,8 @@ namespace KRWF.RimKata
                 killIncappedTarget,
                 closeContext,
                 false,
-                false);
+                false,
+                allowAutomaticRangedFire);
             bool openingFiresThisTick =
                 pawn.stances?.curStance is Stance_Warmup openingWarmup
                 && openingWarmup.verb == RimKataWeaponSlotUtility.CombatVerb(
@@ -1755,7 +1819,8 @@ namespace KRWF.RimKata
                     supportAssignedTarget,
                     playerForced && supportAssignedTarget != null,
                     killIncappedTarget,
-                    closeContext);
+                    closeContext,
+                    allowAutomaticRangedFire);
             }
         }
 
@@ -4372,16 +4437,30 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Thing targetThing = cycle.cooldownTicksRemaining > 0
-                && cycle.visualTarget != null
-                && cycle.visualTarget.Spawned
-                && !cycle.visualTarget.Destroyed
+            Thing liveVisualTarget = IsLiveVisualTarget(
+                    pawn,
+                    cycle.visualTarget)
                 ? cycle.visualTarget
-                : cycle.plannedTarget ?? cycle.visualTarget;
+                : null;
+            if (cycle.visualTarget != null && liveVisualTarget == null)
+            {
+                cycle.visualTarget = null;
+            }
+
+            Thing livePlannedTarget = IsLiveVisualTarget(
+                    pawn,
+                    cycle.plannedTarget)
+                ? cycle.plannedTarget
+                : null;
+            Thing targetThing = cycle.cooldownTicksRemaining > 0
+                && liveVisualTarget != null
+                ? liveVisualTarget
+                : livePlannedTarget ?? liveVisualTarget;
             LocalTargetInfo target = targetThing != null && targetThing.Spawned
                 ? new LocalTargetInfo(targetThing)
                 : LocalTargetInfo.Invalid;
-            if (cycle.plannedInterception && cycle.plannedTarget is Projectile projectile)
+            if (cycle.plannedInterception
+                && livePlannedTarget is Projectile projectile)
             {
                 target = new LocalTargetInfo(projectile.ExactPosition.ToIntVec3());
             }
@@ -4396,6 +4475,16 @@ namespace KRWF.RimKata
                 cooldownTicksRemaining = Mathf.Max(0, cycle.cooldownTicksRemaining)
             };
             return target.IsValid || cycle.cooldownTicksRemaining > 0;
+        }
+
+        private static bool IsLiveVisualTarget(Pawn pawn, Thing target)
+        {
+            return pawn?.Map != null
+                && target != null
+                && !target.Destroyed
+                && target.Spawned
+                && target.Map == pawn.Map
+                && (!(target is Pawn targetPawn) || !targetPawn.Dead);
         }
 
         public static bool TryGetIndicatorVisualData(
@@ -4976,7 +5065,8 @@ namespace KRWF.RimKata
             bool killIncappedTarget,
             bool closeCombatContext,
             bool blockedByStance,
-            bool progressiveSearchOnly)
+            bool progressiveSearchOnly,
+            bool allowAutomaticRangedFire = true)
         {
             Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
                 pawn,
@@ -4992,6 +5082,11 @@ namespace KRWF.RimKata
                 cycle.ClearPlan();
                 return false;
             }
+
+            bool newAutomaticRangedAttacksBlocked =
+                !allowAutomaticRangedFire
+                && !closeCombatContext
+                && !verb.IsMeleeAttack;
 
             if (cycle.HasPlan
                 && cycle.plannedTarget?.Spawned == true
@@ -5013,6 +5108,15 @@ namespace KRWF.RimKata
             if (focusedTargetControlsCycle && !cycle.HasPlan)
             {
                 return true;
+            }
+
+            if (newAutomaticRangedAttacksBlocked
+                && !focusedTargetControlsCycle
+                && !cycle.HasPlan)
+            {
+                cycle.StopProgressiveSearch();
+                return cycle.cooldownTicksRemaining > 0
+                    || cycle.visualAimTicksRemaining > 0;
             }
 
             if (!focusedTargetControlsCycle
@@ -5228,10 +5332,20 @@ namespace KRWF.RimKata
                 }
 
                 if (!focusedTargetControlsCycle
+                    && !newAutomaticRangedAttacksBlocked
                     && !cycle.progressiveSearchMode)
                 {
                     BeginProgressiveSearch(pawn, cycle, pawn.Position);
                 }
+            }
+
+            if (newAutomaticRangedAttacksBlocked
+                && !focusedTargetControlsCycle
+                && !cycle.HasPlan)
+            {
+                cycle.StopProgressiveSearch();
+                return cycle.cooldownTicksRemaining > 0
+                    || cycle.visualAimTicksRemaining > 0;
             }
 
             if (!focusedTargetControlsCycle
@@ -5268,10 +5382,14 @@ namespace KRWF.RimKata
 
             if (cycle.HasPlan && cycle.warmupTicksRemaining < 0)
             {
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position);
+                if (!newAutomaticRangedAttacksBlocked
+                    || focusedTargetControlsCycle)
+                {
+                    RimKataSharedTargetSearch.Begin(
+                        pawn,
+                        state,
+                        pawn.Position);
+                }
 
                 cycle.skipNextWarmup = false;
                 cycle.plannedActionVerb = ResolveCycleActionVerb(
@@ -6008,7 +6126,8 @@ namespace KRWF.RimKata
             Thing assignedTarget,
             bool playerForced,
             bool killIncappedTarget,
-            bool closeCombatContext)
+            bool closeCombatContext,
+            bool allowAutomaticRangedFire = true)
         {
             Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
                 pawn,
@@ -6056,6 +6175,12 @@ namespace KRWF.RimKata
                 return -1;
             }
             cycle.plannedActionVerb = actionVerb;
+
+            if (!allowAutomaticRangedFire
+                && !actionVerb.IsMeleeAttack)
+            {
+                return -2;
+            }
 
             LocalTargetInfo target = TargetInfo(cycle);
             if (!target.IsValid)
@@ -6166,7 +6291,14 @@ namespace KRWF.RimKata
                 cycle.firedInCurrentOpening = true;
             }
             RecordFirstFiredWeapon(state, cycle.weapon);
-            if (firstShotOfSequence && state != null)
+            bool allowAutomaticContinuation = allowAutomaticRangedFire
+                || playerForced
+                || closeCombatContext
+                || verb.IsMeleeAttack
+                || cycle.focusedTargetFromAttackGizmo;
+            if (firstShotOfSequence
+                && state != null
+                && allowAutomaticContinuation)
             {
                 RimKataSharedTargetSearch.Begin(
                     pawn,
@@ -6204,6 +6336,14 @@ namespace KRWF.RimKata
             cycle.visualAimTicksRemaining = Mathf.Max(RimKataCombatTuning.PostShotAimTicks, cooldown + 2);
             cycle.ClearPlan();
             cycle.postShotCacheAttempted = false;
+
+            if (!allowAutomaticContinuation)
+            {
+                cycle.StopProgressiveSearch();
+                cycle.cachedCandidateTarget = null;
+                cycle.cachedCandidateInterception = false;
+                return cooldown;
+            }
 
             if (!CacheCandidateAfterAttack(
                 pawn,
@@ -6446,6 +6586,13 @@ namespace KRWF.RimKata
                     out ThingWithComps weapon,
                     out LocalTargetInfo target))
             {
+                if (pawn.stances?.curStance is Stance_RimKataAim oldAim
+                    && oldAim.focusTarg.HasThing
+                    && !IsLiveVisualTarget(pawn, oldAim.focusTarg.Thing))
+                {
+                    pawn.stances.SetStance(new Stance_Mobile());
+                }
+
                 return;
             }
 
@@ -6490,8 +6637,10 @@ namespace KRWF.RimKata
         {
             RimKataWeaponCycleState primary = state.primaryWeaponCycle;
             RimKataWeaponCycleState secondary = state.secondaryWeaponCycle;
-            bool primaryHasAim = primary?.plannedTarget != null || primary?.visualTarget != null;
-            bool secondaryHasAim = secondary?.plannedTarget != null || secondary?.visualTarget != null;
+            bool primaryHasAim = IsLiveVisualTarget(pawn, primary?.plannedTarget)
+                || IsLiveVisualTarget(pawn, primary?.visualTarget);
+            bool secondaryHasAim = IsLiveVisualTarget(pawn, secondary?.plannedTarget)
+                || IsLiveVisualTarget(pawn, secondary?.visualTarget);
             if (!secondaryHasAim)
             {
                 return primaryHasAim ? primary : null;

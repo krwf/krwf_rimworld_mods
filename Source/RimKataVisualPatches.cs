@@ -91,13 +91,14 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            IntVec3 direction = target.Position - pawn.Position;
-            if (direction == IntVec3.Zero)
+            Vector3 direction = target.DrawPos - pawn.DrawPos;
+            direction.y = 0f;
+            if (direction.sqrMagnitude <= 0.001f)
             {
                 return false;
             }
 
-            facing = Rot4.FromIntVec3(direction);
+            facing = Rot4.FromAngleFlat(direction.AngleFlat());
             return facing.IsValid;
         }
 
@@ -549,7 +550,7 @@ namespace KRWF.RimKata
                 && verb.verbProps?.drawAimPie == true)
             {
                 int degrees = Mathf.Clamp(visual.warmupTicksRemaining, 1, 360);
-                GenDraw.DrawAimPie(pawn, visual.target, degrees, altitudeOffset);
+                DrawAimPie(pawn, visual.target, degrees, altitudeOffset);
 
                 return;
             }
@@ -578,6 +579,27 @@ namespace KRWF.RimKata
             Graphics.DrawMesh(MeshPool.circle, matrix, BlackCombatIndicatorMaterial, 0);
         }
 
+        private static void DrawAimPie(
+            Pawn pawn,
+            LocalTargetInfo target,
+            int degreesWide,
+            float altitudeOffset)
+        {
+            if (pawn == null
+                || !target.IsValid
+                || degreesWide <= 0)
+            {
+                return;
+            }
+
+            Vector3 center = pawn.DrawPos
+                + new Vector3(0f, altitudeOffset, 0f);
+            GenDraw.DrawAimPieRaw(
+                center,
+                AimPieFacing(pawn, target),
+                Mathf.Min(360, degreesWide));
+        }
+
         private static void DrawBlackAimPie(
             Pawn pawn,
             LocalTargetInfo target,
@@ -592,25 +614,27 @@ namespace KRWF.RimKata
             }
 
             degreesWide = Mathf.Min(360, degreesWide);
-            float facing = 0f;
-            if (target.Cell
-                != pawn.Position)
-            {
-                if (target.HasThing
-                    && target.Thing.Spawned)
-                {
-                    facing = (target.Thing.DrawPos - pawn.Position.ToVector3Shifted()).AngleFlat();
-                }
-                else
-                {
-                    facing = (target.Cell - pawn.Position).AngleFlat;
-                }
-            }
+            float facing = AimPieFacing(pawn, target);
 
             Vector3 center = pawn.DrawPos + new Vector3( 0f, altitudeOffset, 0f);
             center += Quaternion.AngleAxis( facing, Vector3.up) * Vector3.forward * 0.8f;
             Quaternion rotation = Quaternion.AngleAxis( facing + degreesWide / 2f - 90f, Vector3.up);
             Graphics.DrawMesh(MeshPool.pies[degreesWide], center, rotation, BlackCombatIndicatorMaterial, 0);
+        }
+
+        private static float AimPieFacing(
+            Pawn pawn,
+            LocalTargetInfo target)
+        {
+            Vector3 targetPosition = target.HasThing
+                && target.Thing.Spawned
+                    ? target.Thing.DrawPos
+                    : target.Cell.ToVector3Shifted();
+            Vector3 direction = targetPosition - pawn.DrawPos;
+            direction.y = 0f;
+            return direction.sqrMagnitude > 0.001f
+                ? direction.AngleFlat()
+                : 0f;
         }
 
         public static bool ClaimsVanillaCombatCooldown(

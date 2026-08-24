@@ -940,7 +940,6 @@ namespace KRWF.RimKata
                 || projectile.Map != pawn?.Map
                 || projectile.def.projectile?.explosionRadius <= 0f
                 || (bool)LandedField.GetValue(projectile)
-                || projectile.Launcher == null
                 || !IsEnemyProjectileLauncher(pawn, projectile))
             {
                 return false;
@@ -982,20 +981,18 @@ namespace KRWF.RimKata
             Pawn pawn,
             Projectile projectile)
         {
-            Thing launcher = projectile?.Launcher;
-            if (pawn == null
-                || launcher == null
-                || launcher == pawn
-                || !launcher.HostileTo(pawn))
+            if (pawn == null || projectile == null)
             {
                 return false;
             }
 
-            Faction pawnFaction = pawn.Faction;
-            Faction launcherFaction = launcher.Faction;
-            return pawnFaction == null
-                || launcherFaction == null
-                || pawnFaction.HostileTo(launcherFaction);
+            bool defenderHostileToPlayer =
+                pawn.Faction?.HostileTo(Faction.OfPlayer) == true;
+            bool launchedByPlayer =
+                projectile.Launcher?.Faction == Faction.OfPlayer;
+            return defenderHostileToPlayer
+                ? launchedByPlayer
+                : !launchedByPlayer;
         }
 
         internal static bool IsPotentialExplosiveProjectile(

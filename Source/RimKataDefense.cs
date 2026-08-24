@@ -443,13 +443,25 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Thing attacker = dinfo.Instigator;
-            if (attacker == null || attacker == defender)
+            Projectile projectile = RimKataProjectileImpactContext.CurrentProjectile;
+            Thing attacker = projectile?.Launcher ?? dinfo.Instigator;
+            if (closeAttack
+                && (attacker == null
+                    || attacker == defender
+                    || !RimKataTargeting.IsAutomaticEnemy(
+                        defender,
+                        attacker)))
             {
                 return false;
             }
 
-            if (!RimKataTargeting.IsAutomaticEnemy(defender, attacker))
+            Faction defenderFaction = defender.Faction;
+            Faction attackerFaction = attacker?.Faction;
+            if (!closeAttack
+                && (attacker == defender
+                    || (defenderFaction != null
+                        && attackerFaction != null
+                        && defenderFaction == attackerFaction)))
             {
                 return false;
             }
@@ -546,7 +558,7 @@ namespace KRWF.RimKata
                 && TryRangedDodge(
                     defender,
                     attacker,
-                    RimKataProjectileImpactContext.CurrentProjectile))
+                    projectile))
             {
                 RecordProjectileDefense(defender, true);
                 MarkProjectileAvoided(defender);

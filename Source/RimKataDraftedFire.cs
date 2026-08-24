@@ -29,7 +29,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (pawn.drafter?.FireAtWill != true || !IsAutomaticFireJob(pawn.CurJobDef))
+            if (!IsAutomaticFireJob(pawn.CurJobDef))
             {
                 RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
                 if (state?.dedicatedFollowupJobPending == true
@@ -40,6 +40,12 @@ namespace KRWF.RimKata
 
                 ResetIfActive(pawn, state);
                 return;
+            }
+
+            bool automaticRangedFireAllowed = pawn.drafter?.FireAtWill == true;
+            if (!automaticRangedFireAllowed)
+            {
+                RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
             }
 
             if (pawn.IsBurning())
@@ -55,8 +61,8 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool movementSearch = RimKataDualWeaponController
-                .NotifyDraftedMovementCell(pawn);
+            bool movementSearch = automaticRangedFireAllowed
+                && RimKataDualWeaponController.NotifyDraftedMovementCell(pawn);
             state = StateFor(pawn, false);
             bool combatDemand = movementSearch
                 || HasCombatDemand(pawn, state, physicalDodge);
@@ -68,7 +74,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!CanAutoFirePrerequisites(pawn))
+            if (!CanControllerPrerequisites(pawn))
             {
                 ResetIfActive(pawn, state);
                 return;
@@ -105,7 +111,8 @@ namespace KRWF.RimKata
                 false,
                 closeContext,
                 false,
-                true);
+                true,
+                automaticRangedFireAllowed);
         }
 
         public static bool TryApplyResponseCooldown(
@@ -120,7 +127,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!CanAutoFire(pawn, out Verb _))
+            if (!CanControllerPrerequisites(pawn))
             {
                 return false;
             }
@@ -152,7 +159,7 @@ namespace KRWF.RimKata
             }
 
             return IsAutomaticFireJob(pawn?.CurJobDef)
-                && CanAutoFirePrerequisites(pawn)
+                && CanControllerPrerequisites(pawn)
                 && TryOwnAutomaticAttack(pawn, null);
         }
 
@@ -171,7 +178,7 @@ namespace KRWF.RimKata
 
             bool controllerDriven = RimKataDualWeaponController.IsDedicatedFollowupActive(pawn)
                 && (pawn.CurJobDef == RimKataDefOf.RimKata_Attack
-                    || (IsAutomaticFireJob(pawn.CurJobDef) && CanAutoFirePrerequisites(pawn)));
+                    || (IsAutomaticFireJob(pawn.CurJobDef) && CanControllerPrerequisites(pawn)));
             if (!controllerDriven
                 && RimKataDualWeaponController.TryBeginRandomMeleeControl(
                     pawn,
@@ -212,7 +219,7 @@ namespace KRWF.RimKata
                 || attacker.Downed
                 || attacker.Crawling
                 || attacker.IsPsychologicallyInvisible()
-                || !CanAutoFirePrerequisites(target))
+                || !CanControllerPrerequisites(target))
             {
                 return;
             }
@@ -251,54 +258,13 @@ namespace KRWF.RimKata
             return replace;
         }
 
-        private static bool CanAutoFire(Pawn pawn, out Verb verb)
-        {
-            verb = null;
-            return CanAutoFirePrerequisites(pawn) && TryGetAutoFireVerb(pawn, out verb);
-        }
-
-        private static bool CanAutoFirePrerequisites(Pawn pawn)
+        private static bool CanControllerPrerequisites(Pawn pawn)
         {
             return pawn?.Drafted == true
                 && !pawn.InMentalState
                 && !pawn.IsBurning()
-                && pawn.drafter?.FireAtWill == true
                 && IsAutomaticFireJob(pawn.CurJobDef)
                 && RimKataEligibility.CanBeginGunKataAttack(pawn);
-        }
-
-        private static bool TryGetAutoFireVerb(Pawn pawn, out Verb verb)
-        {
-            verb = null;
-            if (pawn == null)
-            {
-                return false;
-            }
-
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-
-            Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
-
-            if (primaryVerb != null && !primaryVerb.IsMeleeAttack)
-            {
-                verb = primaryVerb;
-                return true;
-            }
-
-            ThingWithComps secondary =
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
-
-            Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
-
-            if (secondaryVerb != null && !secondaryVerb.IsMeleeAttack)
-            {
-                verb = secondaryVerb;
-                return true;
-            }
-
-            return false;
         }
 
         private static bool HasCombatDemand(

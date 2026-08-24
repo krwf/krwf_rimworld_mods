@@ -40,9 +40,11 @@ namespace KRWF.RimKata
             IntVec3 targetCell = focusTarg.IsValid ? focusTarg.Cell : IntVec3.Invalid;
             Thing targetThing = focusTarg.HasThing ? focusTarg.Thing : null;
             bool targetUsable = targetThing == null || (targetThing.Spawned && targetThing.Map == pawn?.Map);
+            bool targetCellChanged = targetThing == null
+                && targetCell != lastLeanTargetCell;
             if (leanCacheInitialized
                 && root == lastLeanRoot
-                && targetCell == lastLeanTargetCell
+                && !targetCellChanged
                 && targetThing == lastLeanTargetThing
                 && verb == lastLeanVerb
                 && targetUsable == lastLeanTargetUsable)
