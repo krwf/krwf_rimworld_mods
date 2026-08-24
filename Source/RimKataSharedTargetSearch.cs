@@ -122,6 +122,7 @@ namespace KRWF.RimKata
                 pawn,
                 combatState,
                 combatState.secondaryWeaponCycle);
+            RimKataDebugHUD.RecordSearchIndicator(pawn);
             return true;
         }
 

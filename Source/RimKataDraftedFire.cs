@@ -362,9 +362,6 @@ namespace KRWF.RimKata
             if (state.DodgeMovementActive)
                 reasons += "D";
 
-            if (state.ResponsePoseActive)
-                reasons += "P";
-
             if (state.DebugIncomingThreatStored)
                 reasons += "I";
 
@@ -385,9 +382,6 @@ namespace KRWF.RimKata
 
             if (state.DraftedMovementSearchTriggerPending)
                 reasons += "Q";
-
-            if (state.sharedTargetSearch?.scanActive == true)
-                reasons += "S";
 
             Thing enemyTarget = pawn.mindState?.enemyTarget;
             if (enemyTarget != null

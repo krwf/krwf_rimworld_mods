@@ -60,6 +60,22 @@ namespace KRWF.RimKata
 
         private static readonly Dictionary<Pawn, UPopup> usingPopups = new Dictionary<Pawn, UPopup>();
 
+        private enum LowerPopupType : byte
+        {
+            PrimaryResponse,
+            Search,
+            SecondaryResponse
+        }
+
+        private struct LowerPopup
+        {
+            public int startTick;
+            public LowerPopupType type;
+        }
+
+        private static readonly Dictionary<Pawn, List<LowerPopup>> lowerPopups =
+            new Dictionary<Pawn, List<LowerPopup>>();
+
         private static void UpdateCombatPopup(
             Pawn pawn,
             bool combatActive)
@@ -114,6 +130,74 @@ namespace KRWF.RimKata
             previousUsingState[pawn] = usingRimKata;
         }
 
+        private static void AddLowerPopup(Pawn pawn, LowerPopupType type)
+        {
+            if (!Prefs.DevMode
+                || !Enabled
+                || pawn == null
+                || RimKataEligibility.IsHostileToPlayerFaction(pawn))
+            {
+                return;
+            }
+
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (currentTick < 0)
+            {
+                return;
+            }
+
+            if (!lowerPopups.TryGetValue(pawn, out List<LowerPopup> popups))
+            {
+                popups = new List<LowerPopup>();
+                lowerPopups[pawn] = popups;
+            }
+
+            for (int i = popups.Count - 1; i >= 0; i--)
+            {
+                if (popups[i].startTick == currentTick
+                    && popups[i].type == type)
+                {
+                    return;
+                }
+            }
+
+            popups.Add(new LowerPopup
+            {
+                startTick = currentTick,
+                type = type
+            });
+        }
+
+        internal static void RecordResponseIndicator(
+            Pawn pawn,
+            ThingWithComps weapon)
+        {
+            if (!Prefs.DevMode
+                || !Enabled
+                || pawn == null
+                || weapon == null
+                || RimKataEligibility.IsHostileToPlayerFaction(pawn))
+            {
+                return;
+            }
+
+            if (weapon == RimKataWeaponSlotUtility.PrimaryWeapon(pawn))
+            {
+                AddLowerPopup(pawn, LowerPopupType.PrimaryResponse);
+                return;
+            }
+
+            if (weapon == RimKataWeaponSlotUtility.SecondaryWeapon(pawn))
+            {
+                AddLowerPopup(pawn, LowerPopupType.SecondaryResponse);
+            }
+        }
+
+        internal static void RecordSearchIndicator(Pawn pawn)
+        {
+            AddLowerPopup(pawn, LowerPopupType.Search);
+        }
+
         public RimKataDebugHUD(Game game)
         {
         }
@@ -127,6 +211,7 @@ namespace KRWF.RimKata
                 combatPopups.Clear();
                 previousUsingState.Clear();
                 usingPopups.Clear();
+                lowerPopups.Clear();
             }
         }
 
@@ -259,8 +344,6 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool swapPending = RimKataDualWeaponController.DebugWeaponSwapPending(pawn);
-
             bool cacheKnown = RimKataEligibilityCache.TryGetCachedAccess(pawn, out bool cachedAccess);
 
             bool progressiveSearch = RimKataDualWeaponController.DebugProgressiveSearchActive(pawn);
@@ -336,26 +419,40 @@ namespace KRWF.RimKata
                 + $"_A{primaryType}-{primaryStateText}"
                 + $"_B{secondaryType}-{secondaryStateText}";
 
-            Rect statusRect = new Rect(screenPos.x - 90f, screenPos.y - 37f, 180f, 24f);
-
-            if (progressiveSearch)
-            {
-                Rect searchRect = new Rect(screenPos.x - 100f, screenPos.y - 57f, 30f, 24f);
-
-                Widgets.Label(searchRect, "S");
-            }
-
+            Rect statusRect = new Rect(screenPos.x - 90f, screenPos.y + 34f, 180f, 24f);
             Widgets.Label(statusRect, status);
-            Rect usingRect = new Rect(screenPos.x - 70f, screenPos.y - 57f, 40f, 24f);
+
+            RimKataVisualSnapshot visualSnapshot =
+                pawn.Map?.GetComponent<RimKataMapComponent>()
+                    ?.GetVisualSnapshot(pawn)
+                ?? default(RimKataVisualSnapshot);
+            bool primaryResponse = visualSnapshot.responsePoseActive
+                && visualSnapshot.responsePoseWeapon == primaryWeapon;
+            bool secondaryResponse = visualSnapshot.responsePoseActive
+                && visualSnapshot.responsePoseWeapon == secondaryWeapon;
+
+            Rect primaryIndicatorRect = new Rect(
+                screenPos.x - 48f,
+                screenPos.y + 52f,
+                32f,
+                24f);
+            Rect searchIndicatorRect = new Rect(
+                screenPos.x - 16f,
+                screenPos.y + 52f,
+                32f,
+                24f);
+            Rect secondaryIndicatorRect = new Rect(
+                screenPos.x + 16f,
+                screenPos.y + 52f,
+                32f,
+                24f);
+            Widgets.Label(primaryIndicatorRect, primaryResponse ? "AP" : "A-");
+            Widgets.Label(searchIndicatorRect, progressiveSearch ? "S" : "-");
+            Widgets.Label(secondaryIndicatorRect, secondaryResponse ? "BP" : "B-");
+
+            Rect usingRect = new Rect(screenPos.x - 50f, screenPos.y - 57f, 40f, 24f);
 
             Widgets.Label(usingRect, usingRimKata ? "UT" : "UF");
-
-            if (swapPending)
-            {
-                Rect swapRect = new Rect(screenPos.x - 15f, screenPos.y - 57f, 30f, 24f);
-
-                Widgets.Label(swapRect, "S");
-            }
 
             string combatText =
                 combatActive
@@ -364,12 +461,13 @@ namespace KRWF.RimKata
 
             float combatWidth = Mathf.Max(40f, Text.CalcSize(combatText).x + 8f);
 
-            Rect combatRect = new Rect(screenPos.x + 30f, screenPos.y - 57f, combatWidth, 24f);
+            Rect combatRect = new Rect(screenPos.x + 5f, screenPos.y - 57f, combatWidth, 24f);
 
             Widgets.Label(combatRect, combatText);
 
             DrawUsingPopup(pawn, screenPos);
             DrawCombatPopups(pawn, screenPos);
+            DrawLowerPopups(pawn, screenPos);
 
             Text.Font = oldFont;
             Text.Anchor = oldAnchor;
@@ -610,6 +708,60 @@ namespace KRWF.RimKata
             if (popups.Count == 0)
             {
                 combatPopups.Remove(pawn);
+            }
+        }
+
+        private static void DrawLowerPopups(
+            Pawn pawn,
+            Vector2 basePosition)
+        {
+            if (!lowerPopups.TryGetValue(pawn, out List<LowerPopup> popups))
+            {
+                return;
+            }
+
+            int currentTick = Find.TickManager.TicksGame;
+            for (int i = popups.Count - 1; i >= 0; i--)
+            {
+                LowerPopup popup = popups[i];
+                int elapsed = currentTick - popup.startTick;
+                if (elapsed < 0 || elapsed >= EntryPopupTicks)
+                {
+                    popups.RemoveAt(i);
+                    continue;
+                }
+
+                float progress = elapsed / (float)EntryPopupTicks;
+                float offsetX;
+                string label;
+                switch (popup.type)
+                {
+                    case LowerPopupType.PrimaryResponse:
+                        offsetX = -48f - 30f * progress;
+                        label = "AP";
+                        break;
+                    case LowerPopupType.SecondaryResponse:
+                        offsetX = 16f + 30f * progress;
+                        label = "BP";
+                        break;
+                    default:
+                        offsetX = -16f;
+                        label = "S";
+                        break;
+                }
+
+                float offsetY = 52f + 32f * progress;
+                Rect popupRect = new Rect(
+                    basePosition.x + offsetX,
+                    basePosition.y + offsetY,
+                    32f,
+                    24f);
+                Widgets.Label(popupRect, label);
+            }
+
+            if (popups.Count == 0)
+            {
+                lowerPopups.Remove(pawn);
             }
         }
     }

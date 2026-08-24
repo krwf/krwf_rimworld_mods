@@ -2325,6 +2325,8 @@ namespace KRWF.RimKata
                 state.responsePoseWeapon = weapon;
                 state.responsePoseLookAtFocus = lookAtFocus;
             }
+
+            RimKataDebugHUD.RecordResponseIndicator(pawn, weapon);
         }
 
         public void BeginCloseCombatDodge(Pawn pawn, int durationTicks)
