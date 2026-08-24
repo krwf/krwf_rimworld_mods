@@ -14,7 +14,9 @@ namespace KRWF.RimKata
 
         private static void TickDualWeaponController(Pawn pawn)
         {
-            if (pawn == null || pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
+            if (pawn == null
+                || pawn.InMentalState
+                || pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
             {
                 return;
             }
@@ -157,6 +159,7 @@ namespace KRWF.RimKata
         public static bool TryQueuePhysicalMeleeAttack(Pawn pawn, Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
@@ -257,6 +260,7 @@ namespace KRWF.RimKata
         private static bool CanAutoFirePrerequisites(Pawn pawn)
         {
             return pawn?.Drafted == true
+                && !pawn.InMentalState
                 && !pawn.IsBurning()
                 && pawn.drafter?.FireAtWill == true
                 && IsAutomaticFireJob(pawn.CurJobDef)

@@ -89,6 +89,7 @@ namespace KRWF.RimKata
             RimKataSharedTargetSearchState search =
                 combatState?.sharedTargetSearch;
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || search == null
                 || !origin.IsValid
                 || search.scanActive)
@@ -143,6 +144,7 @@ namespace KRWF.RimKata
             RimKataSharedTargetSearchState search =
                 combatState?.sharedTargetSearch;
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || search?.sessionActive != true
                 || !search.scanActive)
             {
@@ -357,6 +359,7 @@ namespace KRWF.RimKata
             Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || combatState == null
                 || target is Projectile
                 || !RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target))

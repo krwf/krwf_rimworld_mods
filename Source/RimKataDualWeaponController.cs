@@ -487,6 +487,12 @@ namespace KRWF.RimKata
             bool progressiveSearchOnly = false,
             bool closeTargetResolved = false)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             if (pawn?.Map == null || !RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 Reset(pawn, true);
@@ -800,6 +806,7 @@ namespace KRWF.RimKata
             bool fromAttackGizmo = false)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || verb == null
                 || verb.IsMeleeAttack
                 || target == null
@@ -912,6 +919,7 @@ namespace KRWF.RimKata
             Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || verb == null
                 || verb.IsMeleeAttack
                 || target == null
@@ -945,7 +953,8 @@ namespace KRWF.RimKata
             Verb verb,
             Thing target)
         {
-            if (!CanOrderRangedCloseAttack(pawn, verb, target)
+            if (pawn?.InMentalState == true
+                || !CanOrderRangedCloseAttack(pawn, verb, target)
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 return false;
@@ -1066,6 +1075,7 @@ namespace KRWF.RimKata
         public static void QueuePlayerMovementSearch(Pawn pawn)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || pawn.Drafted != true
                 || pawn.drafter?.FireAtWill != true
                 || (pawn.CurJobDef != JobDefOf.Goto
@@ -1212,6 +1222,11 @@ namespace KRWF.RimKata
             Verb verb,
             LocalTargetInfo target)
         {
+            if (pawn?.InMentalState == true)
+            {
+                return false;
+            }
+
             if (RimKataAutomaticCastSuppression.ActiveFor(pawn))
             {
                 return true;
@@ -1418,6 +1433,7 @@ namespace KRWF.RimKata
         {
             RimKataVanillaOpeningAttempt attempt = default(RimKataVanillaOpeningAttempt);
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || verb == null
                 || !castTarget.IsValid
                 || !castTarget.HasThing
@@ -1532,6 +1548,12 @@ namespace KRWF.RimKata
 
         public static void CommitVanillaOpening(Pawn pawn, Verb verb)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             RimKataPawnCombatState state = StateFor(pawn, false);
             RimKataWeaponCycleState openingCycle = CycleForWeapon(
                 state,
@@ -1574,6 +1596,12 @@ namespace KRWF.RimKata
             Verb verb,
             Thing target)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             RimKataPawnCombatState state = StateFor(pawn, false);
             RimKataWeaponCycleState openingCycle = CycleForWeapon(
                 state,
@@ -1609,6 +1637,12 @@ namespace KRWF.RimKata
             Pawn pawn,
             Verb verb)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             RimKataPawnCombatState state = StateFor(pawn, false);
             RimKataWeaponCycleState openingCycle = CycleForWeapon(
                 state,
@@ -2147,6 +2181,7 @@ namespace KRWF.RimKata
             int vanillaCooldownTicks)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || verb == null
                 || firedTarget == null
                 || RimKataFireContext.ActiveVerb != null)
@@ -2244,6 +2279,7 @@ namespace KRWF.RimKata
         public static void NotifyDefensiveCombatEvent(Pawn pawn, Thing attacker)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || attacker == null
                 || attacker.Destroyed
                 || !attacker.Spawned
@@ -2314,6 +2350,7 @@ namespace KRWF.RimKata
         public static bool RegisterAutomaticTarget(Pawn pawn, Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
@@ -2352,6 +2389,7 @@ namespace KRWF.RimKata
             Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
@@ -2390,7 +2428,8 @@ namespace KRWF.RimKata
         public static bool IsDedicatedFollowupActive(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
-            return state?.dualEngagementActive == true
+            return pawn?.InMentalState != true
+                && state?.dualEngagementActive == true
                 && !state.VanillaOpeningPending
                 && HasEngagementContinuity(pawn, state);
         }
@@ -2423,7 +2462,8 @@ namespace KRWF.RimKata
 
         public static bool IsVanillaOpeningActive(Pawn pawn)
         {
-            return StateFor(pawn, false)?.VanillaOpeningPending == true;
+            return pawn?.InMentalState != true
+                && StateFor(pawn, false)?.VanillaOpeningPending == true;
         }
 
         private static bool HasCycleTargetWork(
@@ -2697,6 +2737,7 @@ namespace KRWF.RimKata
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || state == null
                 || state.dedicatedFollowupJobStartInProgress
                 || IsProtectedPlayerForcedJob(pawn.CurJob)
@@ -2711,6 +2752,12 @@ namespace KRWF.RimKata
         public static void TryConsumePendingDedicatedFollowupJob(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             if (state?.dedicatedFollowupJobPending != true)
             {
                 return;
@@ -2788,6 +2835,12 @@ namespace KRWF.RimKata
             Verb sourceVerb,
             LocalTargetInfo sourceTarget)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             RimKataPawnCombatState state = StateFor(pawn, false);
             if (state?.dedicatedFollowupJobPending != true
                 || state.dedicatedFollowupJobStartInProgress
@@ -2825,6 +2878,12 @@ namespace KRWF.RimKata
             bool? playerForcedOverride,
             bool? killIncappedTargetOverride)
         {
+            if (pawn?.InMentalState == true)
+            {
+                CancelOffenseForMentalState(pawn);
+                return;
+            }
+
             RimKataPawnCombatState state = StateFor(pawn, false);
             int currentTick = Find.TickManager?.TicksGame ?? -1;
             if (state?.dedicatedFollowupJobStartInProgress == true
@@ -2943,6 +3002,7 @@ namespace KRWF.RimKata
         public static void MarkPendingCounterattack(Pawn pawn, Thing target)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || pawn.Drafted
                 || target == null
                 || target.Destroyed
@@ -2972,7 +3032,8 @@ namespace KRWF.RimKata
 
         public static bool ConsumeCounterattackMote(Pawn pawn)
         {
-            if (pawn?.Drafted == true
+            if (pawn?.InMentalState == true
+                || pawn?.Drafted == true
                 || !RimKataEligibility.RandomAttackEnabledForPawn(pawn))
             {
                 return false;
@@ -2990,6 +3051,7 @@ namespace KRWF.RimKata
             target = null;
             RimKataPawnCombatState state = StateFor(pawn, false);
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || pawn.Drafted
                 || job?.def != RimKataDefOf.RimKata_Attack
                 || job.playerForced
@@ -3079,7 +3141,8 @@ namespace KRWF.RimKata
             Job sourceJob,
             ThinkNode jobGiver)
         {
-            if ((!(jobGiver is JobGiver_ConfigurableHostilityResponse)
+            if (pawn?.InMentalState == true
+                || (!(jobGiver is JobGiver_ConfigurableHostilityResponse)
                     && !(jobGiver is JobGiver_ReactToCloseMeleeThreat)))
             {
                 return false;
@@ -3230,6 +3293,7 @@ namespace KRWF.RimKata
         {
             Thing target = job?.targetA.Thing;
             return pawn?.Map != null
+                && !pawn.InMentalState
                 && job?.playerForced != true
                 && (job.def == JobDefOf.AttackStatic
                     || job.def == JobDefOf.AttackMelee)
@@ -3249,6 +3313,7 @@ namespace KRWF.RimKata
         public static bool IsCounterattackRimKataSessionActive(Pawn pawn)
         {
             return pawn?.Drafted != true
+                && pawn?.InMentalState != true
                 && RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 && StateFor(pawn, false)?.counterattackRimKataSessionActive
                     == true;
@@ -3445,6 +3510,7 @@ namespace KRWF.RimKata
             Thing target)
         {
             return pawn?.Drafted != true
+                && pawn?.InMentalState != true
                 && RimKataMod.Settings?.targetRushEnabled != false
                 && TargetWithinAutomaticSearchRange(pawn, target);
         }
@@ -3666,6 +3732,7 @@ namespace KRWF.RimKata
         {
             Thing target = job?.targetA.Thing;
             return pawn?.Map != null
+                && !pawn.InMentalState
                 && pawn.Drafted != true
                 && pawn.playerSettings?.UsesConfigurableHostilityResponse == true
                 && pawn.playerSettings.hostilityResponse
@@ -4019,6 +4086,7 @@ namespace KRWF.RimKata
             LocalTargetInfo focus)
         {
             if (pawn?.Map == null
+                || pawn.InMentalState
                 || verb == null
                 || !verb.IsMeleeAttack
                 || !RimKataEligibility.HasRimKataAccess(pawn)
@@ -4490,6 +4558,40 @@ namespace KRWF.RimKata
             state.ClearRushAuthority();
             state.ClearOpeningRingSearch();
             state.ClearCounterattackRimKataSession();
+        }
+
+        public static void CancelOffenseForMentalState(Pawn pawn)
+        {
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state == null || state.mentalStateOffenseSuppressed)
+            {
+                return;
+            }
+
+            state.mentalStateOffenseSuppressed = true;
+            state.CancelDraftedFire(false);
+            state.ClearDraftedMovementSearchTracking();
+            state.CancelCloseCombat();
+            state.pendingCounterattackTarget = null;
+            state.pendingCounterattackTicksRemaining = 0;
+            state.incomingThreatSource = null;
+            state.incomingThreatTicksRemaining = 0;
+            state.ClearCloseAttackRequest();
+            state.automaticAttackRequestTarget = null;
+            state.automaticAttackRequestTicksRemaining = 0;
+            state.dedicatedContinuityTarget = null;
+            state.dedicatedContinuityUntilTick = -1;
+            state.absorbedPathBlockedGotoJobId = -1;
+            state.absorbedPathBlockedThreat = null;
+            state.absorbedPathBlockedRefreshTick = -1;
+            state.loadoutInvalidatedCombatJob = null;
+            state.weaponSwapPending = false;
+            Reset(pawn, false);
+
+            if (pawn?.stances?.curStance is Stance_RimKataAim)
+            {
+                pawn.stances.SetStance(new Stance_Mobile());
+            }
         }
 
         public static void Reset(Pawn pawn, bool clearCooldowns)

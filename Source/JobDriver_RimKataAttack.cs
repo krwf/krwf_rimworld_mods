@@ -155,6 +155,13 @@ namespace KRWF.RimKata
 
         private void CombatTick()
         {
+            if (pawn?.InMentalState == true)
+            {
+                RimKataDualWeaponController.CancelOffenseForMentalState(pawn);
+                EndRimKataJobWith(JobCondition.InterruptForced);
+                return;
+            }
+
             if (RimKataDualWeaponController
                 .ConsumeLoadoutInvalidatedCombatJob(pawn, job))
             {
@@ -616,6 +623,20 @@ namespace KRWF.RimKata
             ThinkNode jobGiver,
             bool fromQueue)
         {
+            if (___pawn?.InMentalState == true)
+            {
+                RimKataDualWeaponController
+                    .CancelOffenseForMentalState(___pawn);
+                if (newJob?.def != RimKataDefOf.RimKata_Attack)
+                {
+                    return true;
+                }
+
+                JobMaker.ReturnToPool(newJob);
+                newJob = null;
+                return false;
+            }
+
             if (RimKataDualWeaponController
                 .TryAbsorbPathBlockedMeleeJob(
                     ___pawn,
@@ -1126,6 +1147,7 @@ namespace KRWF.RimKata
             ref Verb __result)
         {
             if (__instance?.Map == null
+                || __instance.InMentalState
                 || !RimKataEligibility.CanBeginGunKataAttack(__instance)
                 || !RimKataWeaponSlotUtility.CanUseSecondarySlot(__instance)
                 || (__0 != null

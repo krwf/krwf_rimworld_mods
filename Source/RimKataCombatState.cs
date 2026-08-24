@@ -142,6 +142,7 @@ namespace KRWF.RimKata
         public Thing closeAttackRequestTarget;
         public Thing automaticAttackRequestTarget;
         public int automaticAttackRequestTicksRemaining;
+        public bool mentalStateOffenseSuppressed;
 
         public bool VisualActive => pawn != null
             && visualState != RimKataVisualState.None
@@ -1374,20 +1375,29 @@ namespace KRWF.RimKata
                         state.ClearDraftedMovementSearchTracking();
                         state.CancelWeaponCycles();
                     }
-                    else if (!state.pawn.Drafted)
+                    else if (state.pawn.InMentalState)
                     {
                         RimKataDualWeaponController
-                            .RecoverCurrentCounterattackJob(state.pawn);
-                        state.CancelDraftedFire(false);
-                        if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack
-                            && !state.VanillaOpeningPending)
+                            .CancelOffenseForMentalState(state.pawn);
+                    }
+                    else
+                    {
+                        state.mentalStateOffenseSuppressed = false;
+                        if (!state.pawn.Drafted)
                         {
-                            state.ClearDraftedMovementSearchTracking();
-                            RimKataDualWeaponController.DeactivateNonJobCycleWork(
-                                state.pawn);
-                            if (state.pawn.stances?.curStance is Stance_RimKataAim)
+                            RimKataDualWeaponController
+                                .RecoverCurrentCounterattackJob(state.pawn);
+                            state.CancelDraftedFire(false);
+                            if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack
+                                && !state.VanillaOpeningPending)
                             {
-                                state.pawn.stances.SetStance(new Stance_Mobile());
+                                state.ClearDraftedMovementSearchTracking();
+                                RimKataDualWeaponController.DeactivateNonJobCycleWork(
+                                    state.pawn);
+                                if (state.pawn.stances?.curStance is Stance_RimKataAim)
+                                {
+                                    state.pawn.stances.SetStance(new Stance_Mobile());
+                                }
                             }
                         }
                     }
