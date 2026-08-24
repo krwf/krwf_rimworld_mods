@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <KRWF_RimKata_SettingsCategory>RimKata</KRWF_RimKata_SettingsCategory>
+  <KRWF_RimKata_ChanceHeader>전투</KRWF_RimKata_ChanceHeader>
+  <KRWF_RimKata_RangedDodgeChance>원거리 회피 확률</KRWF_RimKata_RangedDodgeChance>
+  <KRWF_RimKata_MeleeResponseChance>근거리 대응 확률</KRWF_RimKata_MeleeResponseChance>
+  <KRWF_RimKata_ResponseDisarmChance>대응 시 무기 탈취 확률</KRWF_RimKata_ResponseDisarmChance>
+  <KRWF_RimKata_MeleeDodgeChance>근접 회피 확률 보너스</KRWF_RimKata_MeleeDodgeChance>
+  <KRWF_RimKata_InterceptionChance>폭발 투사체 요격 확률</KRWF_RimKata_InterceptionChance>
+  <KRWF_RimKata_InterceptionCriticalChance>요격 성공 시 폭발 확률</KRWF_RimKata_InterceptionCriticalChance>
+  <KRWF_RimKata_TimingHeader>보정값</KRWF_RimKata_TimingHeader>
+  <KRWF_RimKata_MovingAccuracyMultiplier>이동 중 명중률 배율</KRWF_RimKata_MovingAccuracyMultiplier>
+  <KRWF_RimKata_ArmorCooldownReduction>허용 방어구 쿨다운 감소율</KRWF_RimKata_ArmorCooldownReduction>
+  <KRWF_RimKata_ResponseCooldownReduction>대응 성공 후 쿨다운 감소율</KRWF_RimKata_ResponseCooldownReduction>
+  <KRWF_RimKata_SerumHeader>감정 마비 혈청 효과</KRWF_RimKata_SerumHeader>
+  <KRWF_RimKata_SerumDodgeMultiplier>원거리 회피 배율</KRWF_RimKata_SerumDodgeMultiplier>
+  <KRWF_RimKata_SerumResponseMultiplier>근거리 대응 배율</KRWF_RimKata_SerumResponseMultiplier>
+  <KRWF_RimKata_SerumInterceptionMultiplier>폭발 투사체 요격 배율</KRWF_RimKata_SerumInterceptionMultiplier>
+  <KRWF_RimKata_SelectedCount>{0}개 선택됨</KRWF_RimKata_SelectedCount>
+  <KRWF_RimKata_EditWeapons>허용 무기 편집</KRWF_RimKata_EditWeapons>
+  <KRWF_RimKata_EditArmor>허용 방어구 편집</KRWF_RimKata_EditArmor>
+  <KRWF_RimKata_MaximumCandidateRange>자동 표적 탐색 최대 거리</KRWF_RimKata_MaximumCandidateRange>
+  <KRWF_RimKata_RangePresetShort>근거리 ({0}칸)</KRWF_RimKata_RangePresetShort>
+  <KRWF_RimKata_RangePresetShortFallback>근거리 (무기 사거리)</KRWF_RimKata_RangePresetShortFallback>
+  <KRWF_RimKata_RangePresetMedium>중거리 ({0}칸)</KRWF_RimKata_RangePresetMedium>
+  <KRWF_RimKata_RangePresetMediumFallback>중거리 (무기 사거리)</KRWF_RimKata_RangePresetMediumFallback>
+  <KRWF_RimKata_RangePresetLong>장거리 ({0}칸)</KRWF_RimKata_RangePresetLong>
+  <KRWF_RimKata_RangePresetLongFallback>장거리 (무기 사거리)</KRWF_RimKata_RangePresetLongFallback>
+  <KRWF_RimKata_RangePresetUnlimited>제한 없음 (무기 사거리)</KRWF_RimKata_RangePresetUnlimited>
+  <KRWF_RimKata_RangePresetCustom>직접 입력</KRWF_RimKata_RangePresetCustom>
+  <KRWF_RimKata_CellUnit>칸</KRWF_RimKata_CellUnit>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>대응 성공 시 무기 내구도 소모 확률</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>대응 성공 시 무기 내구도 소모 값</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
+  <KRWF_RimKata_CreepJoinerDependencyGeneChance>크립조이너 {0} 유전자 확률</KRWF_RimKata_CreepJoinerDependencyGeneChance>
+  <KRWF_RimKata_AiSecondaryWeaponChance>AI 림 보조 무기 생성 확률</KRWF_RimKata_AiSecondaryWeaponChance>
+  <KRWF_RimKata_VisualsHeader>연출</KRWF_RimKata_VisualsHeader>
+  <KRWF_RimKata_AppliedValue>적용값</KRWF_RimKata_AppliedValue>
+  <KRWF_RimKata_Minimum>최소값</KRWF_RimKata_Minimum>
+  <KRWF_RimKata_Fixed>고정값</KRWF_RimKata_Fixed>
+  <KRWF_RimKata_ResetSection>초기화</KRWF_RimKata_ResetSection>
+  <KRWF_RimKata_GrowthLabel>{0} ×{1}Lv</KRWF_RimKata_GrowthLabel>
+  <KRWF_RimKata_DurationGrowthLabel>{0} ×-{1}Lv</KRWF_RimKata_DurationGrowthLabel>
+  <KRWF_RimKata_RangedDodgeDuration>기본 원거리 회피 연출 시간</KRWF_RimKata_RangedDodgeDuration>
+  <KRWF_RimKata_ResponseAccidentalFireChance>대응 성공 시 오사 확률</KRWF_RimKata_ResponseAccidentalFireChance>
+  <KRWF_RimKata_WeaponDialogTitle>RimKata 무기</KRWF_RimKata_WeaponDialogTitle>
+  <KRWF_RimKata_ArmorDialogTitle>RimKata 방어구 및 의류</KRWF_RimKata_ArmorDialogTitle>
+  <KRWF_RimKata_Search>검색</KRWF_RimKata_Search>
+  <KRWF_RimKata_WeaponKindFilter>무기 종류</KRWF_RimKata_WeaponKindFilter>
+  <KRWF_RimKata_ApparelKindFilter>의류 종류</KRWF_RimKata_ApparelKindFilter>
+  <KRWF_RimKata_ApparelKindHeadgear>머리 장비</KRWF_RimKata_ApparelKindHeadgear>
+  <KRWF_RimKata_ApparelKindArmor>보호구</KRWF_RimKata_ApparelKindArmor>
+  <KRWF_RimKata_ApparelKindOuterwear>외투</KRWF_RimKata_ApparelKindOuterwear>
+  <KRWF_RimKata_ApparelKindUnderwear>내의</KRWF_RimKata_ApparelKindUnderwear>
+  <KRWF_RimKata_ApparelKindUtility>다용도구</KRWF_RimKata_ApparelKindUtility>
+  <KRWF_RimKata_ApparelKindOther>기타</KRWF_RimKata_ApparelKindOther>
+  <KRWF_RimKata_AllowedStateFilter>허용 여부</KRWF_RimKata_AllowedStateFilter>
+  <KRWF_RimKata_FilterAll>전체</KRWF_RimKata_FilterAll>
+  <KRWF_RimKata_WeaponKindMelee>근접</KRWF_RimKata_WeaponKindMelee>
+  <KRWF_RimKata_WeaponKindRanged>원거리</KRWF_RimKata_WeaponKindRanged>
+  <KRWF_RimKata_AllowedYes>네</KRWF_RimKata_AllowedYes>
+  <KRWF_RimKata_AllowedNo>아니오</KRWF_RimKata_AllowedNo>
+  <KRWF_RimKata_SelectFiltered>필터 결과 모두 선택</KRWF_RimKata_SelectFiltered>
+  <KRWF_RimKata_ClearFiltered>필터 결과 모두 해제</KRWF_RimKata_ClearFiltered>
+  <KRWF_RimKata_NoMatchingDefs>일치하는 장비 정의가 없습니다.</KRWF_RimKata_NoMatchingDefs>
+  <KRWF_RimKata_TwoHandedWeapon>양손 무기</KRWF_RimKata_TwoHandedWeapon>
+  <KRWF_RimKata_ResetSettings>전체 초기화</KRWF_RimKata_ResetSettings>
+  <KRWF_RimKata_OpOn>OP ON</KRWF_RimKata_OpOn>
+  <KRWF_RimKata_OpOff>OP OFF</KRWF_RimKata_OpOff>
+  <KRWF_RimKata_CombatFeatures>전투 요소</KRWF_RimKata_CombatFeatures>
+  <KRWF_RimKata_RemoveRestrictions>제약 해제</KRWF_RimKata_RemoveRestrictions>
+  <KRWF_RimKata_RestoreRestrictions>제약 설정</KRWF_RimKata_RestoreRestrictions>
+  <KRWF_RimKata_RemoveRestrictionsWarning>RimKata를 사용하게 만들어 주는 약물, 초능력, 직위, 유전자를 무시하고 모든 폰이 RimKata를 사용합니다.\n아군 적군 플래그는 적용 됩니다.\n게임 진행에 악영향이 생길 수도 있습니다.</KRWF_RimKata_RemoveRestrictionsWarning>
+  <KRWF_RimKata_RestoreRestrictionsConfirmation>Master of the gun katas</KRWF_RimKata_RestoreRestrictionsConfirmation>
+  <KRWF_RimKata_FeatureSecondaryWeapon>보조 무기</KRWF_RimKata_FeatureSecondaryWeapon>
+  <KRWF_RimKata_FeatureSingleShotConversion>단발로 변경</KRWF_RimKata_FeatureSingleShotConversion>
+  <KRWF_RimKata_FeatureRandomAttack>무작위 공격</KRWF_RimKata_FeatureRandomAttack>
+  <KRWF_RimKata_FeatureExplosiveInterception>수류탄 격추</KRWF_RimKata_FeatureExplosiveInterception>
+  <KRWF_RimKata_FeatureMovingFire>이동 사격</KRWF_RimKata_FeatureMovingFire>
+  <KRWF_RimKata_FeatureCloseFire>근접 사격</KRWF_RimKata_FeatureCloseFire>
+  <KRWF_RimKata_FeatureTargetRush>목표 돌진</KRWF_RimKata_FeatureTargetRush>
+  <KRWF_RimKata_FeatureResponse>대응</KRWF_RimKata_FeatureResponse>
+  <KRWF_RimKata_FeatureRangedDodge>원거리 회피</KRWF_RimKata_FeatureRangedDodge>
+  <KRWF_RimKata_FeatureTumble>공중제비</KRWF_RimKata_FeatureTumble>
+  <KRWF_RimKata_EnableFriendlyPawnEffects>아군에게 RimKata 효과 적용</KRWF_RimKata_EnableFriendlyPawnEffects>
+  <KRWF_RimKata_EnableHostilePawnEffects>적군에게 RimKata 효과 적용</KRWF_RimKata_EnableHostilePawnEffects>
+  <KRWF_RimKata_CooldownVanillaBreakdown>바닐라 원거리 재사용 대기시간 배율 계산:</KRWF_RimKata_CooldownVanillaBreakdown>
+  <KRWF_RimKata_CooldownVanillaFactor>바닐라 원거리 재사용 대기시간 배율: {0}</KRWF_RimKata_CooldownVanillaFactor>
+  <KRWF_RimKata_CooldownArmorFactorApplied>허용 방어구 보정: ×{0} (적용됨)</KRWF_RimKata_CooldownArmorFactorApplied>
+  <KRWF_RimKata_CooldownArmorFactorInactive>허용 방어구 보정: ×100% (착용한 허용 방어구 없음)</KRWF_RimKata_CooldownArmorFactorInactive>
+  <KRWF_RimKata_InspectDualEquipped>장착: 주 {0}, 부 {1}</KRWF_RimKata_InspectDualEquipped>
+  <KRWF_RimKata_InspectSlotPrimary>주</KRWF_RimKata_InspectSlotPrimary>
+  <KRWF_RimKata_InspectSlotSecondary>부</KRWF_RimKata_InspectSlotSecondary>
+  <KRWF_RimKata_InspectModeRanged>원거리</KRWF_RimKata_InspectModeRanged>
+  <KRWF_RimKata_InspectModeMelee>근접</KRWF_RimKata_InspectModeMelee>
+  <KRWF_RimKata_InspectRangedAiming>{0}: {1} 조준 중</KRWF_RimKata_InspectRangedAiming>
+  <KRWF_RimKata_InspectRangedFiring>{0}: {1}에 사격 중</KRWF_RimKata_InspectRangedFiring>
+  <KRWF_RimKata_InspectMeleeTarget>{0}: {1} 공격 중</KRWF_RimKata_InspectMeleeTarget>
+  <KRWF_RimKata_InspectIntercepting>{0}: {1} 요격 중</KRWF_RimKata_InspectIntercepting>
+  <KRWF_RimKata_InspectCachedTarget>{0}: 다음 목표 {1}</KRWF_RimKata_InspectCachedTarget>
+  <KRWF_RimKata_InspectCooldown>{0}: 재사용 대기 중</KRWF_RimKata_InspectCooldown>
+  <KRWF_RimKata_InspectSearching>{0}: 적을 찾는 중</KRWF_RimKata_InspectSearching>
+  <KRWF_RimKata_InspectWaiting>{0}: 대기 중</KRWF_RimKata_InspectWaiting>
+  <KRWF_RimKata_SecondaryMenuAttack>공격</KRWF_RimKata_SecondaryMenuAttack>
+  <KRWF_RimKata_SecondaryMenuSwap>교체</KRWF_RimKata_SecondaryMenuSwap>
+  <KRWF_RimKata_SecondaryMenuSwapCombat>교체(전투 중)</KRWF_RimKata_SecondaryMenuSwapCombat>
+  <KRWF_RimKata_DebugMenuLabel>RimKata 디버그</KRWF_RimKata_DebugMenuLabel>
+  <KRWF_RimKata_DebugMenuDesc>RimKata 개발자용 표시를 설정합니다.</KRWF_RimKata_DebugMenuDesc>
+  <KRWF_RimKata_DebugHUDOption>HUD</KRWF_RimKata_DebugHUDOption>
+  <KRWF_RimKata_DebugSearchRangeOption>탐색 범위</KRWF_RimKata_DebugSearchRangeOption>
+</LanguageData>

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <KRWF_RimKata_SettingsCategory>RimKata</KRWF_RimKata_SettingsCategory>
+  <KRWF_RimKata_ChanceHeader>Combat</KRWF_RimKata_ChanceHeader>
+  <KRWF_RimKata_RangedDodgeChance>Ranged dodge chance</KRWF_RimKata_RangedDodgeChance>
+  <KRWF_RimKata_MeleeResponseChance>Close-range response chance</KRWF_RimKata_MeleeResponseChance>
+  <KRWF_RimKata_ResponseDisarmChance>Weapon-disarm chance on response</KRWF_RimKata_ResponseDisarmChance>
+  <KRWF_RimKata_MeleeDodgeChance>Melee dodge chance bonus</KRWF_RimKata_MeleeDodgeChance>
+  <KRWF_RimKata_InterceptionChance>Explosive interception chance</KRWF_RimKata_InterceptionChance>
+  <KRWF_RimKata_InterceptionCriticalChance>Detonation chance on successful interception</KRWF_RimKata_InterceptionCriticalChance>
+  <KRWF_RimKata_TimingHeader>Modifiers</KRWF_RimKata_TimingHeader>
+  <KRWF_RimKata_MovingAccuracyMultiplier>Moving accuracy multiplier</KRWF_RimKata_MovingAccuracyMultiplier>
+  <KRWF_RimKata_ArmorCooldownReduction>Enabled armor cooldown reduction</KRWF_RimKata_ArmorCooldownReduction>
+  <KRWF_RimKata_ResponseCooldownReduction>Cooldown reduction after a successful response</KRWF_RimKata_ResponseCooldownReduction>
+  <KRWF_RimKata_SerumHeader>Mind-numb serum effects</KRWF_RimKata_SerumHeader>
+  <KRWF_RimKata_SerumDodgeMultiplier>Ranged dodge multiplier</KRWF_RimKata_SerumDodgeMultiplier>
+  <KRWF_RimKata_SerumResponseMultiplier>Close-range response multiplier</KRWF_RimKata_SerumResponseMultiplier>
+  <KRWF_RimKata_SerumInterceptionMultiplier>Explosive interception multiplier</KRWF_RimKata_SerumInterceptionMultiplier>
+  <KRWF_RimKata_SelectedCount>{0} selected</KRWF_RimKata_SelectedCount>
+  <KRWF_RimKata_EditWeapons>Edit enabled weapons</KRWF_RimKata_EditWeapons>
+  <KRWF_RimKata_EditArmor>Edit enabled armor</KRWF_RimKata_EditArmor>
+  <KRWF_RimKata_MaximumCandidateRange>Maximum automatic-target search range</KRWF_RimKata_MaximumCandidateRange>
+  <KRWF_RimKata_RangePresetShort>Short ({0} cells)</KRWF_RimKata_RangePresetShort>
+  <KRWF_RimKata_RangePresetShortFallback>Short (weapon range)</KRWF_RimKata_RangePresetShortFallback>
+  <KRWF_RimKata_RangePresetMedium>Medium ({0} cells)</KRWF_RimKata_RangePresetMedium>
+  <KRWF_RimKata_RangePresetMediumFallback>Medium (weapon range)</KRWF_RimKata_RangePresetMediumFallback>
+  <KRWF_RimKata_RangePresetLong>Long ({0} cells)</KRWF_RimKata_RangePresetLong>
+  <KRWF_RimKata_RangePresetLongFallback>Long (weapon range)</KRWF_RimKata_RangePresetLongFallback>
+  <KRWF_RimKata_RangePresetUnlimited>Unlimited (weapon range)</KRWF_RimKata_RangePresetUnlimited>
+  <KRWF_RimKata_RangePresetCustom>Custom</KRWF_RimKata_RangePresetCustom>
+  <KRWF_RimKata_CellUnit>cells</KRWF_RimKata_CellUnit>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>Weapon durability-loss chance after a successful response</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>Weapon durability lost after a successful response</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
+  <KRWF_RimKata_CreepJoinerDependencyGeneChance>Creepjoiner {0} gene chance</KRWF_RimKata_CreepJoinerDependencyGeneChance>
+  <KRWF_RimKata_AiSecondaryWeaponChance>AI pawn secondary weapon chance</KRWF_RimKata_AiSecondaryWeaponChance>
+  <KRWF_RimKata_VisualsHeader>Visuals</KRWF_RimKata_VisualsHeader>
+  <KRWF_RimKata_AppliedValue>Applied value</KRWF_RimKata_AppliedValue>
+  <KRWF_RimKata_Minimum>Minimum</KRWF_RimKata_Minimum>
+  <KRWF_RimKata_Fixed>Fixed value</KRWF_RimKata_Fixed>
+  <KRWF_RimKata_ResetSection>Reset</KRWF_RimKata_ResetSection>
+  <KRWF_RimKata_GrowthLabel>{0} ×{1}Lv</KRWF_RimKata_GrowthLabel>
+  <KRWF_RimKata_DurationGrowthLabel>{0} ×-{1}Lv</KRWF_RimKata_DurationGrowthLabel>
+  <KRWF_RimKata_RangedDodgeDuration>Standard ranged dodge animation time</KRWF_RimKata_RangedDodgeDuration>
+  <KRWF_RimKata_ResponseAccidentalFireChance>Stray-shot chance after a response</KRWF_RimKata_ResponseAccidentalFireChance>
+  <KRWF_RimKata_WeaponDialogTitle>RimKata weapons</KRWF_RimKata_WeaponDialogTitle>
+  <KRWF_RimKata_ArmorDialogTitle>RimKata armor and apparel</KRWF_RimKata_ArmorDialogTitle>
+  <KRWF_RimKata_Search>Search</KRWF_RimKata_Search>
+  <KRWF_RimKata_WeaponKindFilter>Weapon type</KRWF_RimKata_WeaponKindFilter>
+  <KRWF_RimKata_ApparelKindFilter>Apparel type</KRWF_RimKata_ApparelKindFilter>
+  <KRWF_RimKata_ApparelKindHeadgear>Headgear</KRWF_RimKata_ApparelKindHeadgear>
+  <KRWF_RimKata_ApparelKindArmor>Armor</KRWF_RimKata_ApparelKindArmor>
+  <KRWF_RimKata_ApparelKindOuterwear>Outerwear</KRWF_RimKata_ApparelKindOuterwear>
+  <KRWF_RimKata_ApparelKindUnderwear>Underwear</KRWF_RimKata_ApparelKindUnderwear>
+  <KRWF_RimKata_ApparelKindUtility>Utility</KRWF_RimKata_ApparelKindUtility>
+  <KRWF_RimKata_ApparelKindOther>Other</KRWF_RimKata_ApparelKindOther>
+  <KRWF_RimKata_AllowedStateFilter>Allowed</KRWF_RimKata_AllowedStateFilter>
+  <KRWF_RimKata_FilterAll>All</KRWF_RimKata_FilterAll>
+  <KRWF_RimKata_WeaponKindMelee>Melee</KRWF_RimKata_WeaponKindMelee>
+  <KRWF_RimKata_WeaponKindRanged>Ranged</KRWF_RimKata_WeaponKindRanged>
+  <KRWF_RimKata_AllowedYes>Yes</KRWF_RimKata_AllowedYes>
+  <KRWF_RimKata_AllowedNo>No</KRWF_RimKata_AllowedNo>
+  <KRWF_RimKata_SelectFiltered>Select filtered</KRWF_RimKata_SelectFiltered>
+  <KRWF_RimKata_ClearFiltered>Clear filtered</KRWF_RimKata_ClearFiltered>
+  <KRWF_RimKata_NoMatchingDefs>No matching definitions.</KRWF_RimKata_NoMatchingDefs>
+  <KRWF_RimKata_TwoHandedWeapon>Two-handed</KRWF_RimKata_TwoHandedWeapon>
+  <KRWF_RimKata_ResetSettings>Reset all</KRWF_RimKata_ResetSettings>
+  <KRWF_RimKata_OpOn>OP ON</KRWF_RimKata_OpOn>
+  <KRWF_RimKata_OpOff>OP OFF</KRWF_RimKata_OpOff>
+  <KRWF_RimKata_CombatFeatures>Combat features</KRWF_RimKata_CombatFeatures>
+  <KRWF_RimKata_RemoveRestrictions>Remove restrictions</KRWF_RimKata_RemoveRestrictions>
+  <KRWF_RimKata_RestoreRestrictions>Restore restrictions</KRWF_RimKata_RestoreRestrictions>
+  <KRWF_RimKata_RemoveRestrictionsWarning>All pawns can use RimKata without requiring the drug, psycast, role, or gene that grants access.\nFriendly and hostile pawn flags still apply.\nThis may adversely affect game progression.</KRWF_RimKata_RemoveRestrictionsWarning>
+  <KRWF_RimKata_RestoreRestrictionsConfirmation>Master of the gun katas</KRWF_RimKata_RestoreRestrictionsConfirmation>
+  <KRWF_RimKata_FeatureSecondaryWeapon>Secondary weapon</KRWF_RimKata_FeatureSecondaryWeapon>
+  <KRWF_RimKata_FeatureSingleShotConversion>Single-shot conversion</KRWF_RimKata_FeatureSingleShotConversion>
+  <KRWF_RimKata_FeatureRandomAttack>Random attack</KRWF_RimKata_FeatureRandomAttack>
+  <KRWF_RimKata_FeatureExplosiveInterception>Explosive interception</KRWF_RimKata_FeatureExplosiveInterception>
+  <KRWF_RimKata_FeatureMovingFire>Moving fire</KRWF_RimKata_FeatureMovingFire>
+  <KRWF_RimKata_FeatureCloseFire>Close-range fire</KRWF_RimKata_FeatureCloseFire>
+  <KRWF_RimKata_FeatureTargetRush>Target rush</KRWF_RimKata_FeatureTargetRush>
+  <KRWF_RimKata_FeatureResponse>response</KRWF_RimKata_FeatureResponse>
+  <KRWF_RimKata_FeatureRangedDodge>Ranged dodge</KRWF_RimKata_FeatureRangedDodge>
+  <KRWF_RimKata_Featuretumble>somersault</KRWF_RimKata_Featuretumble>
+  <KRWF_RimKata_EnableFriendlyPawnEffects>Apply RimKata effects to non-hostile pawns</KRWF_RimKata_EnableFriendlyPawnEffects>
+  <KRWF_RimKata_EnableHostilePawnEffects>Apply RimKata effects to hostile pawns</KRWF_RimKata_EnableHostilePawnEffects>
+  <KRWF_RimKata_CooldownVanillaBreakdown>Vanilla ranged cooldown multiplier calculation:</KRWF_RimKata_CooldownVanillaBreakdown>
+  <KRWF_RimKata_CooldownVanillaFactor>Vanilla ranged cooldown multiplier: {0}</KRWF_RimKata_CooldownVanillaFactor>
+  <KRWF_RimKata_CooldownArmorFactorApplied>Enabled armor modifier: ×{0} (applied)</KRWF_RimKata_CooldownArmorFactorApplied>
+  <KRWF_RimKata_CooldownArmorFactorInactive>Enabled armor modifier: ×100% (no enabled armor worn)</KRWF_RimKata_CooldownArmorFactorInactive>
+  <KRWF_RimKata_InspectDualEquipped>Equipped: primary {0}, secondary {1}</KRWF_RimKata_InspectDualEquipped>
+  <KRWF_RimKata_InspectSlotPrimary>Primary</KRWF_RimKata_InspectSlotPrimary>
+  <KRWF_RimKata_InspectSlotSecondary>Secondary</KRWF_RimKata_InspectSlotSecondary>
+  <KRWF_RimKata_InspectModeRanged>ranged</KRWF_RimKata_InspectModeRanged>
+  <KRWF_RimKata_InspectModeMelee>melee</KRWF_RimKata_InspectModeMelee>
+  <KRWF_RimKata_InspectRangedAiming>{0}: aiming at {1}</KRWF_RimKata_InspectRangedAiming>
+  <KRWF_RimKata_InspectRangedFiring>{0}: firing at {1}</KRWF_RimKata_InspectRangedFiring>
+  <KRWF_RimKata_InspectMeleeTarget>{0}: attacking {1}</KRWF_RimKata_InspectMeleeTarget>
+  <KRWF_RimKata_InspectIntercepting>{0}: intercepting {1}</KRWF_RimKata_InspectIntercepting>
+  <KRWF_RimKata_InspectCachedTarget>{0}: next target {1}</KRWF_RimKata_InspectCachedTarget>
+  <KRWF_RimKata_InspectCooldown>{0}: cooling down</KRWF_RimKata_InspectCooldown>
+  <KRWF_RimKata_InspectSearching>{0}: searching for targets</KRWF_RimKata_InspectSearching>
+  <KRWF_RimKata_InspectWaiting>{0}: waiting</KRWF_RimKata_InspectWaiting>
+  <KRWF_RimKata_SecondaryMenuAttack>Attack</KRWF_RimKata_SecondaryMenuAttack>
+  <KRWF_RimKata_SecondaryMenuSwap>Swap</KRWF_RimKata_SecondaryMenuSwap>
+  <KRWF_RimKata_SecondaryMenuSwapCombat>Swap(in combat)</KRWF_RimKata_SecondaryMenuSwapCombat>
+  <KRWF_RimKata_DebugMenuLabel>RimKata debug</KRWF_RimKata_DebugMenuLabel>
+  <KRWF_RimKata_DebugMenuDesc>Configure the RimKata developer overlays.</KRWF_RimKata_DebugMenuDesc>
+  <KRWF_RimKata_DebugHUDOption>HUD</KRWF_RimKata_DebugHUDOption>
+  <KRWF_RimKata_DebugSearchRangeOption>Search range</KRWF_RimKata_DebugSearchRangeOption>
+</LanguageData>

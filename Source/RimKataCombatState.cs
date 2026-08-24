@@ -1,0 +1,2378 @@
+﻿using System.Collections.Generic;
+using RimWorld;
+using UnityEngine;
+using Verse;
+using Verse.AI;
+
+namespace KRWF.RimKata
+{
+    public enum RimKataVisualState
+    {
+        None,
+        StandardDodge,
+        AdditionalDodge,
+        Tumble
+    }
+
+    public struct RimKataVisualSnapshot
+    {
+        public bool visualActive;
+        public RimKataVisualState visualState;
+        public float visualProgress;
+        public int visualTotalTicks;
+        public IntVec3 dodgeDirection;
+        public bool dodgeMovementActive;
+        public bool dodgeMovementTumbling;
+        public float dodgeMovementProgress;
+        public float dodgeTumbleStartProgress;
+        public IntVec3 dodgeMovementDirection;
+        public int tumbleSign;
+        public bool deflectionActive;
+        public float deflectionProgress;
+        public int deflectionSign;
+        public ThingWithComps deflectionWeapon;
+        public bool responsePoseActive;
+        public float responsePoseProgress;
+        public float responsePoseMaxAngle;
+        public int responsePoseSign;
+        public ThingWithComps responsePoseWeapon;
+        public LocalTargetInfo responsePoseFocus;
+        public bool responsePoseLookAtFocus;
+        public bool closeDodgeActive;
+        public float closeDodgeAngle;
+    }
+
+    public sealed class RimKataPawnCombatState : IExposable
+    {
+        private const int CurrentCounterattackTargetContractVersion = 1;
+
+        public Pawn pawn;
+        public RimKataVisualState visualState;
+        public int ticksRemaining;
+        public int totalTicks;
+        public bool additionalDodgeUsed;
+        public IntVec3 dodgeDirection;
+        public bool dodgeMovementActive;
+        public IntVec3 dodgeMovementOrigin = IntVec3.Invalid;
+        public IntVec3 dodgeMovementDestination = IntVec3.Invalid;
+        public float dodgeMovementProgress;
+        public bool dodgeMovementTumbling;
+        public float dodgeTumbleStartProgress;
+        public IntVec3 dodgeMovementDirection;
+        public int dodgeMovementElapsedTicks;
+        public bool dodgeStartInProgress;
+        public bool dodgeResumeWasMoving;
+        public LocalTargetInfo dodgeResumeDestination = LocalTargetInfo.Invalid;
+        public PathEndMode dodgeResumePathEndMode = PathEndMode.OnCell;
+        public Job dodgeMovementJob;
+        public int dodgeFailureStaggerTicks;
+        public float dodgeFailureStaggerSpeedFactor = StaggerHandler.DefaultStaggerMoveSpeedFactor;
+        public int tumbleSign = 1;
+        public int deflectionTicksRemaining;
+        public int deflectionTotalTicks;
+        public int deflectionSign = 1;
+        public int responsePoseTicksRemaining;
+        public int responsePoseTotalTicks;
+        public float responsePoseMaxAngle;
+        public int responsePoseSign = 1;
+        public LocalTargetInfo responsePoseFocus = LocalTargetInfo.Invalid;
+        public bool responsePoseLookAtFocus;
+        public int closeDodgeTicksRemaining;
+        public int closeDodgeTotalTicks;
+        public float closeDodgeStartAngle;
+        public int closeCombatTicksRemaining;
+        public Thing closeCombatTrigger;
+        public bool draftedFireActive;
+        public IntVec3 draftedMovementSearchCell = IntVec3.Invalid;
+        public bool draftedMovementSearchTriggerPending;
+        public int draftedWarmupTicksRemaining = -1;
+        public int draftedCooldownTicksRemaining;
+        public int draftedCooldownLastTick = -1;
+        public int draftedCandidateRetryTicks;
+        public Thing draftedPlannedTarget;
+        public bool draftedPlannedInterception;
+        public bool draftedPlannedCloseAttack;
+        public bool draftedPlannedCloseContext;
+        public RimKataWeaponCycleState primaryWeaponCycle = new RimKataWeaponCycleState();
+        public RimKataWeaponCycleState secondaryWeaponCycle = new RimKataWeaponCycleState();
+        public RimKataSharedTargetSearchState sharedTargetSearch =
+            new RimKataSharedTargetSearchState();
+        public bool idleProjectileSearchTriggerPending;
+        public bool weaponSwapPending;
+        public bool dualEngagementActive;
+        public int dualLastDrivenTick = -1;
+        public bool dualCloseCombatActive;
+        public bool candidateSaturationExpansionUsed;
+        public Thing dualCloseTarget;
+        public ThingWithComps engagementOwnerWeapon;
+        public RimKataRushAuthority rushAuthority;
+        public Thing rushAuthorityTarget;
+        public Thing pendingCounterattackTarget;
+        public int pendingCounterattackTicksRemaining;
+        public bool counterattackRimKataSessionActive;
+        public bool counterattackMoteShown;
+        public Thing counterattackJobTarget;
+        public int counterattackTargetContractVersion =
+            CurrentCounterattackTargetContractVersion;
+        public bool counterattackTargetLoadRepairPending;
+        public bool openingRingSearchActive;
+        public int openingRingSearchRadius;
+        public IntVec3 openingRingSearchOrigin = IntVec3.Invalid;
+        public Thing openingRingSearchCandidate;
+        public ThingWithComps responsePoseWeapon;
+        public ThingWithComps deflectionWeapon;
+        public Job loadoutInvalidatedCombatJob;
+        public bool dedicatedFollowupJobPending;
+        public Thing dedicatedFollowupJobTarget;
+        public Job dedicatedFollowupJobSourceJob;
+        public bool dedicatedFollowupJobPlayerForced;
+        public int absorbedPathBlockedGotoJobId = -1;
+        public Thing absorbedPathBlockedThreat;
+        public int absorbedPathBlockedRefreshTick = -1;
+        public bool dedicatedFollowupJobKillIncappedTarget;
+        public int dedicatedFollowupJobRequestedTick = -1;
+        public bool dedicatedFollowupJobStartInProgress;
+        public int dedicatedFollowupJobLastStartTick = -1;
+        public Thing dedicatedContinuityTarget;
+        public int dedicatedContinuityUntilTick = -1;
+        public int movementFireContinuityUntilTick = -1;
+        public int staggerSearchLastCheckTick = -1;
+        public Pawn incomingThreatSource;
+        public int incomingThreatTicksRemaining;
+        public Thing closeAttackRequestTarget;
+        public Thing automaticAttackRequestTarget;
+        public int automaticAttackRequestTicksRemaining;
+
+        public bool VisualActive => pawn != null
+            && visualState != RimKataVisualState.None
+            && (ticksRemaining > 0 || dodgeMovementActive);
+        public bool DodgeMovementActive => pawn != null
+            && dodgeMovementActive
+            && (visualState == RimKataVisualState.StandardDodge
+                || visualState == RimKataVisualState.AdditionalDodge);
+        public bool DodgeVisualLocked => DodgeMovementActive
+            || (VisualActive
+                && (visualState == RimKataVisualState.AdditionalDodge
+                    || visualState == RimKataVisualState.Tumble));
+        public bool AdditionalDodgeProtectionActive => pawn != null
+            && additionalDodgeUsed
+            && VisualActive
+            && (visualState == RimKataVisualState.AdditionalDodge
+                || visualState == RimKataVisualState.Tumble);
+        public bool DodgeMovementWatchdogExpired => DodgeMovementActive
+            && dodgeMovementElapsedTicks >= RimKataCombatTuning.AdditionalDodgeWatchdogTicks;
+        public bool DodgeMotionBlocksJob => DodgeMovementActive;
+        public bool DeflectionActive => pawn != null && deflectionTicksRemaining > 0;
+        public bool ResponsePoseActive => pawn != null && responsePoseTicksRemaining > 0;
+        public bool CloseDodgeActive => pawn != null && closeDodgeTicksRemaining > 0;
+        public bool CloseCombatActive => pawn != null && closeCombatTicksRemaining > 0;
+        public bool DraftedFireActive => pawn != null && draftedFireActive;
+        public bool DraftedMovementSearchTracking => pawn?.Drafted == true
+            && draftedMovementSearchCell.IsValid;
+        public bool DraftedMovementSearchTriggerPending => pawn?.Drafted == true
+            && draftedMovementSearchTriggerPending;
+        public bool MovementFireContinuityActive
+        {
+            get
+            {
+                int currentTick = CurrentGameTick;
+                return pawn != null
+                    && currentTick >= 0
+                    && movementFireContinuityUntilTick >= currentTick;
+            }
+        }
+        public bool StoredCooldownActive => pawn != null && draftedCooldownTicksRemaining > 0;
+        public bool WeaponCyclesActive => (primaryWeaponCycle?.Active == true)
+            || (secondaryWeaponCycle?.Active == true)
+            || dualEngagementActive
+            || sharedTargetSearch?.KeepsCombatAlive == true;
+        public bool VanillaOpeningPending => primaryWeaponCycle?.vanillaOpeningPending == true
+            || secondaryWeaponCycle?.vanillaOpeningPending == true;
+        public bool RushAuthorized
+        {
+            get
+            {
+                Thing target = rushAuthorityTarget;
+                if (pawn?.Drafted == true
+                    || rushAuthority == RimKataRushAuthority.None
+                    || target == null
+                    || target.Destroyed
+                    || !target.Spawned
+                    || target.Map != pawn?.Map)
+                {
+                    return false;
+                }
+
+                if (rushAuthority != RimKataRushAuthority.Counterattack)
+                {
+                    return true;
+                }
+
+                return RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                    && (!(target is Pawn targetPawn)
+                        || (!targetPawn.Dead
+                            && !targetPawn.Downed
+                            && !targetPawn.Crawling
+                            && !targetPawn.IsPsychologicallyInvisible()));
+            }
+        }
+        public bool IncomingThreatActive => IsIncomingThreatActive();
+        public bool CloseAttackRequestActive => IsCloseAttackRequestActive();
+        public bool AutomaticAttackRequestActive => IsAutomaticAttackRequestActive();
+        public bool DebugIncomingThreatStored => incomingThreatSource != null;
+        public bool DebugCloseAttackRequestStored =>
+            closeAttackRequestTarget != null;
+        public bool DebugAutomaticAttackRequestStored =>
+            automaticAttackRequestTarget != null
+            && automaticAttackRequestTicksRemaining > 0;
+        public bool Active => VisualActive
+            || DeflectionActive
+            || ResponsePoseActive
+            || CloseDodgeActive
+            || CloseCombatActive
+            || DraftedFireActive
+            || DraftedMovementSearchTracking
+            || DraftedMovementSearchTriggerPending
+            || idleProjectileSearchTriggerPending
+            || MovementFireContinuityActive
+            || StoredCooldownActive
+            || WeaponCyclesActive
+            || IncomingThreatActive
+            || CloseAttackRequestActive
+            || AutomaticAttackRequestActive
+            || openingRingSearchActive
+            || sharedTargetSearch?.KeepsCombatAlive == true
+            || dedicatedFollowupJobPending
+            || weaponSwapPending;
+        public float VisualProgress => totalTicks <= 0 ? 1f : 1f - ticksRemaining / (float)totalTicks;
+        public float DeflectionProgress => deflectionTotalTicks <= 0 ? 1f : 1f - deflectionTicksRemaining / (float)deflectionTotalTicks;
+        public float ResponsePoseProgress => responsePoseTotalTicks <= 0
+            ? 1f
+            : 1f - responsePoseTicksRemaining / (float)responsePoseTotalTicks;
+        public float CurrentCloseDodgeAngle
+        {
+            get
+            {
+                if (!CloseDodgeActive)
+                {
+                    return 0f;
+                }
+
+                float progress = closeDodgeTotalTicks <= 0
+                    ? 1f
+                    : 1f - closeDodgeTicksRemaining / (float)closeDodgeTotalTicks;
+                return closeDodgeStartAngle * (1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(progress)));
+            }
+        }
+
+        public RimKataPawnCombatState()
+        {
+        }
+
+        public RimKataPawnCombatState(Pawn pawn)
+        {
+            this.pawn = pawn;
+        }
+
+        public void ExposeData()
+        {
+            Scribe_References.Look(ref pawn, "pawn");
+            Scribe_Values.Look(ref visualState, "visualState", RimKataVisualState.None);
+            Scribe_Values.Look(ref ticksRemaining, "ticksRemaining");
+            Scribe_Values.Look(ref totalTicks, "totalTicks");
+            Scribe_Values.Look(ref additionalDodgeUsed, "additionalDodgeUsed");
+            Scribe_Values.Look(ref dodgeDirection, "dodgeDirection");
+            Scribe_Values.Look(ref dodgeMovementActive, "dodgeMovementActive");
+            Scribe_Values.Look(ref dodgeMovementTumbling, "dodgeMovementTumbling");
+            Scribe_Values.Look(ref dodgeMovementOrigin, "dodgeMovementOrigin", IntVec3.Invalid);
+            Scribe_Values.Look(ref dodgeMovementDestination, "dodgeMovementDestination", IntVec3.Invalid);
+            Scribe_Values.Look(ref dodgeMovementProgress, "dodgeMovementProgress");
+            Scribe_Values.Look(ref dodgeTumbleStartProgress, "dodgeTumbleStartProgress");
+            Scribe_Values.Look(ref dodgeMovementDirection, "dodgeMovementDirection");
+            Scribe_Values.Look(ref dodgeMovementElapsedTicks, "dodgeMovementElapsedTicks");
+            Scribe_Values.Look(ref dodgeResumeWasMoving, "dodgeResumeWasMoving");
+            Scribe_TargetInfo.Look(ref dodgeResumeDestination, "dodgeResumeDestination");
+            Scribe_Values.Look(ref dodgeResumePathEndMode, "dodgeResumePathEndMode", PathEndMode.OnCell);
+            Scribe_References.Look(ref dodgeMovementJob, "dodgeMovementJob");
+            Scribe_Values.Look(ref dodgeFailureStaggerTicks, "dodgeFailureStaggerTicks");
+            Scribe_Values.Look(ref dodgeFailureStaggerSpeedFactor, "dodgeFailureStaggerSpeedFactor", StaggerHandler.DefaultStaggerMoveSpeedFactor);
+            Scribe_Values.Look(ref tumbleSign, "tumbleSign", 1);
+            Scribe_Values.Look(ref deflectionTicksRemaining, "deflectionTicksRemaining");
+            Scribe_Values.Look(ref deflectionTotalTicks, "deflectionTotalTicks");
+            Scribe_Values.Look(ref deflectionSign, "deflectionSign", 1);
+            Scribe_Values.Look(ref responsePoseTicksRemaining, "responsePoseTicksRemaining");
+            Scribe_Values.Look(ref responsePoseTotalTicks, "responsePoseTotalTicks");
+            Scribe_Values.Look(ref responsePoseMaxAngle, "responsePoseMaxAngle");
+            Scribe_Values.Look(ref responsePoseSign, "responsePoseSign", 1);
+            Scribe_TargetInfo.Look(ref responsePoseFocus, "responsePoseFocus");
+            Scribe_Values.Look(
+                ref responsePoseLookAtFocus,
+                "responsePoseLookAtFocus");
+            Scribe_Values.Look(ref closeDodgeTicksRemaining, "closeDodgeTicksRemaining");
+            Scribe_Values.Look(ref closeDodgeTotalTicks, "closeDodgeTotalTicks");
+            Scribe_Values.Look(ref closeDodgeStartAngle, "closeDodgeStartAngle");
+            Scribe_Values.Look(ref closeCombatTicksRemaining, "closeCombatTicksRemaining");
+            Scribe_References.Look(ref closeCombatTrigger, "closeCombatTrigger");
+            Scribe_Values.Look(ref draftedFireActive, "draftedFireActive");
+            Scribe_Values.Look(
+                ref draftedMovementSearchTriggerPending,
+                "draftedMovementSearchTriggerPending");
+            Scribe_Values.Look(ref draftedWarmupTicksRemaining, "draftedWarmupTicksRemaining", -1);
+            Scribe_Values.Look(ref draftedCooldownTicksRemaining, "draftedCooldownTicksRemaining");
+            Scribe_Values.Look(ref draftedCooldownLastTick, "draftedCooldownLastTick", -1);
+            Scribe_Values.Look(ref draftedCandidateRetryTicks, "draftedCandidateRetryTicks");
+            Scribe_References.Look(ref draftedPlannedTarget, "draftedPlannedTarget");
+            Scribe_Values.Look(ref draftedPlannedInterception, "draftedPlannedInterception");
+            Scribe_Values.Look(ref draftedPlannedCloseAttack, "draftedPlannedCloseAttack");
+            Scribe_Values.Look(ref draftedPlannedCloseContext, "draftedPlannedCloseContext");
+            Scribe_Deep.Look(ref primaryWeaponCycle, "primaryWeaponCycle");
+            Scribe_Deep.Look(ref secondaryWeaponCycle, "secondaryWeaponCycle");
+            Scribe_Deep.Look(ref sharedTargetSearch, "sharedTargetSearch");
+            Scribe_Values.Look(
+                ref idleProjectileSearchTriggerPending,
+                "idleProjectileSearchTriggerPending");
+            Scribe_Values.Look(ref weaponSwapPending, "weaponSwapPending");
+            Scribe_Values.Look(ref dualEngagementActive, "dualEngagementActive");
+            Scribe_Values.Look(ref dualLastDrivenTick, "dualLastDrivenTick", -1);
+            Scribe_Values.Look(ref dualCloseCombatActive, "dualCloseCombatActive");
+            Scribe_Values.Look(
+                ref candidateSaturationExpansionUsed,
+                "candidateSaturationExpansionUsed");
+            Scribe_References.Look(ref dualCloseTarget, "dualCloseTarget");
+            Scribe_References.Look(ref engagementOwnerWeapon, "engagementOwnerWeapon");
+            Scribe_Values.Look(ref rushAuthority, "rushAuthority", RimKataRushAuthority.None);
+            Scribe_References.Look(ref rushAuthorityTarget, "rushAuthorityTarget");
+            Scribe_References.Look(ref pendingCounterattackTarget, "pendingCounterattackTarget");
+            Scribe_Values.Look(ref pendingCounterattackTicksRemaining, "pendingCounterattackTicksRemaining");
+            Scribe_Values.Look(
+                ref counterattackRimKataSessionActive,
+                "counterattackRimKataSessionActive");
+            Scribe_Values.Look(ref counterattackMoteShown, "counterattackMoteShown");
+            Scribe_References.Look(
+                ref counterattackJobTarget,
+                "counterattackJobTarget");
+            Scribe_Values.Look(
+                ref counterattackTargetContractVersion,
+                "counterattackTargetContractVersion",
+                0);
+            Scribe_Values.Look(ref openingRingSearchActive, "openingRingSearchActive");
+            Scribe_Values.Look(ref openingRingSearchRadius, "openingRingSearchRadius");
+            Scribe_Values.Look(ref openingRingSearchOrigin, "openingRingSearchOrigin", IntVec3.Invalid);
+            Scribe_References.Look(ref openingRingSearchCandidate, "openingRingSearchCandidate");
+            Scribe_References.Look(ref responsePoseWeapon, "responsePoseWeapon");
+            Scribe_References.Look(ref deflectionWeapon, "deflectionWeapon");
+            Scribe_References.Look(ref incomingThreatSource, "incomingThreatSource");
+            Scribe_Values.Look(ref incomingThreatTicksRemaining, "incomingThreatTicksRemaining");
+            Scribe_References.Look(ref closeAttackRequestTarget, "closeAttackRequestTarget");
+            Scribe_References.Look(ref automaticAttackRequestTarget, "automaticAttackRequestTarget");
+            Scribe_Values.Look(ref automaticAttackRequestTicksRemaining, "automaticAttackRequestTicksRemaining");
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                primaryWeaponCycle ??= new RimKataWeaponCycleState();
+                secondaryWeaponCycle ??= new RimKataWeaponCycleState();
+                sharedTargetSearch ??= new RimKataSharedTargetSearchState();
+                movementFireContinuityUntilTick = -1;
+                counterattackTargetLoadRepairPending =
+                    counterattackRimKataSessionActive
+                    && counterattackTargetContractVersion
+                        < CurrentCounterattackTargetContractVersion;
+                counterattackTargetContractVersion =
+                    CurrentCounterattackTargetContractVersion;
+
+                if (weaponSwapPending)
+                {
+                    primaryWeaponCycle.Reset();
+                    secondaryWeaponCycle.Reset();
+                }
+            }
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit && dodgeMovementActive)
+            {
+                if (visualState == RimKataVisualState.AdditionalDodge)
+                {
+                    dodgeMovementTumbling = true;
+                }
+
+                if (dodgeMovementDirection == IntVec3.Zero && dodgeMovementOrigin.IsValid && dodgeMovementDestination.IsValid)
+                {
+                    dodgeMovementDirection = dodgeMovementDestination - dodgeMovementOrigin;
+                }
+            }
+        }
+
+        public void Tick()
+        {
+            UpdateDraftedCooldown();
+            if (pawn?.Drafted == true
+                && (rushAuthority != RimKataRushAuthority.None
+                    || pendingCounterattackTarget != null
+                    || counterattackRimKataSessionActive))
+            {
+                ClearCounterattackForDraft();
+            }
+
+            bool currentCounterattackJob = pendingCounterattackTarget != null
+                && pawn?.CurJob?.targetA.Thing == pendingCounterattackTarget
+                && (pawn.CurJobDef == JobDefOf.AttackStatic
+                    || pawn.CurJobDef == JobDefOf.AttackMelee);
+            if (currentCounterattackJob)
+            {
+                pendingCounterattackTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
+            }
+            else if (pendingCounterattackTicksRemaining > 0)
+            {
+                pendingCounterattackTicksRemaining--;
+            }
+            if (pendingCounterattackTicksRemaining <= 0)
+            {
+                pendingCounterattackTarget = null;
+            }
+
+            if (!RushAuthorized)
+            {
+                ClearRushAuthority();
+            }
+
+            if (incomingThreatSource != null && !IsIncomingThreatActive())
+            {
+                incomingThreatSource = null;
+            }
+
+            if (closeAttackRequestTarget != null && !IsCloseAttackRequestActive())
+            {
+                closeAttackRequestTarget = null;
+            }
+
+            if (automaticAttackRequestTarget != null && !IsAutomaticAttackRequestActive())
+            {
+                automaticAttackRequestTarget = null;
+                automaticAttackRequestTicksRemaining = 0;
+            }
+            else if (automaticAttackRequestTicksRemaining > 0)
+            {
+                automaticAttackRequestTicksRemaining--;
+            }
+
+            if (visualState == RimKataVisualState.Tumble
+                && dodgeResumeWasMoving
+                && dodgeMovementJob != null
+                && dodgeMovementJob != pawn.CurJob)
+            {
+                CancelVisual();
+            }
+
+            if (DodgeMovementActive)
+            {
+                bool pathWasReplaced = pawn.pather?.Destination.IsValid == true && pawn.pather.Destination.Cell != dodgeMovementDestination;
+                if (dodgeMovementJob != pawn.CurJob || pathWasReplaced)
+                {
+                    CancelVisual();
+                }
+                else
+                {
+                    if (pawn.Position != dodgeMovementDestination
+                        && (pawn.pather == null || !pawn.pather.Moving || !pawn.pather.Destination.IsValid))
+                    {
+                        pawn.pather?.StartPath(dodgeMovementDestination, PathEndMode.OnCell);
+                        if (!DodgeMovementActive)
+                        {
+                            return;
+                        }
+                    }
+
+                    float pathProgress = pawn.pather?.MovePercentage ?? 0f;
+                    dodgeMovementProgress = Mathf.Max(dodgeMovementProgress, Mathf.Clamp01(pathProgress));
+                    dodgeMovementElapsedTicks++;
+                    ticksRemaining = Mathf.Max(0, ticksRemaining - 1);
+                }
+            }
+            else if (ticksRemaining > 0)
+            {
+                ticksRemaining--;
+            }
+
+            if (deflectionTicksRemaining > 0)
+            {
+                deflectionTicksRemaining--;
+                if (deflectionTicksRemaining <= 0)
+                {
+                    deflectionWeapon = null;
+                }
+            }
+
+            if (responsePoseTicksRemaining > 0)
+            {
+                responsePoseTicksRemaining--;
+                if (responsePoseTicksRemaining <= 0)
+                {
+                    CancelResponsePose();
+                }
+            }
+
+            if (closeDodgeTicksRemaining > 0)
+            {
+                closeDodgeTicksRemaining--;
+                if (closeDodgeTicksRemaining <= 0)
+                {
+                    CancelCloseDodge();
+                }
+            }
+
+            if (closeCombatTicksRemaining > 0)
+            {
+                if (!TryGetLiveCloseCombatTrigger(out Thing _))
+                {
+                    CancelCloseCombat();
+                }
+                else
+                {
+                    closeCombatTicksRemaining--;
+                    if (closeCombatTicksRemaining <= 0)
+                    {
+                        CancelCloseCombat();
+                    }
+                }
+            }
+
+            if (!DodgeMovementActive && ticksRemaining <= 0)
+            {
+                visualState = RimKataVisualState.None;
+                additionalDodgeUsed = false;
+                dodgeDirection = IntVec3.Zero;
+                totalTicks = 0;
+                tumbleSign = 1;
+                ClearDodgeMovementFields();
+            }
+        }
+
+        public void CancelVisual()
+        {
+            visualState = RimKataVisualState.None;
+            ticksRemaining = 0;
+            totalTicks = 0;
+            additionalDodgeUsed = false;
+            dodgeDirection = IntVec3.Zero;
+            ClearDodgeMovementFields();
+            tumbleSign = 1;
+        }
+
+        public void HoldDodgeLanding()
+        {
+            int remainingTumbleTicks = ticksRemaining;
+            int tumbleTotalTicks = totalTicks;
+            visualState = RimKataVisualState.AdditionalDodge;
+            additionalDodgeUsed = true;
+            int landingSign = tumbleSign;
+            ClearDodgeMovementFields();
+            dodgeMovementProgress = 1f;
+            tumbleSign = landingSign;
+
+            if (remainingTumbleTicks > 0)
+            {
+                ticksRemaining = remainingTumbleTicks;
+                totalTicks = Mathf.Max(remainingTumbleTicks, tumbleTotalTicks);
+            }
+            else
+            {
+                ticksRemaining = RimKataCombatTuning.AdditionalDodgeLandingTicks;
+                totalTicks = 0;
+            }
+        }
+
+        public void HoldStandardDodgeLanding()
+        {
+            int remainingDodgeTicks = ticksRemaining;
+            int dodgeTotalTicks = totalTicks;
+            visualState = RimKataVisualState.StandardDodge;
+            additionalDodgeUsed = false;
+            ClearDodgeMovementFields();
+            dodgeMovementProgress = 1f;
+
+            if (remainingDodgeTicks > 0)
+            {
+                ticksRemaining = remainingDodgeTicks;
+                totalTicks = Mathf.Max(remainingDodgeTicks, dodgeTotalTicks);
+            }
+            else
+            {
+                ticksRemaining = RimKataCombatTuning.AdditionalDodgeLandingTicks;
+                totalTicks = 0;
+            }
+        }
+
+        public void UpgradeDodgeMovementToTumble()
+        {
+            if (!DodgeMovementActive || dodgeMovementTumbling)
+            {
+                return;
+            }
+
+            dodgeMovementTumbling = true;
+            dodgeTumbleStartProgress = Mathf.Clamp01(dodgeMovementProgress);
+            visualState = RimKataVisualState.AdditionalDodge;
+            additionalDodgeUsed = true;
+            tumbleSign = Rand.Bool ? 1 : -1;
+            ticksRemaining = RimKataCombatTuning.AdditionalDodgeTumbleDurationTicks;
+            totalTicks = ticksRemaining;
+        }
+
+        public void BeginStationaryAdditionalDodge()
+        {
+            visualState = RimKataVisualState.AdditionalDodge;
+            additionalDodgeUsed = true;
+            tumbleSign = Rand.Bool ? 1 : -1;
+            ticksRemaining = RimKataCombatTuning.AdditionalDodgeTumbleDurationTicks;
+            totalTicks = ticksRemaining;
+        }
+
+        public void ConvertDodgeMovementToTumble()
+        {
+            IntVec3 tumbleDirection = dodgeDirection;
+            int currentTumbleSign = tumbleSign;
+            ClearDodgeMovementCoreFields();
+            visualState = RimKataVisualState.Tumble;
+            ticksRemaining = RimKataCombatTuning.TumbleDurationTicks;
+            totalTicks = ticksRemaining;
+            additionalDodgeUsed = true;
+            dodgeDirection = tumbleDirection;
+            tumbleSign = currentTumbleSign;
+        }
+
+        private void ClearDodgeMovementFields()
+        {
+            ClearDodgeMovementCoreFields();
+            dodgeResumeWasMoving = false;
+            dodgeResumeDestination = LocalTargetInfo.Invalid;
+            dodgeResumePathEndMode = PathEndMode.OnCell;
+            dodgeMovementJob = null;
+        }
+
+        private void ClearDodgeMovementCoreFields()
+        {
+            dodgeMovementActive = false;
+            dodgeMovementTumbling = false;
+            dodgeMovementOrigin = IntVec3.Invalid;
+            dodgeMovementDestination = IntVec3.Invalid;
+            dodgeMovementProgress = 0f;
+            dodgeTumbleStartProgress = 0f;
+            dodgeMovementDirection = IntVec3.Zero;
+            dodgeMovementElapsedTicks = 0;
+            dodgeStartInProgress = false;
+            dodgeFailureStaggerTicks = 0;
+            dodgeFailureStaggerSpeedFactor = StaggerHandler.DefaultStaggerMoveSpeedFactor;
+        }
+
+        public void CancelDeflection()
+        {
+            deflectionTicksRemaining = 0;
+            deflectionTotalTicks = 0;
+            deflectionSign = 1;
+            deflectionWeapon = null;
+        }
+
+        public void CancelResponsePose()
+        {
+            responsePoseTicksRemaining = 0;
+            responsePoseTotalTicks = 0;
+            responsePoseMaxAngle = 0f;
+            responsePoseSign = 1;
+            responsePoseFocus = LocalTargetInfo.Invalid;
+            responsePoseWeapon = null;
+            responsePoseLookAtFocus = false;
+        }
+
+        public bool TryGetLiveResponsePoseFocus(
+            out LocalTargetInfo focus)
+        {
+            focus = LocalTargetInfo.Invalid;
+            if (!ResponsePoseActive
+                || !responsePoseFocus.HasThing
+                || pawn?.Map == null)
+            {
+                return false;
+            }
+
+            Thing target = responsePoseFocus.Thing;
+            if (target == null
+                || target.Destroyed
+                || !target.Spawned
+                || target.Map != pawn.Map)
+            {
+                return false;
+            }
+
+            if (target is Pawn targetPawn
+                && (targetPawn.Dead
+                    || targetPawn.Downed
+                    || targetPawn.Crawling
+                    || targetPawn.IsPsychologicallyInvisible()))
+            {
+                return false;
+            }
+
+            focus = responsePoseFocus;
+            return true;
+        }
+
+        public void BeginCloseDodge(int durationTicks)
+        {
+            float currentAngle = CurrentCloseDodgeAngle;
+            float addedAngle = Rand.Bool ? 10f : -10f;
+            closeDodgeStartAngle = Mathf.Clamp(currentAngle + addedAngle, -30f, 30f);
+            closeDodgeTicksRemaining = Mathf.Max(1, durationTicks);
+            closeDodgeTotalTicks = closeDodgeTicksRemaining;
+        }
+
+        public void CancelCloseDodge()
+        {
+            closeDodgeTicksRemaining = 0;
+            closeDodgeTotalTicks = 0;
+            closeDodgeStartAngle = 0f;
+        }
+
+        public void EnterCloseCombat(Thing trigger)
+        {
+            closeCombatTicksRemaining = RimKataCombatTuning.CloseCombatMemoryTicks;
+            closeCombatTrigger = trigger;
+        }
+
+        public bool TryGetLiveCloseCombatTrigger(out Thing trigger)
+        {
+            trigger = closeCombatTrigger;
+            if (!CloseCombatActive
+                || pawn?.Map == null
+                || trigger == null
+                || trigger.Destroyed
+                || !trigger.Spawned
+                || trigger.Map != pawn.Map)
+            {
+                return false;
+            }
+
+            Job currentJob = pawn.CurJob;
+            bool playerForcedTarget = currentJob?.playerForced == true
+                && currentJob.targetA.Thing == trigger;
+            if (!playerForcedTarget
+                && !RimKataTargeting.IsAutomaticEnemy(pawn, trigger))
+            {
+                return false;
+            }
+
+            if (trigger is Pawn targetPawn
+                && (targetPawn.Dead
+                    || targetPawn.Crawling
+                    || targetPawn.IsPsychologicallyInvisible()
+                    || (targetPawn.Downed
+                        && !(playerForcedTarget
+                            && currentJob.killIncappedTarget))))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public void CancelCloseCombat()
+        {
+            closeCombatTicksRemaining = 0;
+            closeCombatTrigger = null;
+        }
+
+        public RimKataVisualSnapshot VisualSnapshot()
+        {
+            return new RimKataVisualSnapshot
+            {
+                visualActive = VisualActive,
+                visualState = visualState,
+                visualProgress = Mathf.Clamp01(VisualProgress),
+                visualTotalTicks = totalTicks,
+                dodgeDirection = dodgeDirection,
+                dodgeMovementActive = DodgeMovementActive,
+                dodgeMovementProgress = Mathf.Clamp01(dodgeMovementProgress),
+                dodgeMovementTumbling = dodgeMovementTumbling,
+                dodgeTumbleStartProgress = Mathf.Clamp01(dodgeTumbleStartProgress),
+                dodgeMovementDirection = dodgeMovementDirection,
+                tumbleSign = tumbleSign < 0 ? -1 : 1,
+                deflectionActive = DeflectionActive,
+                deflectionProgress = Mathf.Clamp01(DeflectionProgress),
+                deflectionSign = deflectionSign < 0 ? -1 : 1,
+                deflectionWeapon = deflectionWeapon,
+                responsePoseActive = ResponsePoseActive,
+                responsePoseProgress = Mathf.Clamp01(ResponsePoseProgress),
+                responsePoseMaxAngle = Mathf.Max(0f, responsePoseMaxAngle),
+                responsePoseSign = responsePoseSign < 0 ? -1 : 1,
+                responsePoseWeapon = responsePoseWeapon,
+                responsePoseFocus = responsePoseFocus,
+                responsePoseLookAtFocus = responsePoseLookAtFocus,
+                closeDodgeActive = CloseDodgeActive,
+                closeDodgeAngle = CurrentCloseDodgeAngle
+            };
+        }
+
+        public void SetDraftedCooldown(int ticks, bool keepLonger = false)
+        {
+            UpdateDraftedCooldown();
+            int newTicks = Mathf.Max(0, ticks);
+            draftedCooldownTicksRemaining = keepLonger
+                ? Mathf.Max(draftedCooldownTicksRemaining, newTicks)
+                : newTicks;
+            draftedCooldownLastTick = CurrentGameTick;
+        }
+
+        public int TakeDraftedCooldown()
+        {
+            UpdateDraftedCooldown();
+            int ticks = draftedCooldownTicksRemaining;
+            draftedCooldownTicksRemaining = 0;
+            draftedCooldownLastTick = CurrentGameTick;
+            return ticks;
+        }
+
+        public void UpdateDraftedCooldown()
+        {
+            int currentTick = CurrentGameTick;
+            if (currentTick < 0)
+            {
+                return;
+            }
+
+            if (draftedCooldownTicksRemaining <= 0)
+            {
+                draftedCooldownTicksRemaining = 0;
+                draftedCooldownLastTick = currentTick;
+                return;
+            }
+
+            if (draftedCooldownLastTick < 0 || currentTick < draftedCooldownLastTick)
+            {
+                draftedCooldownLastTick = currentTick;
+                return;
+            }
+
+            int elapsed = currentTick - draftedCooldownLastTick;
+            if (elapsed > 0)
+            {
+                draftedCooldownTicksRemaining = Mathf.Max(0, draftedCooldownTicksRemaining - elapsed);
+                draftedCooldownLastTick = currentTick;
+            }
+        }
+
+        public void CancelDraftedFire(bool clearCooldown = true)
+        {
+            draftedFireActive = false;
+            draftedWarmupTicksRemaining = -1;
+            if (clearCooldown)
+            {
+                draftedCooldownTicksRemaining = 0;
+                draftedCooldownLastTick = CurrentGameTick;
+            }
+            else
+            {
+                UpdateDraftedCooldown();
+            }
+
+            draftedCandidateRetryTicks = 0;
+            draftedPlannedTarget = null;
+            draftedPlannedInterception = false;
+            draftedPlannedCloseAttack = false;
+            draftedPlannedCloseContext = false;
+        }
+
+        public void ClearDraftedMovementSearchTracking()
+        {
+            draftedMovementSearchCell = IntVec3.Invalid;
+            draftedMovementSearchTriggerPending = false;
+            idleProjectileSearchTriggerPending = false;
+            movementFireContinuityUntilTick = -1;
+            staggerSearchLastCheckTick = -1;
+        }
+
+        public void QueueDraftedMovementSearchTrigger()
+        {
+            draftedMovementSearchTriggerPending = true;
+            RefreshMovementFireContinuity();
+        }
+
+        public void ConsumeDraftedMovementSearchTrigger()
+        {
+            draftedMovementSearchTriggerPending = false;
+        }
+
+        public void QueueIdleProjectileSearchTrigger()
+        {
+            idleProjectileSearchTriggerPending = true;
+        }
+
+        public void ConsumeIdleProjectileSearchTrigger()
+        {
+            idleProjectileSearchTriggerPending = false;
+        }
+
+        public void RefreshMovementFireContinuity()
+        {
+            int currentTick = CurrentGameTick;
+            if (currentTick >= 0)
+            {
+                movementFireContinuityUntilTick = Mathf.Max(
+                    movementFireContinuityUntilTick,
+                    currentTick + RimKataCombatTuning.MovingFireContinuityTicks);
+            }
+        }
+
+        public void CancelWeaponCycles()
+        {
+            primaryWeaponCycle?.Reset();
+            secondaryWeaponCycle?.Reset();
+            sharedTargetSearch?.Reset();
+            idleProjectileSearchTriggerPending = false;
+            dualEngagementActive = false;
+            dualLastDrivenTick = -1;
+            dualCloseCombatActive = false;
+            dualCloseTarget = null;
+            engagementOwnerWeapon = null;
+            ClearRushAuthority();
+            pendingCounterattackTarget = null;
+            pendingCounterattackTicksRemaining = 0;
+            ClearCounterattackRimKataSession();
+            ClearOpeningRingSearch();
+            incomingThreatSource = null;
+            incomingThreatTicksRemaining = 0;
+            closeAttackRequestTarget = null;
+            automaticAttackRequestTarget = null;
+            automaticAttackRequestTicksRemaining = 0;
+            ClearDedicatedFollowupJobRequest();
+            dedicatedContinuityTarget = null;
+            dedicatedContinuityUntilTick = -1;
+            movementFireContinuityUntilTick = -1;
+            candidateSaturationExpansionUsed = false;
+            absorbedPathBlockedGotoJobId = -1;
+            absorbedPathBlockedThreat = null;
+            absorbedPathBlockedRefreshTick = -1;
+        }
+
+        public void ResetCandidateSaturationExpansion(bool clearOverrides)
+        {
+            candidateSaturationExpansionUsed = false;
+            if (!clearOverrides)
+            {
+                return;
+            }
+
+            if (primaryWeaponCycle != null)
+            {
+                primaryWeaponCycle.pendingCandidateLimitOverride = 0;
+                primaryWeaponCycle.activeCandidateLimitOverride = 0;
+            }
+            if (secondaryWeaponCycle != null)
+            {
+                secondaryWeaponCycle.pendingCandidateLimitOverride = 0;
+                secondaryWeaponCycle.activeCandidateLimitOverride = 0;
+            }
+        }
+
+        public void QueueDedicatedFollowupJob(Thing target, Job sourceJob)
+        {
+            if (dedicatedFollowupJobStartInProgress)
+            {
+                return;
+            }
+
+            if (!dedicatedFollowupJobPending)
+            {
+                dedicatedFollowupJobPending = true;
+                dedicatedFollowupJobRequestedTick = CurrentGameTick;
+                dedicatedFollowupJobTarget = target;
+                dedicatedFollowupJobSourceJob = sourceJob;
+                dedicatedFollowupJobPlayerForced = sourceJob?.playerForced == true
+                    && sourceJob.def == RimKataDefOf.RimKata_Attack;
+                dedicatedFollowupJobKillIncappedTarget =
+                    sourceJob?.killIncappedTarget == true;
+                return;
+            }
+
+            if (dedicatedFollowupJobTarget == null && target != null)
+            {
+                dedicatedFollowupJobTarget = target;
+            }
+        }
+
+        public void ClearDedicatedFollowupJobRequest()
+        {
+            dedicatedFollowupJobPending = false;
+            dedicatedFollowupJobTarget = null;
+            dedicatedFollowupJobSourceJob = null;
+            dedicatedFollowupJobPlayerForced = false;
+            dedicatedFollowupJobKillIncappedTarget = false;
+            dedicatedFollowupJobRequestedTick = -1;
+        }
+
+        public void MarkPendingCounterattack(Thing target)
+        {
+            pendingCounterattackTarget = target;
+            pendingCounterattackTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
+        }
+
+        public void BeginCounterattackRimKataSession()
+        {
+            if (pawn?.Drafted == true
+                || counterattackRimKataSessionActive)
+            {
+                return;
+            }
+
+            counterattackRimKataSessionActive = true;
+            counterattackMoteShown = false;
+            counterattackJobTarget = null;
+            counterattackTargetLoadRepairPending = false;
+        }
+
+        public void QueueCounterattackMote()
+        {
+            if (pawn?.Drafted == true)
+            {
+                return;
+            }
+
+            BeginCounterattackRimKataSession();
+            counterattackMoteShown = false;
+        }
+
+        public bool ConsumeCounterattackMote()
+        {
+            if (pawn?.Drafted == true)
+            {
+                return false;
+            }
+
+            BeginCounterattackRimKataSession();
+            if (counterattackMoteShown)
+            {
+                return false;
+            }
+
+            counterattackMoteShown = true;
+            return true;
+        }
+
+        public void ClearCounterattackRimKataSession()
+        {
+            counterattackRimKataSessionActive = false;
+            counterattackMoteShown = false;
+            counterattackJobTarget = null;
+            counterattackTargetLoadRepairPending = false;
+        }
+
+        public void ClearCounterattackForDraft()
+        {
+            pendingCounterattackTarget = null;
+            pendingCounterattackTicksRemaining = 0;
+            ClearRushAuthority();
+            ClearCounterattackRimKataSession();
+        }
+
+        public bool ConsumeCounterattackTargetLoadRepair()
+        {
+            if (!counterattackTargetLoadRepairPending)
+            {
+                return false;
+            }
+
+            counterattackTargetLoadRepairPending = false;
+            return true;
+        }
+
+        public bool IsPendingCounterattack(Thing target)
+        {
+            return target != null
+                && pendingCounterattackTarget == target
+                && pendingCounterattackTicksRemaining > 0;
+        }
+
+        public void SetRushAuthority(RimKataRushAuthority authority, Thing target)
+        {
+            rushAuthority = authority;
+            rushAuthorityTarget = target;
+        }
+
+        public void ClearRushAuthority()
+        {
+            rushAuthority = RimKataRushAuthority.None;
+            rushAuthorityTarget = null;
+        }
+
+        public void ClearOpeningRingSearch()
+        {
+            openingRingSearchActive = false;
+            openingRingSearchRadius = 0;
+            openingRingSearchOrigin = IntVec3.Invalid;
+            openingRingSearchCandidate = null;
+        }
+
+        public void NotifyIncomingThreat(Pawn attacker)
+        {
+            if (incomingThreatSource != attacker)
+            {
+                RearmWeaponTargetSearch();
+            }
+
+            incomingThreatSource = attacker;
+            incomingThreatTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
+        }
+
+        public void RequestCloseAttack(Thing target)
+        {
+            if (closeAttackRequestTarget != target)
+            {
+                RearmWeaponTargetSearch();
+            }
+
+            closeAttackRequestTarget = target;
+            EnterCloseCombat(target);
+        }
+
+        public void ClearCloseAttackRequest()
+        {
+            closeAttackRequestTarget = null;
+        }
+
+        public void RequestAutomaticAttack(Thing target)
+        {
+            if (automaticAttackRequestTarget != target
+                || automaticAttackRequestTicksRemaining <= 0)
+            {
+                RearmWeaponTargetSearch();
+            }
+
+            if (target != null)
+            {
+                automaticAttackRequestTarget = target;
+                automaticAttackRequestTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
+            }
+
+        }
+
+        private void RearmWeaponTargetSearch()
+        {
+            primaryWeaponCycle?.RearmTargetSearch();
+            secondaryWeaponCycle?.RearmTargetSearch();
+        }
+
+        private bool IsIncomingThreatActive()
+        {
+            Pawn attacker = incomingThreatSource;
+            if (pawn == null
+                || attacker == null
+                || pawn.Dead
+                || attacker.Dead
+                || attacker.Downed
+                || attacker.Crawling
+                || attacker.IsPsychologicallyInvisible()
+                || !pawn.Spawned
+                || !attacker.Spawned
+                || pawn.Map != attacker.Map
+                || !RimKataTargeting.IsAutomaticEnemy(pawn, attacker))
+            {
+                return false;
+            }
+
+            if (incomingThreatTicksRemaining > 0)
+            {
+                return true;
+            }
+
+            if ((attacker.stances?.curStance as Stance_Busy)?.focusTarg.Pawn == pawn)
+            {
+                return true;
+            }
+
+            Job job = attacker.CurJob;
+            bool attackJob = job?.def == JobDefOf.AttackMelee
+                || job?.def == JobDefOf.AttackStatic
+                || job?.def == RimKataDefOf.RimKata_Attack;
+
+            return attackJob && job.targetA.Thing == pawn;
+        }
+
+        private bool IsCloseAttackRequestActive()
+        {
+            Thing target = closeAttackRequestTarget;
+
+            if (target is Pawn targetPawn
+                && (targetPawn.Dead
+                || targetPawn.Downed
+                || targetPawn.Crawling
+                || targetPawn.IsPsychologicallyInvisible()))
+            {
+                return false;
+            }
+
+            return pawn != null
+                && target != null
+                && !pawn.Dead
+                && !target.Destroyed
+                && pawn.Spawned
+                && target.Spawned
+                && pawn.Map == target.Map
+                && (RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                    || (pawn.CurJob?.playerForced == true
+                        && pawn.CurJob.targetA.Thing == target))
+                && pawn.CanReachImmediate(target, PathEndMode.Touch);
+        }
+
+        private bool IsAutomaticAttackRequestActive()
+        {
+            Thing target = automaticAttackRequestTarget;
+
+            if (target is Pawn targetPawn
+                && (targetPawn.Dead
+                || targetPawn.Downed
+                || targetPawn.Crawling
+                || targetPawn.IsPsychologicallyInvisible()))
+            {
+                return false;
+            }
+            return pawn != null
+                && target != null
+                && automaticAttackRequestTicksRemaining > 0
+                && !pawn.Dead
+                && !target.Destroyed
+                && pawn.Spawned
+                && target.Spawned
+                && pawn.Map == target.Map
+                && (RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                    || (pawn.CurJob?.playerForced == true
+                        && pawn.CurJob.targetA.Thing == target));
+        }
+
+        public void CancelOffenseForFire()
+        {
+            bool clearResponseCooldownStance = ResponsePoseActive
+                && pawn?.stances?.curStance is Stance_Cooldown responseCooldown
+                && responseCooldown.focusTarg.Equals(responsePoseFocus)
+                && (responseCooldown.verb == null || responseCooldown.verb == RimKataWeaponSlotUtility.CombatVerb(pawn, responsePoseWeapon));
+
+            dodgeResumeWasMoving = false;
+            dodgeResumeDestination = LocalTargetInfo.Invalid;
+            dodgeResumePathEndMode = PathEndMode.OnCell;
+            CancelDraftedFire();
+            CancelWeaponCycles();
+            CancelResponsePose();
+
+            if (clearResponseCooldownStance
+                || pawn?.stances?.curStance is Stance_RimKataAim)
+            {
+                pawn.stances.SetStance(new Stance_Mobile());
+            }
+        }
+
+        private static int CurrentGameTick => Find.TickManager?.TicksGame ?? -1;
+    }
+
+    public sealed class RimKataMapComponent : MapComponent
+    {
+        private struct PendingProjectileValidation
+        {
+            public int dueTick;
+        }
+
+        private readonly object statesLock = new object();
+        private List<RimKataPawnCombatState> states = new List<RimKataPawnCombatState>();
+        private readonly Dictionary<Projectile, PendingProjectileValidation>
+            pendingProjectileValidations =
+                new Dictionary<Projectile, PendingProjectileValidation>();
+        private readonly List<Projectile> pendingProjectileScratch =
+            new List<Projectile>();
+        private readonly HashSet<Projectile> activeExplosiveProjectiles =
+            new HashSet<Projectile>();
+        private readonly List<Pawn> projectileWakeTraversal =
+            new List<Pawn>();
+        private bool projectileEventsSubscribed;
+        private bool projectileInitialRefreshPending;
+        private bool projectileWakeTraversalActive;
+        private bool projectileWakeTraversalIsRepeat;
+        private bool projectileWakeDirty;
+        private bool projectileWakeSawHostile;
+        private bool projectileSchedulerSuspended;
+        private int projectileWakeTraversalIndex;
+        private int projectileWakeRepeatTick = -1;
+
+        public RimKataMapComponent(Map map) : base(map)
+        {
+        }
+
+        public override void FinalizeInit()
+        {
+            base.FinalizeInit();
+            SubscribeProjectileEvents();
+            projectileInitialRefreshPending = true;
+        }
+
+        public override void MapRemoved()
+        {
+            UnsubscribeProjectileEvents();
+            ClearProjectileScheduler();
+            base.MapRemoved();
+        }
+
+        public override void ExposeData()
+        {
+            base.ExposeData();
+            lock (statesLock)
+            {
+                Scribe_Collections.Look(ref states, "rimKataPawnStates", LookMode.Deep);
+                if (Scribe.mode == LoadSaveMode.PostLoadInit && states == null)
+                {
+                    states = new List<RimKataPawnCombatState>();
+                }
+            }
+        }
+
+        public override void MapComponentTick()
+        {
+            TickProjectileScheduler();
+            lock (statesLock)
+            {
+                for (int i = states.Count - 1; i >= 0; i--)
+                {
+                    RimKataPawnCombatState state = states[i];
+                    if (state?.pawn == null || state.pawn.Destroyed || state.pawn.Map != map)
+                    {
+                        states.RemoveAt(i);
+                        continue;
+                    }
+
+                    if (state.pawn.Dead)
+                    {
+                        if (state.DodgeMotionBlocksJob)
+                        {
+                            state.pawn.pather?.StopDead();
+                        }
+
+                        state.CancelVisual();
+                        state.CancelDeflection();
+                        state.CancelResponsePose();
+                        state.CancelCloseDodge();
+                        state.CancelCloseCombat();
+                        state.CancelDraftedFire();
+                        state.ClearDraftedMovementSearchTracking();
+                        state.CancelWeaponCycles();
+                    }
+                    else if (state.pawn.Downed || !state.pawn.Awake())
+                    {
+                        if (state.DodgeMotionBlocksJob)
+                        {
+                            state.pawn.pather?.StopDead();
+                        }
+
+                        state.CancelVisual();
+                        state.CancelDeflection();
+                        state.CancelResponsePose();
+                        state.CancelCloseDodge();
+                        state.CancelCloseCombat();
+                        state.CancelDraftedFire(false);
+                        state.ClearDraftedMovementSearchTracking();
+                        state.CancelWeaponCycles();
+                    }
+                    else if (!state.pawn.Drafted)
+                    {
+                        RimKataDualWeaponController
+                            .RecoverCurrentCounterattackJob(state.pawn);
+                        state.CancelDraftedFire(false);
+                        if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack
+                            && !state.VanillaOpeningPending)
+                        {
+                            state.ClearDraftedMovementSearchTracking();
+                            RimKataDualWeaponController.DeactivateNonJobCycleWork(
+                                state.pawn);
+                            if (state.pawn.stances?.curStance is Stance_RimKataAim)
+                            {
+                                state.pawn.stances.SetStance(new Stance_Mobile());
+                            }
+                        }
+                    }
+
+                    if (!state.pawn.Dead
+                        && !state.pawn.Downed
+                        && state.pawn.Awake()
+                        && state.pawn.IsBurning())
+                    {
+                        state.CancelOffenseForFire();
+                    }
+
+                    if (state.VanillaOpeningPending)
+                    {
+                        RimKataWeaponCycleState openingCycle =
+                            state.primaryWeaponCycle?.vanillaOpeningPending == true
+                                ? state.primaryWeaponCycle
+                                : state.secondaryWeaponCycle;
+                        RimKataDualWeaponController.Tick(
+                            state.pawn,
+                            openingCycle?.vanillaOpeningTarget,
+                            state.pawn.CurJob?.playerForced == true,
+                            state.pawn.CurJob?.killIncappedTarget == true,
+                            openingCycle?.vanillaOpeningCloseContext == true);
+                    }
+
+                    RimKataDualWeaponController.TickIdleCycleTimers(state.pawn);
+                    state.Tick();
+                    if (state.incomingThreatTicksRemaining > 0)
+                    {
+                        state.incomingThreatTicksRemaining--;
+                    }
+                    if (state.weaponSwapPending)
+                    {
+                        ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(state.pawn);
+
+                        ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(state.pawn);
+
+                        if (primary == null || secondary == null)
+                        {
+                            state.weaponSwapPending = false;
+                        }
+                        else if (state.primaryWeaponCycle?.Active != true
+                            && state.secondaryWeaponCycle?.Active != true)
+                        {
+                            if (RimKataWeaponSlotUtility.TrySwapPrimarySecondary(state.pawn))
+                            {
+                                state.weaponSwapPending = false;
+                            }
+                        }
+                    }
+
+                    if (state.DodgeMovementWatchdogExpired)
+                    {
+                        TryFinishDodgeMovement(state.pawn, true, true);
+                    }
+
+                    if (!state.Active)
+                    {
+                        states.RemoveAt(i);
+                    }
+                }
+            }
+        }
+
+        private void SubscribeProjectileEvents()
+        {
+            if (projectileEventsSubscribed || map?.events == null)
+            {
+                return;
+            }
+
+            map.events.ThingSpawned += NotifyThingSpawned;
+            map.events.ThingDespawned += NotifyThingDespawned;
+            projectileEventsSubscribed = true;
+        }
+
+        private void UnsubscribeProjectileEvents()
+        {
+            if (!projectileEventsSubscribed || map?.events == null)
+            {
+                return;
+            }
+
+            map.events.ThingSpawned -= NotifyThingSpawned;
+            map.events.ThingDespawned -= NotifyThingDespawned;
+            projectileEventsSubscribed = false;
+        }
+
+        private void NotifyThingSpawned(Thing thing)
+        {
+            Projectile projectile = thing as Projectile;
+            if (RimKataMod.Settings?.explosiveInterceptionEnabled == false
+                || projectile == null
+                || projectile.def?.projectile?.explosionRadius <= 0f
+                || pendingProjectileValidations.ContainsKey(projectile)
+                || activeExplosiveProjectiles.Contains(projectile))
+            {
+                return;
+            }
+
+            pendingProjectileValidations[projectile] =
+                new PendingProjectileValidation
+                {
+                    dueTick = (Find.TickManager?.TicksGame ?? 0) + 1
+                };
+        }
+
+        private void NotifyThingDespawned(Thing thing)
+        {
+            Projectile projectile = thing as Projectile;
+            if (projectile == null)
+            {
+                return;
+            }
+
+            pendingProjectileValidations.Remove(projectile);
+            activeExplosiveProjectiles.Remove(projectile);
+        }
+
+        internal void RegisterLaunchedExplosiveProjectile(
+            Projectile projectile)
+        {
+            if (RimKataMod.Settings?.explosiveInterceptionEnabled == false
+                || map == null
+                || map.Disposed
+                || projectile?.Launcher == null
+                || !RimKataTargeting.IsPotentialExplosiveProjectile(
+                    projectile,
+                    map))
+            {
+                return;
+            }
+
+            pendingProjectileValidations.Remove(projectile);
+            if (activeExplosiveProjectiles.Add(projectile))
+            {
+                RequestProjectileWakeTraversal();
+            }
+        }
+
+        private void TickProjectileScheduler()
+        {
+            if (map == null || map.Disposed)
+            {
+                return;
+            }
+
+            if (RimKataMod.Settings?.explosiveInterceptionEnabled == false)
+            {
+                if (!projectileSchedulerSuspended)
+                {
+                    ClearProjectileScheduler();
+                    projectileSchedulerSuspended = true;
+                }
+
+                return;
+            }
+
+            if (projectileSchedulerSuspended)
+            {
+                projectileSchedulerSuspended = false;
+                projectileInitialRefreshPending = true;
+            }
+
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (currentTick < 0)
+            {
+                return;
+            }
+
+            if (projectileInitialRefreshPending)
+            {
+                projectileInitialRefreshPending = false;
+                RefreshActiveExplosiveProjectiles();
+                if (activeExplosiveProjectiles.Count > 0)
+                {
+                    RequestProjectileWakeTraversal();
+                }
+            }
+
+            ValidatePendingProjectiles(currentTick);
+
+            if (!projectileWakeTraversalActive
+                && projectileWakeRepeatTick >= 0
+                && currentTick >= projectileWakeRepeatTick)
+            {
+                projectileWakeRepeatTick = -1;
+                RefreshActiveExplosiveProjectiles();
+                if (activeExplosiveProjectiles.Count > 0)
+                {
+                    StartProjectileWakeTraversal(true);
+                }
+            }
+
+            if (!projectileWakeTraversalActive)
+            {
+                return;
+            }
+
+            if (projectileWakeTraversalIndex < projectileWakeTraversal.Count)
+            {
+                Pawn pawn = projectileWakeTraversal[
+                    projectileWakeTraversalIndex++];
+                bool hostileProjectile = pawn?.IsPlayerControlled == true
+                    && HasHostileExplosiveProjectileOnMapFor(pawn);
+                if (hostileProjectile)
+                {
+                    projectileWakeSawHostile = true;
+                }
+
+                if (hostileProjectile
+                    && RimKataDualWeaponController
+                        .CanAcceptIdleProjectileSearch(pawn))
+                {
+                    RimKataDualWeaponController.QueueIdleProjectileSearch(
+                        pawn);
+                }
+            }
+
+            if (projectileWakeTraversalIndex
+                < projectileWakeTraversal.Count)
+            {
+                return;
+            }
+
+            bool completedRepeat = projectileWakeTraversalIsRepeat;
+            bool sawHostile = projectileWakeSawHostile;
+            projectileWakeTraversalActive = false;
+            projectileWakeTraversal.Clear();
+            projectileWakeTraversalIndex = 0;
+            projectileWakeSawHostile = false;
+            if (projectileWakeDirty)
+            {
+                projectileWakeDirty = false;
+                StartProjectileWakeTraversal(false);
+            }
+            else if (!completedRepeat
+                && sawHostile
+                && activeExplosiveProjectiles.Count > 0)
+            {
+                projectileWakeRepeatTick = currentTick + 16;
+            }
+        }
+
+        private void ValidatePendingProjectiles(int currentTick)
+        {
+            if (pendingProjectileValidations.Count == 0)
+            {
+                return;
+            }
+
+            pendingProjectileScratch.Clear();
+            foreach (KeyValuePair<Projectile, PendingProjectileValidation>
+                pair in pendingProjectileValidations)
+            {
+                if (pair.Value.dueTick <= currentTick)
+                {
+                    pendingProjectileScratch.Add(pair.Key);
+                }
+            }
+
+            bool addedProjectile = false;
+            for (int i = 0; i < pendingProjectileScratch.Count; i++)
+            {
+                Projectile projectile = pendingProjectileScratch[i];
+                if (!pendingProjectileValidations.ContainsKey(projectile))
+                {
+                    continue;
+                }
+
+                if (!RimKataTargeting.IsPotentialExplosiveProjectile(
+                    projectile,
+                    map))
+                {
+                    pendingProjectileValidations.Remove(projectile);
+                    continue;
+                }
+
+                pendingProjectileValidations.Remove(projectile);
+                if (projectile.Launcher != null
+                    && activeExplosiveProjectiles.Add(projectile))
+                {
+                    addedProjectile = true;
+                }
+            }
+
+            if (addedProjectile)
+            {
+                RequestProjectileWakeTraversal();
+            }
+        }
+
+        private void RefreshActiveExplosiveProjectiles()
+        {
+            activeExplosiveProjectiles.Clear();
+            List<Thing> projectiles = map.listerThings.ThingsInGroup(
+                ThingRequestGroup.Projectile);
+            for (int i = 0; i < projectiles.Count; i++)
+            {
+                Projectile projectile = projectiles[i] as Projectile;
+                if (projectile?.Launcher != null
+                    && RimKataTargeting.IsPotentialExplosiveProjectile(
+                        projectile,
+                        map))
+                {
+                    activeExplosiveProjectiles.Add(projectile);
+                }
+            }
+        }
+
+        private void PruneActiveExplosiveProjectiles()
+        {
+            if (activeExplosiveProjectiles.Count == 0)
+            {
+                return;
+            }
+
+            pendingProjectileScratch.Clear();
+            foreach (Projectile projectile in activeExplosiveProjectiles)
+            {
+                if (!RimKataTargeting.IsPotentialExplosiveProjectile(
+                    projectile,
+                    map))
+                {
+                    pendingProjectileScratch.Add(projectile);
+                }
+            }
+
+            for (int i = 0; i < pendingProjectileScratch.Count; i++)
+            {
+                activeExplosiveProjectiles.Remove(
+                    pendingProjectileScratch[i]);
+            }
+        }
+
+        private void RequestProjectileWakeTraversal()
+        {
+            if (projectileWakeTraversalActive)
+            {
+                projectileWakeDirty = true;
+                return;
+            }
+
+            projectileWakeRepeatTick = -1;
+            StartProjectileWakeTraversal(false);
+        }
+
+        private void StartProjectileWakeTraversal(bool repeat)
+        {
+            PruneActiveExplosiveProjectiles();
+            projectileWakeTraversal.Clear();
+            var pawns = map.mapPawns.AllPawnsSpawned;
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn?.IsPlayerControlled == true)
+                {
+                    projectileWakeTraversal.Add(pawn);
+                }
+            }
+
+            projectileWakeTraversalIndex = 0;
+            projectileWakeTraversalIsRepeat = repeat;
+            projectileWakeSawHostile = false;
+            projectileWakeTraversalActive =
+                projectileWakeTraversal.Count > 0;
+        }
+
+        private bool HasHostileExplosiveProjectileOnMapFor(Pawn pawn)
+        {
+            if (pawn?.Map != map)
+            {
+                return false;
+            }
+
+            foreach (Projectile projectile in activeExplosiveProjectiles)
+            {
+                if (RimKataTargeting.IsPotentialExplosiveProjectile(
+                        projectile,
+                        map)
+                    && RimKataTargeting.IsEnemyProjectileLauncher(
+                        pawn,
+                        projectile))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        internal void AppendValidHostileProjectiles(
+            Pawn pawn,
+            Verb verb,
+            float rangeSquared,
+            List<Thing> destination)
+        {
+            if (pawn?.Map != map
+                || verb == null
+                || verb.IsMeleeAttack
+                || rangeSquared <= 0f
+                || destination == null
+                || RimKataMod.Settings?.explosiveInterceptionEnabled == false)
+            {
+                return;
+            }
+
+            PruneActiveExplosiveProjectiles();
+            foreach (Projectile projectile in activeExplosiveProjectiles)
+            {
+                if (RimKataTargeting.IsValidExplosiveProjectileForVerb(
+                        pawn,
+                        verb,
+                        projectile,
+                        rangeSquared)
+                    && !destination.Contains(projectile))
+                {
+                    destination.Add(projectile);
+                }
+            }
+        }
+
+        private void ClearProjectileScheduler()
+        {
+            pendingProjectileValidations.Clear();
+            pendingProjectileScratch.Clear();
+            activeExplosiveProjectiles.Clear();
+            projectileWakeTraversal.Clear();
+            projectileInitialRefreshPending = false;
+            projectileWakeTraversalActive = false;
+            projectileWakeTraversalIsRepeat = false;
+            projectileWakeDirty = false;
+            projectileWakeSawHostile = false;
+            projectileWakeTraversalIndex = 0;
+            projectileWakeRepeatTick = -1;
+        }
+
+        public RimKataPawnCombatState GetState(Pawn pawn, bool createIfMissing)
+        {
+            lock (statesLock)
+            {
+                for (int i = 0; i < states.Count; i++)
+                {
+                    if (states[i].pawn == pawn)
+                    {
+                        return states[i];
+                    }
+                }
+
+                if (!createIfMissing || pawn == null)
+                {
+                    return null;
+                }
+
+                RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
+                states.Add(state);
+                return state;
+            }
+        }
+
+        public bool BeginVisualState(Pawn pawn, RimKataVisualState visualState, int durationTicks, IntVec3 dodgeDirection)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                if (state.DodgeVisualLocked)
+                {
+                    return false;
+                }
+
+                state.visualState = visualState;
+                state.ticksRemaining = Mathf.Max(1, durationTicks);
+                state.totalTicks = state.ticksRemaining;
+                state.dodgeDirection = dodgeDirection;
+                state.tumbleSign = Rand.Bool ? 1 : -1;
+                state.additionalDodgeUsed = visualState == RimKataVisualState.AdditionalDodge || visualState == RimKataVisualState.Tumble;
+
+                return true;
+            }
+        }
+
+        public bool BeginDodgeMovement(
+            Pawn pawn,
+            IntVec3 destination,
+            IntVec3 combatDirection,
+            bool resumeWasMoving,
+            LocalTargetInfo resumeDestination,
+            PathEndMode resumePathEndMode,
+            Job movementJob,
+            int failureStaggerTicks,
+            float failureStaggerSpeedFactor,
+            int dodgeWindowDurationTicks)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                if (state.DodgeVisualLocked)
+                {
+                    return false;
+                }
+
+                state.visualState = RimKataVisualState.StandardDodge;
+                state.ticksRemaining = Mathf.Max(1, dodgeWindowDurationTicks);
+                state.totalTicks = state.ticksRemaining;
+                state.additionalDodgeUsed = false;
+                state.dodgeDirection = combatDirection;
+                state.dodgeMovementActive = true;
+                state.dodgeMovementTumbling = false;
+                state.dodgeMovementOrigin = pawn.Position;
+                state.dodgeMovementDestination = destination;
+                state.dodgeMovementProgress = 0f;
+                state.dodgeTumbleStartProgress = 0f;
+                state.dodgeMovementDirection = destination - pawn.Position;
+                state.dodgeMovementElapsedTicks = 0;
+                state.dodgeStartInProgress = true;
+                state.dodgeResumeWasMoving = resumeWasMoving;
+                state.dodgeResumeDestination = resumeDestination;
+                state.dodgeResumePathEndMode = resumePathEndMode;
+                state.dodgeMovementJob = movementJob;
+                state.dodgeFailureStaggerTicks = Mathf.Max(0, failureStaggerTicks);
+                state.dodgeFailureStaggerSpeedFactor = Mathf.Max(0f, failureStaggerSpeedFactor);
+                state.tumbleSign = Rand.Bool ? 1 : -1;
+            }
+
+            try
+            {
+                pawn.pather.StartPath(destination, PathEndMode.OnCell);
+            }
+            finally
+            {
+                lock (statesLock)
+                {
+                    RimKataPawnCombatState state = GetState(pawn, false);
+                    if (state != null)
+                    {
+                        state.dodgeStartInProgress = false;
+                    }
+                }
+            }
+
+            return IsDodgeMovementActive(pawn);
+        }
+
+        public bool TryFinishDodgeMovement(Pawn pawn, bool failed, bool force = false)
+        {
+            bool resumePath;
+            LocalTargetInfo resumeDestination;
+            PathEndMode resumePathEndMode;
+            bool applyFailureStagger;
+            int failureStaggerTicks;
+            float failureStaggerSpeedFactor;
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                if (state?.DodgeMovementActive != true)
+                {
+                    return false;
+                }
+
+                bool sameJob = state.dodgeMovementJob == pawn.CurJob;
+                bool ownsDestination = pawn.pather?.Destination.IsValid == true && pawn.pather.Destination.Cell == state.dodgeMovementDestination;
+                bool synchronousStartFailure = failed && state.dodgeStartInProgress;
+                applyFailureStagger = failed && !synchronousStartFailure && state.dodgeFailureStaggerTicks > 0;
+                failureStaggerTicks = state.dodgeFailureStaggerTicks;
+                failureStaggerSpeedFactor = state.dodgeFailureStaggerSpeedFactor;
+                if (!sameJob
+                    || (!force && !ownsDestination && !synchronousStartFailure)
+                    || (!force && !failed && pawn.Position != state.dodgeMovementDestination))
+                {
+                    return false;
+                }
+
+                resumePath = !failed
+                    && state.dodgeResumeWasMoving
+                    && state.dodgeResumeDestination.IsValid
+                    && (!state.dodgeResumeDestination.HasThing || !state.dodgeResumeDestination.ThingDestroyed);
+                resumeDestination = state.dodgeResumeDestination;
+                resumePathEndMode = state.dodgeResumePathEndMode;
+                bool wasTumbling = state.dodgeMovementTumbling;
+                if (failed)
+                {
+                    resumePath = !synchronousStartFailure
+                        && state.dodgeResumeWasMoving
+                        && state.dodgeResumeDestination.IsValid
+                        && (!state.dodgeResumeDestination.HasThing
+                            || !state.dodgeResumeDestination.ThingDestroyed);
+                    resumeDestination = state.dodgeResumeDestination;
+                    resumePathEndMode = state.dodgeResumePathEndMode;
+                    state.ConvertDodgeMovementToTumble();
+                    state.dodgeResumeWasMoving = false;
+                    state.dodgeResumeDestination = LocalTargetInfo.Invalid;
+                    state.dodgeMovementJob = null;
+                }
+                else if (wasTumbling)
+                {
+                    state.HoldDodgeLanding();
+                }
+                else
+                {
+                    state.HoldStandardDodgeLanding();
+                }
+            }
+
+            pawn.pather.StopDead();
+            if (applyFailureStagger)
+            {
+                pawn.stances?.stagger?.StaggerFor(failureStaggerTicks, failureStaggerSpeedFactor);
+            }
+
+            if (resumePath && pawn.Spawned)
+            {
+                pawn.pather.StartPath(resumeDestination, resumePathEndMode);
+            }
+
+            return true;
+        }
+
+        public void CancelFailedDodgeMovementStart(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                GetState(pawn, false)?.CancelVisual();
+            }
+        }
+
+        public bool IsDodgeMovementActive(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                if (state?.DodgeMovementActive != true || state.dodgeMovementJob != pawn.CurJob)
+                {
+                    return false;
+                }
+
+                return pawn.Position == state.dodgeMovementDestination
+                    || (pawn.pather?.Destination.IsValid == true
+                        && pawn.pather.Destination.Cell == state.dodgeMovementDestination);
+            }
+        }
+
+        public bool IsDodgeMotionBlocking(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.DodgeMotionBlocksJob == true;
+            }
+        }
+
+        public bool IsDodgeVisualLocked(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.DodgeVisualLocked == true;
+            }
+        }
+
+        public bool IsStandardDodgeWindow(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                return state?.VisualActive == true
+                    && state.visualState == RimKataVisualState.StandardDodge
+                    && !state.additionalDodgeUsed;
+            }
+        }
+
+        public bool IsAdditionalDodgeProtectionActive(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.AdditionalDodgeProtectionActive == true;
+            }
+        }
+
+        public bool TryUpgradeDodgeMovementToTumble(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                if (state?.DodgeMovementActive != true
+                    || state.visualState != RimKataVisualState.StandardDodge
+                    || state.dodgeMovementTumbling)
+                {
+                    return false;
+                }
+
+                state.UpgradeDodgeMovementToTumble();
+                return true;
+            }
+        }
+
+        public bool TryBeginStationaryAdditionalDodge(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                if (state?.VisualActive != true
+                    || state.visualState != RimKataVisualState.StandardDodge
+                    || state.additionalDodgeUsed)
+                {
+                    return false;
+                }
+
+                state.BeginStationaryAdditionalDodge();
+                return true;
+            }
+        }
+
+        public RimKataVisualSnapshot GetVisualSnapshot(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                return state != null ? state.VisualSnapshot() : default(RimKataVisualSnapshot);
+            }
+        }
+
+        public bool TryGetGunReadyTarget(Pawn pawn, out LocalTargetInfo target)
+        {
+            target = LocalTargetInfo.Invalid;
+            Job currentJob = pawn?.CurJob;
+            bool ready = currentJob?.def == RimKataDefOf.RimKata_Attack;
+            if (ready
+                && currentJob.targetA.HasThing
+                && !IsLiveRimKataJobTarget(
+                    pawn,
+                    currentJob,
+                    currentJob.targetA.Thing))
+            {
+                ready = false;
+            }
+            else if (ready && currentJob.targetA.IsValid)
+            {
+                target = currentJob.targetA;
+            }
+
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, false);
+                if (state == null)
+                {
+                    return ready;
+                }
+
+                bool responseLookActive = state.responsePoseLookAtFocus
+                    && state.TryGetLiveResponsePoseFocus(
+                        out LocalTargetInfo _);
+
+                if (state.CloseCombatActive)
+                {
+                    if (state.TryGetLiveCloseCombatTrigger(
+                        out Thing closeCombatTrigger))
+                    {
+                        ThingWithComps primary =
+                            RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+                        Verb primaryVerb =
+                            RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
+                        if (RimKataMod.Settings?.closeFireEnabled == false
+                            && primaryVerb?.IsMeleeAttack == false)
+                        {
+                            ready = false;
+                            target = LocalTargetInfo.Invalid;
+                        }
+                        else
+                        {
+                            ready = true;
+                            target = new LocalTargetInfo(closeCombatTrigger);
+                        }
+                    }
+                    else
+                    {
+                        state.CancelCloseCombat();
+                    }
+                }
+                else if (state.dedicatedFollowupJobPending)
+                {
+                    ready = true;
+                    Thing pendingTarget = state.dedicatedFollowupJobTarget;
+                    if (pendingTarget != null
+                        && !pendingTarget.Destroyed
+                        && pendingTarget.Spawned
+                        && pendingTarget.Map == pawn?.Map)
+                    {
+                        target = new LocalTargetInfo(pendingTarget);
+                    }
+                }
+                else if (state.DraftedFireActive
+                    && pawn?.pather?.MovingNow == true
+                    && ((state.draftedPlannedTarget != null
+                    && !state.draftedPlannedTarget.Destroyed) || state.StoredCooldownActive))
+                {
+                    ready = true;
+                    if (state.draftedPlannedTarget != null && !state.draftedPlannedTarget.Destroyed)
+                    {
+                        target = new LocalTargetInfo(state.draftedPlannedTarget);
+                    }
+                }
+
+                if (!responseLookActive
+                    && !state.CloseCombatActive
+                    && pawn?.pather?.MovingNow == true
+                    && RimKataDualWeaponController.TryGetNextAim(
+                        pawn,
+                        out ThingWithComps _,
+                        out LocalTargetInfo movingAimTarget))
+                {
+                    ready = true;
+                    target = movingAimTarget;
+                }
+
+                if (!responseLookActive
+                    && !state.CloseCombatActive
+                    && pawn?.pather?.MovingNow == true
+                    && ready
+                    && !WithinAutomaticMovingFireRange(pawn, target))
+                {
+                    ready = false;
+                    target = LocalTargetInfo.Invalid;
+                }
+
+                return ready;
+            }
+        }
+
+        public override void MapComponentUpdate()
+        {
+            base.MapComponentUpdate();
+            if (Find.CurrentMap == map)
+            {
+                RimKataDebugHUD.DrawSearchPulses(map);
+            }
+        }
+
+        private static bool IsLiveRimKataJobTarget(
+            Pawn pawn,
+            Job job,
+            Thing target)
+        {
+            if (pawn?.Map == null
+                || target == null
+                || target.Destroyed
+                || !target.Spawned
+                || target.Map != pawn.Map
+                || (!job.playerForced
+                    && !RimKataTargeting.IsAutomaticEnemy(pawn, target)))
+            {
+                return false;
+            }
+
+            return !(target is Pawn targetPawn)
+                || (!targetPawn.Dead
+                    && !targetPawn.Crawling
+                    && !targetPawn.IsPsychologicallyInvisible()
+                    && (!targetPawn.Downed
+                        || (job.playerForced
+                            && job.killIncappedTarget)));
+        }
+
+        private static bool WithinAutomaticMovingFireRange(
+            Pawn pawn,
+            LocalTargetInfo target)
+        {
+            if (pawn?.Map == null
+                || !target.IsValid
+                || !target.HasThing
+                || target.Thing == null
+                || target.Thing.Destroyed
+                || !target.Thing.Spawned
+                || target.Thing.Map != pawn.Map)
+            {
+                return false;
+            }
+
+            float range = RimKataTargeting.MaximumAutomaticSearchRange(pawn);
+            return range > 0f
+                && pawn.Position.DistanceToSquared(target.Cell)
+                    <= range * range;
+        }
+
+        public void BeginDeflection(Pawn pawn, int durationTicks, int sign, ThingWithComps weapon)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                if (state.DeflectionActive)
+                {
+                    state.deflectionTicksRemaining = Mathf.Max(1, durationTicks);
+                    state.deflectionTotalTicks = state.deflectionTicksRemaining;
+                    state.deflectionWeapon = weapon;
+                    return;
+                }
+
+                state.deflectionTicksRemaining = Mathf.Max(1, durationTicks);
+                state.deflectionTotalTicks = state.deflectionTicksRemaining;
+                state.deflectionWeapon = weapon;
+                state.deflectionSign = sign < 0 ? -1 : 1;
+            }
+        }
+
+        public void BeginResponsePose(
+            Pawn pawn,
+            int durationTicks,
+            float maximumAngle,
+            int sign,
+            LocalTargetInfo focus,
+            ThingWithComps weapon,
+            bool lookAtFocus)
+        {
+            if (pawn != null && pawn.IsBurning())
+            {
+                lock (statesLock)
+                {
+                    GetState(pawn, false)?.CancelOffenseForFire();
+                }
+
+                if (pawn.stances?.curStance is Stance_Cooldown
+                    || pawn.stances?.curStance is Stance_RimKataAim)
+                {
+                    pawn.stances.SetStance(new Stance_Mobile());
+                }
+
+                return;
+            }
+
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                state.responsePoseTicksRemaining = Mathf.Max(1, durationTicks);
+                state.responsePoseTotalTicks = state.responsePoseTicksRemaining;
+                state.responsePoseMaxAngle = Mathf.Clamp(maximumAngle, 0f, 30f);
+                state.responsePoseSign = sign < 0 ? -1 : 1;
+                state.responsePoseFocus = focus;
+                state.responsePoseWeapon = weapon;
+                state.responsePoseLookAtFocus = lookAtFocus;
+            }
+        }
+
+        public void BeginCloseCombatDodge(Pawn pawn, int durationTicks)
+        {
+            lock (statesLock)
+            {
+                GetState(pawn, true)?.BeginCloseDodge(durationTicks);
+            }
+        }
+
+        public void EnterCloseCombat(Pawn pawn, Thing trigger)
+        {
+            bool clearPreviousAim = false;
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                clearPreviousAim = state != null && !state.CloseCombatActive;
+                state?.EnterCloseCombat(trigger);
+            }
+
+            if (clearPreviousAim && pawn?.stances?.curStance is Stance_RimKataAim)
+            {
+                pawn.stances.SetStance(new Stance_Mobile());
+            }
+        }
+
+        public void ExitCloseCombat(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                GetState(pawn, false)?.CancelCloseCombat();
+            }
+        }
+
+        public bool IsCloseCombatActive(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.CloseCombatActive == true;
+            }
+        }
+
+        public int DeflectionTicksRemaining(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.deflectionTicksRemaining ?? 0;
+            }
+        }
+    }
+}

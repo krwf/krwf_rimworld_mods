@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<defs>
+  <UseRimKatas>
+    <Equipment>
+      <name>AutoPistol</name>
+      <AttackRange>10</AttackRange>
+      <li>4</li>
+    </Equipment>
+    <Equipment>
+      <name>AutoPistol</name>
+      <AttackRange>10</AttackRange>
+      <li>4</li>
+    </Equipment>
+    <Hediff>
+      <name>AutoPistol</name>
+      <AttackRange>10</AttackRange>
+      <li>4</li>
+    </Hediff>
+  </UseRimKatas>
+</defs>

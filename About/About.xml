@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+  <name>RimKata</name>
+  <author>KRWF</author>
+  <packageId>krwf.rimkata</packageId>
+  <modIconPath>RimKata_Icon</modIconPath>
+  <description>Close-range gun kata combat enabled by RimKata-A, RimKata-P, RimKata-G, RimKata-I, or the optional mind-numb serum dependency gene.
+
+The core RimKata-A route requires no DLC. Royalty adds RimKata-P, Biotech adds RimKata-G, Anomaly and Biotech add the mind-numb serum dependency gene and creepjoiner integration, and Ideology adds the RimKata-I role.</description>
+  <supportedVersions>
+    <li>1.6</li>
+  </supportedVersions>
+  <modDependencies>
+    <li>
+      <packageId>brrainz.harmony</packageId>
+      <displayName>Harmony</displayName>
+      <steamWorkshopUrl>https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077</steamWorkshopUrl>
+    </li>
+  </modDependencies>
+  <loadAfter>
+    <li>brrainz.harmony</li>
+    <li>Ludeon.RimWorld</li>
+    <li>Ludeon.RimWorld.Royalty</li>
+    <li>Ludeon.RimWorld.Biotech</li>
+    <li>Ludeon.RimWorld.Ideology</li>
+    <li>Ludeon.RimWorld.Anomaly</li>
+  </loadAfter>
+</ModMetaData>
