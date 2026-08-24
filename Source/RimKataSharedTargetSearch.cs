@@ -97,7 +97,17 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Prune(pawn, combatState, false);
+            bool removedCandidate = Prune(pawn, combatState, false);
+            if (!idleProjectileTrigger
+                && ShouldSkipSaturatedCandidateSearch(
+                    pawn,
+                    combatState,
+                    origin,
+                    removedCandidate))
+            {
+                return false;
+            }
+
             float maximumRange = MaximumRange(pawn, combatState);
             if (maximumRange <= 0f)
             {
@@ -252,8 +262,11 @@ namespace KRWF.RimKata
 
             PruneCycle(pawn, combatState, cycle, verb);
             bool randomAttack = RandomAttackEnabled(pawn);
+            bool idleProjectilePriority = !randomAttack
+                && (combatState.idleProjectileSearchTriggerPending
+                    || combatState.sharedTargetSearch.idleProjectileTrigger);
             if (!randomAttack
-                && !combatState.sharedTargetSearch.idleProjectileTrigger
+                && !idleProjectilePriority
                 && !(preferredTarget is Projectile)
                 && IsValidForCycle(
                     pawn,
@@ -267,7 +280,7 @@ namespace KRWF.RimKata
             }
 
             EligibleCandidates.Clear();
-            if (!combatState.sharedTargetSearch.idleProjectileTrigger)
+            if (!idleProjectilePriority)
             {
                 List<Thing> ordinary = cycle.automaticCandidates;
                 for (int i = 0; i < ordinary.Count; i++)
@@ -299,7 +312,7 @@ namespace KRWF.RimKata
             }
 
             bool includeProjectiles = randomAttack
-                || combatState.sharedTargetSearch.idleProjectileTrigger;
+                || idleProjectilePriority;
             if (includeProjectiles
                 && RimKataMod.Settings?.explosiveInterceptionEnabled != false)
             {
@@ -324,7 +337,7 @@ namespace KRWF.RimKata
             {
                 target = EligibleCandidates.RandomElement();
             }
-            else if (combatState.sharedTargetSearch.idleProjectileTrigger)
+            else if (idleProjectilePriority)
             {
                 target = ClosestProjectile(pawn, EligibleCandidates);
             }
@@ -386,14 +399,14 @@ namespace KRWF.RimKata
             Prune(pawn, combatState, true);
         }
 
-        private static void Prune(
+        private static bool Prune(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             bool restartFinishedSearchAfterRemoval)
         {
             if (combatState == null)
             {
-                return;
+                return false;
             }
 
             bool removedCandidate = PruneCycle(
@@ -421,8 +434,10 @@ namespace KRWF.RimKata
                 && search?.sessionActive == true
                 && !search.scanActive)
             {
+                combatState.ResetCandidateSaturationExpansion(true);
                 Restart(pawn, combatState, pawn.Position);
             }
+            return removedCandidate;
         }
 
         internal static bool IsValidForVerb(
@@ -767,6 +782,113 @@ namespace KRWF.RimKata
                 && (combatState?.secondaryWeaponCycle == null
                     || combatState.secondaryWeaponCycle
                         .automaticCandidateCollectionClosed);
+        }
+
+        private static bool ShouldSkipSaturatedCandidateSearch(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            IntVec3 origin,
+            bool removedCandidate)
+        {
+            if (combatState?.candidateSaturationExpansionUsed != true
+                || IsCloseCombatContext(combatState))
+            {
+                return false;
+            }
+
+            if (removedCandidate)
+            {
+                combatState.ResetCandidateSaturationExpansion(true);
+                return false;
+            }
+
+            if (HasPendingCandidateLimitOverride(combatState))
+            {
+                return false;
+            }
+
+            bool primarySaturated = StoredCandidatesSaturateCycle(
+                pawn,
+                combatState,
+                combatState.primaryWeaponCycle,
+                origin,
+                out bool primaryUsable);
+            bool secondarySaturated = StoredCandidatesSaturateCycle(
+                pawn,
+                combatState,
+                combatState.secondaryWeaponCycle,
+                origin,
+                out bool secondaryUsable);
+            if ((primaryUsable || secondaryUsable)
+                && (!primaryUsable || primarySaturated)
+                && (!secondaryUsable || secondarySaturated))
+            {
+                return true;
+            }
+
+            combatState.ResetCandidateSaturationExpansion(true);
+            return false;
+        }
+
+        private static bool HasPendingCandidateLimitOverride(
+            RimKataPawnCombatState combatState)
+        {
+            return combatState?.primaryWeaponCycle
+                    ?.pendingCandidateLimitOverride > 0
+                || combatState?.primaryWeaponCycle
+                    ?.activeCandidateLimitOverride > 0
+                || combatState?.secondaryWeaponCycle
+                    ?.pendingCandidateLimitOverride > 0
+                || combatState?.secondaryWeaponCycle
+                    ?.activeCandidateLimitOverride > 0;
+        }
+
+        private static bool StoredCandidatesSaturateCycle(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            IntVec3 origin,
+            out bool usable)
+        {
+            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            float range = RangeForCycle(
+                pawn,
+                combatState,
+                cycle,
+                verb);
+            usable = cycle?.weapon != null && verb != null && range > 0f;
+            if (!usable)
+            {
+                return false;
+            }
+
+            List<Thing> candidates = cycle.automaticCandidates;
+            int maximumRing = MaximumLogicalRing(range);
+            for (int ring = 1; ring <= maximumRing; ring++)
+            {
+                int limit = CandidateLimitForRing(ring);
+                if (candidates == null || candidates.Count < limit)
+                {
+                    continue;
+                }
+
+                float outerRadius = ring + ApiRadiusPadding;
+                float outerSquared = outerRadius * outerRadius;
+                int count = 0;
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    Thing candidate = candidates[i];
+                    if (candidate != null
+                        && origin.DistanceToSquared(candidate.Position)
+                            <= outerSquared
+                        && ++count >= limit)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static void InitializeCollectionClosure(

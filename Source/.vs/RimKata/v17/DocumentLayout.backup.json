@@ -3,6 +3,10 @@
   "WorkspaceRootPath": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|c:\\users\\user\\documents\\rimworldmodsfolder\\rimkata\\source\\rimkatadebughud.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|solutionrelative:rimkatadebughud.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|c:\\users\\user\\documents\\rimworldmodsfolder\\rimkata\\source\\jobdriver_rimkataattack.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|solutionrelative:jobdriver_rimkataattack.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
@@ -71,10 +75,6 @@
       "RelativeMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|solutionrelative:rimkataeligibility.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|c:\\users\\user\\documents\\rimworldmodsfolder\\rimkata\\source\\rimkatadebughud.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
-      "RelativeMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|solutionrelative:rimkatadebughud.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
-    },
-    {
       "AbsoluteMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|c:\\users\\user\\documents\\rimworldmodsfolder\\rimkata\\source\\rimkatacombatstate.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
       "RelativeMoniker": "D:0:0:{57DD54F7-233E-1F4F-CDA5-A3CCDD954346}|RimKata.csproj|solutionrelative:rimkatacombatstate.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
     },
@@ -94,11 +94,11 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 1,
+          "SelectedChildIndex": 15,
           "Children": [
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 3,
               "Title": "RimKataDualWeaponController.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDualWeaponController.cs",
               "RelativeDocumentMoniker": "RimKataDualWeaponController.cs",
@@ -107,12 +107,11 @@
               "ViewState": "AgIAAOAAAAAAAAAAAAAIwOwAAAANAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-08-19T14:41:00.503Z",
-              "IsPinned": true,
-              "EditorCaption": ""
+              "IsPinned": true
             },
             {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "JobDriver_RimKataAttack.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\JobDriver_RimKataAttack.cs",
               "RelativeDocumentMoniker": "JobDriver_RimKataAttack.cs",
@@ -139,7 +138,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 6,
               "Title": "RimKataAimLeanUtility.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataAimLeanUtility.cs",
               "RelativeDocumentMoniker": "RimKataAimLeanUtility.cs",
@@ -151,7 +150,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 9,
+              "DocumentIndex": 10,
               "Title": "RimKata.csproj",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKata.csproj",
               "RelativeDocumentMoniker": "RimKata.csproj",
@@ -163,7 +162,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 10,
+              "DocumentIndex": 11,
               "Title": "RimKataSettingsDrawer.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataSettingsDrawer.cs",
               "RelativeDocumentMoniker": "RimKataSettingsDrawer.cs",
@@ -175,7 +174,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 11,
+              "DocumentIndex": 12,
               "Title": "RimKataSettings.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataSettings.cs",
               "RelativeDocumentMoniker": "RimKataSettings.cs",
@@ -187,7 +186,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 12,
+              "DocumentIndex": 13,
               "Title": "RimKataSecondaryWeapon.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataSecondaryWeapon.cs",
               "RelativeDocumentMoniker": "RimKataSecondaryWeapon.cs",
@@ -199,7 +198,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 13,
+              "DocumentIndex": 14,
               "Title": "RimKataRangeUtility.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataRangeUtility.cs",
               "RelativeDocumentMoniker": "RimKataRangeUtility.cs",
@@ -211,7 +210,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 14,
+              "DocumentIndex": 15,
               "Title": "RimKataMod.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataMod.cs",
               "RelativeDocumentMoniker": "RimKataMod.cs",
@@ -223,7 +222,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 7,
+              "DocumentIndex": 8,
               "Title": "RimKataFireUtility.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataFireUtility.cs",
               "RelativeDocumentMoniker": "RimKataFireUtility.cs",
@@ -235,7 +234,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 15,
+              "DocumentIndex": 16,
               "Title": "RimKataEligibilityCache.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataEligibilityCache.cs",
               "RelativeDocumentMoniker": "RimKataEligibilityCache.cs",
@@ -247,7 +246,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 16,
+              "DocumentIndex": 17,
               "Title": "RimKataEligibility.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataEligibility.cs",
               "RelativeDocumentMoniker": "RimKataEligibility.cs",
@@ -259,7 +258,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 7,
               "Title": "RimKataDodgeMovement.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDodgeMovement.cs",
               "RelativeDocumentMoniker": "RimKataDodgeMovement.cs",
@@ -271,7 +270,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 5,
               "Title": "RimKataDefense.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDefense.cs",
               "RelativeDocumentMoniker": "RimKataDefense.cs",
@@ -283,15 +282,16 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 17,
+              "DocumentIndex": 0,
               "Title": "RimKataDebugHUD.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDebugHUD.cs",
               "RelativeDocumentMoniker": "RimKataDebugHUD.cs",
               "ToolTip": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDebugHUD.cs",
               "RelativeToolTip": "RimKataDebugHUD.cs",
-              "ViewState": "AgIAAKUAAAAAAAAAAADwv7wAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAGcAAAAAAAAAAAAuwLwAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-08-20T11:41:49.996Z"
+              "WhenOpened": "2026-08-20T11:41:49.996Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -307,7 +307,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "Dialog_RimKataDefSelector.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\Dialog_RimKataDefSelector.cs",
               "RelativeDocumentMoniker": "Dialog_RimKataDefSelector.cs",
@@ -315,12 +315,11 @@
               "RelativeToolTip": "Dialog_RimKataDefSelector.cs",
               "ViewState": "AgIAANYBAAAAAAAAAAAQwO0BAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-08-20T11:41:34.281Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-08-20T11:41:34.281Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 4,
               "Title": "UseRimKatas.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\UseRimKatas.cs",
               "RelativeDocumentMoniker": "UseRimKatas.cs",
@@ -331,7 +330,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 8,
+              "DocumentIndex": 9,
               "Title": "RimKataVisualPatches.cs",
               "DocumentMoniker": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataVisualPatches.cs",
               "RelativeDocumentMoniker": "RimKataVisualPatches.cs",

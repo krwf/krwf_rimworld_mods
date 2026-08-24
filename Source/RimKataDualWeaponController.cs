@@ -529,16 +529,6 @@ namespace KRWF.RimKata
                 state.sharedTargetSearch?.Reset();
             }
 
-            if (state.idleProjectileSearchTriggerPending)
-            {
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position,
-                    true);
-                state.ConsumeIdleProjectileSearchTrigger();
-            }
-
             Thing closeTarget = closeTargetResolved
                 && closeCombatContext
                 && IsImmediateCloseTarget(
@@ -563,6 +553,27 @@ namespace KRWF.RimKata
                 state,
                 closeCombatContext,
                 closeTarget);
+
+            if (state.idleProjectileSearchTriggerPending)
+            {
+                if (allowAutomaticRangedFire)
+                {
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        state.primaryWeaponCycle,
+                        assignedTarget,
+                        true);
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        state.secondaryWeaponCycle,
+                        assignedTarget,
+                        true);
+                }
+                state.ConsumeIdleProjectileSearchTrigger();
+                RefreshDualEngagementState(pawn, state);
+            }
 
             if (state.VanillaOpeningPending && closeCombatContext)
             {
@@ -1196,7 +1207,6 @@ namespace KRWF.RimKata
             {
                 return false;
             }
-            state.dualLastDrivenTick = Find.TickManager?.TicksGame ?? -1;
             return true;
         }
 
@@ -2133,10 +2143,15 @@ namespace KRWF.RimKata
             Pawn pawn,
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle,
-            Thing preferredTarget)
+            Thing preferredTarget,
+            bool allowPendingProjectileTrigger = false)
         {
+            bool searchAvailable = state?.sharedTargetSearch
+                    ?.sessionActive == true
+                || (allowPendingProjectileTrigger
+                    && state?.idleProjectileSearchTriggerPending == true);
             if (pawn?.Map == null
-                || state?.sharedTargetSearch?.sessionActive != true
+                || !searchAvailable
                 || cycle == null
                 || cycle.focusedTarget != null
                 || cycle.cachedCandidateTarget != null
@@ -4389,7 +4404,6 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            state.dualLastDrivenTick = Find.TickManager?.TicksGame ?? -1;
             return true;
         }
 
