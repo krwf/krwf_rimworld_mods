@@ -44,8 +44,6 @@ namespace KRWF.RimKata
 
     public sealed class RimKataPawnCombatState : IExposable
     {
-        private const int CurrentCounterattackTargetContractVersion = 1;
-
         public Pawn pawn;
         public RimKataVisualState visualState;
         public int ticksRemaining;
@@ -107,22 +105,13 @@ namespace KRWF.RimKata
         public int observedSecondaryCandidateCount = -1;
         public Thing dualCloseTarget;
         public ThingWithComps engagementOwnerWeapon;
-        public RimKataRushAuthority rushAuthority;
-        public Thing rushAuthorityTarget;
-        public Thing pendingCounterattackTarget;
-        public int pendingCounterattackTicksRemaining;
-        public bool counterattackRimKataSessionActive;
-        public bool counterattackMoteShown;
-        public Thing counterattackJobTarget;
-        public int counterattackTargetContractVersion =
-            CurrentCounterattackTargetContractVersion;
-        public bool counterattackTargetLoadRepairPending;
         public ThingWithComps responsePoseWeapon;
         public ThingWithComps deflectionWeapon;
         public Job loadoutInvalidatedCombatJob;
         public bool dedicatedFollowupJobPending;
         public Thing dedicatedFollowupJobTarget;
         public Job dedicatedFollowupJobSourceJob;
+        public Job projectileWakeResumeJob;
         public bool dedicatedFollowupJobPlayerForced;
         public int absorbedPathBlockedGotoJobId = -1;
         public Thing absorbedPathBlockedThreat;
@@ -185,34 +174,6 @@ namespace KRWF.RimKata
             || (secondaryWeaponCycle?.Active == true)
             || dualEngagementActive
             || sharedTargetSearch?.KeepsCombatAlive == true;
-        public bool RushAuthorized
-        {
-            get
-            {
-                Thing target = rushAuthorityTarget;
-                if (pawn?.Drafted == true
-                    || rushAuthority == RimKataRushAuthority.None
-                    || target == null
-                    || target.Destroyed
-                    || !target.Spawned
-                    || target.Map != pawn?.Map)
-                {
-                    return false;
-                }
-
-                if (rushAuthority != RimKataRushAuthority.Counterattack)
-                {
-                    return true;
-                }
-
-                return RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                    && (!(target is Pawn targetPawn)
-                        || (!targetPawn.Dead
-                            && !targetPawn.Downed
-                            && !targetPawn.Crawling
-                            && !targetPawn.IsPsychologicallyInvisible()));
-            }
-        }
         public bool IncomingThreatActive => IsIncomingThreatActive();
         public bool CloseAttackRequestActive => IsCloseAttackRequestActive();
         public bool AutomaticAttackRequestActive => IsAutomaticAttackRequestActive();
@@ -336,23 +297,11 @@ namespace KRWF.RimKata
                 "candidateSaturationExpansionUsed");
             Scribe_References.Look(ref dualCloseTarget, "dualCloseTarget");
             Scribe_References.Look(ref engagementOwnerWeapon, "engagementOwnerWeapon");
-            Scribe_Values.Look(ref rushAuthority, "rushAuthority", RimKataRushAuthority.None);
-            Scribe_References.Look(ref rushAuthorityTarget, "rushAuthorityTarget");
-            Scribe_References.Look(ref pendingCounterattackTarget, "pendingCounterattackTarget");
-            Scribe_Values.Look(ref pendingCounterattackTicksRemaining, "pendingCounterattackTicksRemaining");
-            Scribe_Values.Look(
-                ref counterattackRimKataSessionActive,
-                "counterattackRimKataSessionActive");
-            Scribe_Values.Look(ref counterattackMoteShown, "counterattackMoteShown");
-            Scribe_References.Look(
-                ref counterattackJobTarget,
-                "counterattackJobTarget");
-            Scribe_Values.Look(
-                ref counterattackTargetContractVersion,
-                "counterattackTargetContractVersion",
-                0);
             Scribe_References.Look(ref responsePoseWeapon, "responsePoseWeapon");
             Scribe_References.Look(ref deflectionWeapon, "deflectionWeapon");
+            Scribe_References.Look(
+                ref projectileWakeResumeJob,
+                "projectileWakeResumeJob");
             Scribe_References.Look(ref incomingThreatSource, "incomingThreatSource");
             Scribe_Values.Look(ref incomingThreatTicksRemaining, "incomingThreatTicksRemaining");
             Scribe_References.Look(ref closeAttackRequestTarget, "closeAttackRequestTarget");
@@ -366,13 +315,6 @@ namespace KRWF.RimKata
                 sharedTargetSearch ??= new RimKataSharedTargetSearchState();
                 ResetAutomaticCandidateCountTracking();
                 movementFireContinuityUntilTick = -1;
-                counterattackTargetLoadRepairPending =
-                    counterattackRimKataSessionActive
-                    && counterattackTargetContractVersion
-                        < CurrentCounterattackTargetContractVersion;
-                counterattackTargetContractVersion =
-                    CurrentCounterattackTargetContractVersion;
-
                 if (weaponSwapPending)
                 {
                     primaryWeaponCycle.Reset();
@@ -397,36 +339,6 @@ namespace KRWF.RimKata
         public void Tick()
         {
             UpdateDraftedCooldown();
-            if (pawn?.Drafted == true
-                && (rushAuthority != RimKataRushAuthority.None
-                    || pendingCounterattackTarget != null
-                    || counterattackRimKataSessionActive))
-            {
-                ClearCounterattackForDraft();
-            }
-
-            bool currentCounterattackJob = pendingCounterattackTarget != null
-                && pawn?.CurJob?.targetA.Thing == pendingCounterattackTarget
-                && (pawn.CurJobDef == JobDefOf.AttackStatic
-                    || pawn.CurJobDef == JobDefOf.AttackMelee);
-            if (currentCounterattackJob)
-            {
-                pendingCounterattackTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
-            }
-            else if (pendingCounterattackTicksRemaining > 0)
-            {
-                pendingCounterattackTicksRemaining--;
-            }
-            if (pendingCounterattackTicksRemaining <= 0)
-            {
-                pendingCounterattackTarget = null;
-            }
-
-            if (!RushAuthorized)
-            {
-                ClearRushAuthority();
-            }
-
             if (incomingThreatSource != null && !IsIncomingThreatActive())
             {
                 incomingThreatSource = null;
@@ -924,10 +836,6 @@ namespace KRWF.RimKata
             dualCloseCombatActive = false;
             dualCloseTarget = null;
             engagementOwnerWeapon = null;
-            ClearRushAuthority();
-            pendingCounterattackTarget = null;
-            pendingCounterattackTicksRemaining = 0;
-            ClearCounterattackRimKataSession();
             incomingThreatSource = null;
             incomingThreatTicksRemaining = 0;
             closeAttackRequestTarget = null;
@@ -1027,100 +935,6 @@ namespace KRWF.RimKata
             dedicatedFollowupJobPlayerForced = false;
             dedicatedFollowupJobKillIncappedTarget = false;
             dedicatedFollowupJobRequestedTick = -1;
-        }
-
-        public void MarkPendingCounterattack(Thing target)
-        {
-            pendingCounterattackTarget = target;
-            pendingCounterattackTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
-        }
-
-        public void BeginCounterattackRimKataSession()
-        {
-            if (pawn?.Drafted == true
-                || counterattackRimKataSessionActive)
-            {
-                return;
-            }
-
-            counterattackRimKataSessionActive = true;
-            counterattackMoteShown = false;
-            counterattackJobTarget = null;
-            counterattackTargetLoadRepairPending = false;
-        }
-
-        public void QueueCounterattackMote()
-        {
-            if (pawn?.Drafted == true)
-            {
-                return;
-            }
-
-            BeginCounterattackRimKataSession();
-            counterattackMoteShown = false;
-        }
-
-        public bool ConsumeCounterattackMote()
-        {
-            if (pawn?.Drafted == true)
-            {
-                return false;
-            }
-
-            BeginCounterattackRimKataSession();
-            if (counterattackMoteShown)
-            {
-                return false;
-            }
-
-            counterattackMoteShown = true;
-            return true;
-        }
-
-        public void ClearCounterattackRimKataSession()
-        {
-            counterattackRimKataSessionActive = false;
-            counterattackMoteShown = false;
-            counterattackJobTarget = null;
-            counterattackTargetLoadRepairPending = false;
-        }
-
-        public void ClearCounterattackForDraft()
-        {
-            pendingCounterattackTarget = null;
-            pendingCounterattackTicksRemaining = 0;
-            ClearRushAuthority();
-            ClearCounterattackRimKataSession();
-        }
-
-        public bool ConsumeCounterattackTargetLoadRepair()
-        {
-            if (!counterattackTargetLoadRepairPending)
-            {
-                return false;
-            }
-
-            counterattackTargetLoadRepairPending = false;
-            return true;
-        }
-
-        public bool IsPendingCounterattack(Thing target)
-        {
-            return target != null
-                && pendingCounterattackTarget == target
-                && pendingCounterattackTicksRemaining > 0;
-        }
-
-        public void SetRushAuthority(RimKataRushAuthority authority, Thing target)
-        {
-            rushAuthority = authority;
-            rushAuthorityTarget = target;
-        }
-
-        public void ClearRushAuthority()
-        {
-            rushAuthority = RimKataRushAuthority.None;
-            rushAuthorityTarget = null;
         }
 
         public void NotifyIncomingThreat(Pawn attacker)
@@ -1269,6 +1083,8 @@ namespace KRWF.RimKata
 
         private readonly object statesLock = new object();
         private List<RimKataPawnCombatState> states = new List<RimKataPawnCombatState>();
+        private readonly Dictionary<Pawn, RimKataPawnCombatState> statesByPawn =
+            new Dictionary<Pawn, RimKataPawnCombatState>();
         private readonly Dictionary<Projectile, PendingProjectileValidation>
             pendingProjectileValidations =
                 new Dictionary<Projectile, PendingProjectileValidation>();
@@ -1276,6 +1092,9 @@ namespace KRWF.RimKata
             new List<Projectile>();
         private readonly HashSet<Projectile> activeExplosiveProjectiles =
             new HashSet<Projectile>();
+        private readonly Dictionary<Projectile, IntVec3>
+            activeExplosiveProjectileCells =
+                new Dictionary<Projectile, IntVec3>();
         private readonly List<Pawn> projectileWakeTraversal =
             new List<Pawn>();
         private bool projectileEventsSubscribed;
@@ -1295,6 +1114,10 @@ namespace KRWF.RimKata
         public override void FinalizeInit()
         {
             base.FinalizeInit();
+            lock (statesLock)
+            {
+                RebuildStateIndex();
+            }
             SubscribeProjectileEvents();
             projectileInitialRefreshPending = true;
         }
@@ -1316,6 +1139,11 @@ namespace KRWF.RimKata
                 {
                     states = new List<RimKataPawnCombatState>();
                 }
+
+                if (Scribe.mode == LoadSaveMode.PostLoadInit)
+                {
+                    RebuildStateIndex();
+                }
             }
         }
 
@@ -1329,7 +1157,7 @@ namespace KRWF.RimKata
                     RimKataPawnCombatState state = states[i];
                     if (state?.pawn == null || state.pawn.Destroyed || state.pawn.Map != map)
                     {
-                        states.RemoveAt(i);
+                        RemoveStateAt(i);
                         continue;
                     }
 
@@ -1375,8 +1203,6 @@ namespace KRWF.RimKata
                         state.mentalStateOffenseSuppressed = false;
                         if (!state.pawn.Drafted)
                         {
-                            RimKataDualWeaponController
-                                .RecoverCurrentCounterattackJob(state.pawn);
                             state.CancelDraftedFire(false);
                             if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack)
                             {
@@ -1432,7 +1258,7 @@ namespace KRWF.RimKata
 
                     if (!state.Active)
                     {
-                        states.RemoveAt(i);
+                        RemoveStateAt(i);
                     }
                 }
             }
@@ -1491,6 +1317,7 @@ namespace KRWF.RimKata
 
             pendingProjectileValidations.Remove(projectile);
             activeExplosiveProjectiles.Remove(projectile);
+            activeExplosiveProjectileCells.Remove(projectile);
         }
 
         internal void RegisterLaunchedExplosiveProjectile(
@@ -1510,6 +1337,8 @@ namespace KRWF.RimKata
             pendingProjectileValidations.Remove(projectile);
             if (activeExplosiveProjectiles.Add(projectile))
             {
+                activeExplosiveProjectileCells[projectile] =
+                    projectile.Position;
                 RequestProjectileWakeTraversal();
             }
         }
@@ -1555,6 +1384,7 @@ namespace KRWF.RimKata
             }
 
             ValidatePendingProjectiles(currentTick);
+            DetectExplosiveProjectileCellChanges();
 
             if (!projectileWakeTraversalActive
                 && projectileWakeRepeatTick >= 0
@@ -1656,6 +1486,8 @@ namespace KRWF.RimKata
                 if (projectile.Launcher != null
                     && activeExplosiveProjectiles.Add(projectile))
                 {
+                    activeExplosiveProjectileCells[projectile] =
+                        projectile.Position;
                     addedProjectile = true;
                 }
             }
@@ -1669,6 +1501,7 @@ namespace KRWF.RimKata
         private void RefreshActiveExplosiveProjectiles()
         {
             activeExplosiveProjectiles.Clear();
+            activeExplosiveProjectileCells.Clear();
             List<Thing> projectiles = map.listerThings.ThingsInGroup(
                 ThingRequestGroup.Projectile);
             for (int i = 0; i < projectiles.Count; i++)
@@ -1680,7 +1513,43 @@ namespace KRWF.RimKata
                         map))
                 {
                     activeExplosiveProjectiles.Add(projectile);
+                    activeExplosiveProjectileCells[projectile] =
+                        projectile.Position;
                 }
+            }
+        }
+
+        private void DetectExplosiveProjectileCellChanges()
+        {
+            if (activeExplosiveProjectiles.Count == 0)
+            {
+                return;
+            }
+
+            bool changed = false;
+            foreach (Projectile projectile in activeExplosiveProjectiles)
+            {
+                if (!RimKataTargeting.IsPotentialExplosiveProjectile(
+                        projectile,
+                        map))
+                {
+                    continue;
+                }
+
+                IntVec3 position = projectile.Position;
+                if (!activeExplosiveProjectileCells.TryGetValue(
+                        projectile,
+                        out IntVec3 previous)
+                    || previous != position)
+                {
+                    activeExplosiveProjectileCells[projectile] = position;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                RequestProjectileWakeTraversal();
             }
         }
 
@@ -1704,8 +1573,9 @@ namespace KRWF.RimKata
 
             for (int i = 0; i < pendingProjectileScratch.Count; i++)
             {
-                activeExplosiveProjectiles.Remove(
-                    pendingProjectileScratch[i]);
+                Projectile projectile = pendingProjectileScratch[i];
+                activeExplosiveProjectiles.Remove(projectile);
+                activeExplosiveProjectileCells.Remove(projectile);
             }
         }
 
@@ -1800,6 +1670,7 @@ namespace KRWF.RimKata
             pendingProjectileValidations.Clear();
             pendingProjectileScratch.Clear();
             activeExplosiveProjectiles.Clear();
+            activeExplosiveProjectileCells.Clear();
             projectileWakeTraversal.Clear();
             projectileInitialRefreshPending = false;
             projectileWakeTraversalActive = false;
@@ -1814,22 +1685,59 @@ namespace KRWF.RimKata
         {
             lock (statesLock)
             {
-                for (int i = 0; i < states.Count; i++)
+                if (pawn == null)
                 {
-                    if (states[i].pawn == pawn)
-                    {
-                        return states[i];
-                    }
+                    return null;
                 }
 
-                if (!createIfMissing || pawn == null)
+                if (statesByPawn.TryGetValue(
+                        pawn,
+                        out RimKataPawnCombatState existing))
+                {
+                    return existing;
+                }
+
+                if (!createIfMissing)
                 {
                     return null;
                 }
 
                 RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
                 states.Add(state);
+                statesByPawn[pawn] = state;
                 return state;
+            }
+        }
+
+        private void RebuildStateIndex()
+        {
+            statesByPawn.Clear();
+            if (states == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < states.Count; i++)
+            {
+                RimKataPawnCombatState state = states[i];
+                if (state?.pawn != null)
+                {
+                    statesByPawn[state.pawn] = state;
+                }
+            }
+        }
+
+        private void RemoveStateAt(int index)
+        {
+            RimKataPawnCombatState state = states[index];
+            states.RemoveAt(index);
+            if (state?.pawn != null
+                && statesByPawn.TryGetValue(
+                    state.pawn,
+                    out RimKataPawnCombatState indexed)
+                && indexed == state)
+            {
+                statesByPawn.Remove(state.pawn);
             }
         }
 
@@ -2085,10 +1993,41 @@ namespace KRWF.RimKata
 
         public RimKataVisualSnapshot GetVisualSnapshot(Pawn pawn)
         {
+            if (pawn == null)
+            {
+                return default(RimKataVisualSnapshot);
+            }
+
             lock (statesLock)
             {
-                RimKataPawnCombatState state = GetState(pawn, false);
+                statesByPawn.TryGetValue(
+                    pawn,
+                    out RimKataPawnCombatState state);
                 return state != null ? state.VisualSnapshot() : default(RimKataVisualSnapshot);
+            }
+        }
+
+        public bool TryGetActiveVisualSnapshot(
+            Pawn pawn,
+            out RimKataVisualSnapshot snapshot)
+        {
+            snapshot = default(RimKataVisualSnapshot);
+            lock (statesLock)
+            {
+                if (pawn == null
+                    || !statesByPawn.TryGetValue(
+                        pawn,
+                        out RimKataPawnCombatState state)
+                    || (!state.VisualActive
+                        && !state.DeflectionActive
+                        && !state.ResponsePoseActive
+                        && !state.CloseDodgeActive))
+                {
+                    return false;
+                }
+
+                snapshot = state.VisualSnapshot();
+                return true;
             }
         }
 

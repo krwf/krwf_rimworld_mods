@@ -11,10 +11,25 @@ namespace KRWF.RimKata
 {
     public static class RimKataVisualUtility
     {
+        public static bool TryGetActiveSnapshot(
+            Pawn pawn,
+            out RimKataVisualSnapshot snapshot)
+        {
+            snapshot = default(RimKataVisualSnapshot);
+            RimKataMapComponent component = pawn?.Map
+                ?.GetComponent<RimKataMapComponent>();
+            return component?.TryGetActiveVisualSnapshot(
+                pawn,
+                out snapshot) == true;
+        }
+
         public static RimKataVisualSnapshot SnapshotFor(Pawn pawn)
         {
-            return pawn?.Map?.GetComponent<RimKataMapComponent>()?.GetVisualSnapshot(pawn)
-                ?? default(RimKataVisualSnapshot);
+            return TryGetActiveSnapshot(
+                    pawn,
+                    out RimKataVisualSnapshot snapshot)
+                ? snapshot
+                : default(RimKataVisualSnapshot);
         }
 
         public static Vector3 DrawOffset(RimKataVisualSnapshot snapshot)
@@ -964,7 +979,13 @@ namespace KRWF.RimKata
                 return;
             }
 
-            RimKataVisualSnapshot snapshot = RimKataVisualUtility.SnapshotFor(___pawn);
+            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+                    ___pawn,
+                    out RimKataVisualSnapshot snapshot))
+            {
+                return;
+            }
+
             drawLoc += RimKataVisualUtility.DrawOffset(snapshot);
             if (snapshot.dodgeMovementActive && !snapshot.dodgeMovementTumbling && snapshot.dodgeMovementDirection != IntVec3.Zero)
             {
@@ -985,7 +1006,13 @@ namespace KRWF.RimKata
     {
         public static void Prefix(Pawn ___pawn, ref bool disableCache)
         {
-            RimKataVisualSnapshot snapshot = RimKataVisualUtility.SnapshotFor(___pawn);
+            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+                    ___pawn,
+                    out RimKataVisualSnapshot snapshot))
+            {
+                return;
+            }
+
             if (RimKataVisualUtility.RequiresDynamicBodyRotation(snapshot))
             {
                 disableCache = true;
@@ -998,7 +1025,13 @@ namespace KRWF.RimKata
     {
         public static void Prefix(ref PawnDrawParms parms)
         {
-            RimKataVisualSnapshot snapshot = RimKataVisualUtility.SnapshotFor(parms.pawn);
+            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+                    parms.pawn,
+                    out RimKataVisualSnapshot snapshot))
+            {
+                return;
+            }
+
             bool additionalTumble = snapshot.visualActive && snapshot.visualState == RimKataVisualState.AdditionalDodge;
             bool stationaryTumble = snapshot.visualActive  && snapshot.visualState == RimKataVisualState.Tumble;
             if (!additionalTumble && !stationaryTumble && !snapshot.closeDodgeActive)
@@ -1082,7 +1115,13 @@ namespace KRWF.RimKata
             visualAngleOffset = 0f;
 
             Pawn owner = RimKataVisualUtility.FindPawnOwner(eq);
-            RimKataVisualSnapshot snapshot = RimKataVisualUtility.SnapshotFor(owner);
+            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+                    owner,
+                    out RimKataVisualSnapshot snapshot))
+            {
+                return;
+            }
+
             bool deflectThisWeapon = snapshot.deflectionActive && snapshot.deflectionWeapon == eq;
             bool poseThisWeapon = snapshot.responsePoseActive && snapshot.responsePoseWeapon == eq;
             if (!deflectThisWeapon && !poseThisWeapon)
@@ -1176,7 +1215,6 @@ namespace KRWF.RimKata
                 || pawn.Downed
                 || pawn.IsBurning()
                 || primary == null
-                || !RimKataEligibility.TryGetEnabledCombatVerb(pawn, out Verb _)
                 || pawn.carryTracker?.CarriedThing != null
                 || (flags & PawnRenderFlags.NeverAimWeapon) != 0
                 || pawn.stances?.curStance is Stance_Busy)
@@ -1186,6 +1224,11 @@ namespace KRWF.RimKata
 
             RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
             if (component?.TryGetGunReadyTarget(pawn, out LocalTargetInfo target) != true)
+            {
+                return previous;
+            }
+
+            if (!RimKataEligibility.TryGetEnabledCombatVerb(pawn, out Verb _))
             {
                 return previous;
             }

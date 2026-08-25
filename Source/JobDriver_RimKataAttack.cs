@@ -60,7 +60,7 @@ namespace KRWF.RimKata
 
         private Thing AssignedTarget => TargetThingA;
         private bool IsPlayerForced => job?.playerForced == true;
-        internal bool CanAbsorbCounterattackJob => !endingJob;
+        internal bool CanAbsorbAutomaticAttackJob => !endingJob;
 
         public override bool TryMakePreToilReservations(bool errorOnFailed)
         {
@@ -86,6 +86,8 @@ namespace KRWF.RimKata
                 endingJob = true;
                 ClearPlannedAttack();
                 ClearAimStance();
+                RimKataDualWeaponController
+                    .NotifyDedicatedCombatJobFinished(pawn);
             });
 
             Toil counterattackMoteGate = ToilMaker.MakeToil(
@@ -95,8 +97,9 @@ namespace KRWF.RimKata
                 if ((job?.jobGiver is JobGiver_ConfigurableHostilityResponse
                         || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat)
                     && job?.targetA.HasThing == true
-                    && RimKataDualWeaponController
-                        .ConsumeCounterattackMote(pawn))
+                    && pawn?.Drafted != true
+                    && pawn?.InMentalState != true
+                    && RimKataEligibility.RandomAttackEnabledForPawn(pawn))
                 {
                     MoteMaker.MakeColonistActionOverlay(
                         pawn,
@@ -173,19 +176,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool counterattackSession = RimKataDualWeaponController
-                .IsCounterattackRimKataSessionActive(pawn);
             Thing assignedTarget = AssignedTarget;
-            if (counterattackSession
-                && RimKataDualWeaponController
-                    .TryRestoreCounterattackJobTarget(
-                        pawn,
-                        job,
-                        out Thing restoredCounterattackTarget))
-            {
-                assignedTarget = restoredCounterattackTarget;
-            }
-
             bool assignedTargetValid = IsValidAssignedTarget(assignedTarget);
             if (assignedTargetValid)
             {
@@ -204,68 +195,39 @@ namespace KRWF.RimKata
             {
                 RimKataDualWeaponController.EnsureContinuationSearchBeforeExit(
                     pawn);
-                if (counterattackSession)
+                Thing replacementCloseTarget =
+                    RimKataDualWeaponController.ResolveImmediateCloseTarget(
+                        pawn,
+                        null,
+                        IsPlayerForced,
+                        job.killIncappedTarget);
+                if (replacementCloseTarget != null)
+                {
+                    assignedTarget = replacementCloseTarget;
+                    SetAssignedTarget(replacementCloseTarget);
+                    assignedTargetValid = true;
+                }
+                else if (TryAdoptContinuationTarget(out assignedTarget))
+                {
+                    assignedTargetValid = true;
+                }
+                else
                 {
                     RimKataDualWeaponController.Tick(
                         pawn,
                         null,
-                        false,
-                        false,
+                        IsPlayerForced,
+                        job.killIncappedTarget,
                         false);
-                    if (RimKataDualWeaponController
-                        .TryRestoreCounterattackJobTarget(
-                            pawn,
-                            job,
-                            out assignedTarget))
-                    {
-                        assignedTargetValid = true;
-                        RimKataDualWeaponController
-                            .RefreshDedicatedTargetContinuity(
-                                pawn,
-                                assignedTarget);
-                    }
-                    else if (RimKataDualWeaponController
-                                 .IsDedicatedFollowupActive(pawn)
-                             || RimKataDualWeaponController
-                                 .HasContinuationSearchWork(pawn))
-                    {
-                        if (!RimKataDodgeMovementUtility.IsActive(pawn))
-                        {
-                            pawn.pather?.StopDead();
-                        }
-                        return;
-                    }
-                    else
-                    {
-                        EndRimKataJobWith(JobCondition.Succeeded);
-                        return;
-                    }
-                }
 
-                if (!counterattackSession)
-                {
                     if (TryAdoptContinuationTarget(out assignedTarget))
                     {
                         assignedTargetValid = true;
                     }
-                    else
+                    else if (RimKataDualWeaponController.HasContinuationSearchWork(pawn))
                     {
-                        RimKataDualWeaponController.Tick(
-                            pawn,
-                            null,
-                            IsPlayerForced,
-                            job.killIncappedTarget,
-                            false);
-
-                        if (TryAdoptContinuationTarget(out assignedTarget))
-                        {
-                            assignedTargetValid = true;
-                        }
-                        else if (RimKataDualWeaponController.HasContinuationSearchWork(pawn))
-                        {
-                            pawn.pather?.StopDead();
-                            return;
-                        }
+                        pawn.pather?.StopDead();
+                        return;
                     }
                 }
 
@@ -299,14 +261,13 @@ namespace KRWF.RimKata
                     IsPlayerForced,
                     job.killIncappedTarget);
 
-            if (immediateCloseTarget != null && assignedTarget != immediateCloseTarget)
+            if (immediateCloseTarget != null
+                && assignedTarget != immediateCloseTarget
+                && !RimKataDualWeaponController.IsDedicatedCloseCombatActive(pawn))
             {
                 assignedTarget = immediateCloseTarget;
                 assignedTargetInTouchRange = true;
-                if (!counterattackSession)
-                {
-                    job.targetA = immediateCloseTarget;
-                }
+                SetAssignedTarget(immediateCloseTarget);
             }
 
             if (RimKataDodgeMovementUtility.IsActive(pawn))
@@ -330,11 +291,10 @@ namespace KRWF.RimKata
                 if (!canRush && !CanAttackWithoutRushing(assignedTarget))
                 {
                     pawn.pather?.StopDead();
-                    EndRimKataJobWith(JobCondition.Succeeded);
+                    TickAdvancingFire(assignedTarget);
                     return;
                 }
 
-                EnsurePathToAssignedTarget();
                 TickAdvancingFire(assignedTarget);
                 return;
             }
@@ -411,7 +371,8 @@ namespace KRWF.RimKata
             RimKataDraftedFireController.CancelForFire(pawn);
         }
 
-        private void EnsurePathToAssignedTarget()
+        private void EnsurePathToAssignedTarget(
+            bool targetReachabilityConfirmed = false)
         {
             if (RimKataDodgeMovementUtility.IsActive(pawn))
             {
@@ -430,10 +391,19 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!pawn.pather.Moving || pawn.pather.Destination.Thing != target)
+            if (pawn.pather.Moving && pawn.pather.Destination.Thing == target)
             {
-                pawn.pather.StartPath(target, PathEndMode.Touch);
+                return;
             }
+
+            if (!targetReachabilityConfirmed
+                && !pawn.CanReach(target, PathEndMode.Touch, Danger.Deadly))
+            {
+                pawn.pather?.StopDead();
+                return;
+            }
+
+            pawn.pather.StartPath(target, PathEndMode.Touch);
         }
 
         private bool CanAttackWithoutRushing(Thing target)
@@ -448,7 +418,59 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            SetAssignedTarget(target);
+            return true;
+        }
+
+        private void SetAssignedTarget(
+            Thing target,
+            bool targetReachabilityConfirmed = false)
+        {
+            Thing previousTarget = AssignedTarget;
+            if (target == null || previousTarget == target)
+            {
+                return;
+            }
+
             job.targetA = target;
+            EnsurePathToAssignedTarget(targetReachabilityConfirmed);
+            if (!IsPlayerForced
+                && pawn?.Drafted != true
+                && (job?.jobGiver is JobGiver_ConfigurableHostilityResponse
+                    || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat))
+            {
+                MoteMaker.MakeColonistActionOverlay(
+                    pawn,
+                    ThingDefOf.Mote_ColonistAttacking);
+            }
+        }
+
+        internal bool TryPromoteReachableRangedJobTarget(Thing target)
+        {
+            Thing currentTarget = AssignedTarget;
+            if (endingJob
+                || pawn?.Map == null
+                || pawn.Drafted
+                || pawn.InMentalState
+                || IsPlayerForced
+                || RimKataDodgeMovementUtility.IsActive(pawn)
+                || pawn.pather?.Moving == true
+                || job?.def != RimKataDefOf.RimKata_Attack
+                || RimKataMod.Settings?.targetRushEnabled == false
+                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+                || RimKataDualWeaponController.IsDedicatedCloseCombatActive(pawn)
+                || target == null
+                || target is Projectile
+                || target == currentTarget
+                || !IsValidAssignedTarget(currentTarget)
+                || !IsValidAssignedTarget(target)
+                || pawn.CanReach(currentTarget, PathEndMode.Touch, Danger.Deadly)
+                || !pawn.CanReach(target, PathEndMode.Touch, Danger.Deadly))
+            {
+                return false;
+            }
+
+            SetAssignedTarget(target, true);
             return true;
         }
 
@@ -653,21 +675,33 @@ namespace KRWF.RimKata
             }
 
             if (RimKataDualWeaponController
-                .TryAbsorbStartedCounterattackJob(
+                .TryAbsorbCounterattackOpening(
                     ___pawn,
                     newJob,
                     jobGiver))
             {
+                if (newJob != null)
+                {
+                    JobMaker.ReturnToPool(newJob);
+                    newJob = null;
+                }
+
                 return false;
             }
 
+            Job counterattackOpeningJob = newJob;
             if (RimKataDualWeaponController
-                .TryConvertStartedCounterattackJob(
+                .TryConvertCounterattackOpening(
                     ___pawn,
                     newJob,
                     jobGiver,
                     out Job convertedCounterattackJob))
             {
+                if (counterattackOpeningJob != null
+                    && counterattackOpeningJob != convertedCounterattackJob)
+                {
+                    JobMaker.ReturnToPool(counterattackOpeningJob);
+                }
                 newJob = convertedCounterattackJob;
             }
 
@@ -720,15 +754,6 @@ namespace KRWF.RimKata
             Job newJob,
             ThinkNode jobGiver)
         {
-            if (___pawn?.CurJob == newJob
-                && (jobGiver is JobGiver_ConfigurableHostilityResponse
-                    || jobGiver is JobGiver_ReactToCloseMeleeThreat))
-            {
-                RimKataDualWeaponController.MarkStartedCounterattackJob(
-                    ___pawn,
-                    newJob);
-            }
-
             if ((newJob?.def == JobDefOf.Goto
                     || newJob?.def == JobDefOf.AttackMelee)
                 && newJob.playerForced

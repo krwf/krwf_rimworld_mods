@@ -29,8 +29,16 @@ namespace KRWF.RimKata
             public bool bond;
         }
 
+        private sealed class RegisteredUser
+        {
+        }
+
         private static readonly ConditionalWeakTable<Pawn, Entry> entries = new ConditionalWeakTable<Pawn, Entry>();
         private static readonly ConditionalWeakTable<Pawn, Entry>.CreateValueCallback CreateEntry = delegate { return new Entry(); };
+        private static readonly ConditionalWeakTable<Pawn, RegisteredUser>
+            registeredUsers = new ConditionalWeakTable<Pawn, RegisteredUser>();
+        private static readonly ConditionalWeakTable<Pawn, RegisteredUser>.CreateValueCallback
+            CreateRegisteredUser = delegate { return new RegisteredUser(); };
         private static HediffDef mindNumbSerumDef;
         private static HediffDef psychicBondDef;
         private static bool anomalyDefsResolved;
@@ -114,40 +122,46 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            if (registeredUsers.TryGetValue(pawn, out RegisteredUser _))
+            {
+                return true;
+            }
+
             Entry entry = entries.GetValue(pawn, CreateEntry);
             lock (entry)
             {
                 if (entry.accessKnown)
                 {
+                    UpdateRegisteredUser(pawn, entry.hasAccess);
                     return entry.hasAccess;
                 }
 
-                ResolveRimKataGene(pawn, entry);
-                if (entry.hasRimKataGene)
-                {
-                    return StoreAccess(entry, true);
-                }
+                bool hasAccess = ResolveAccess(pawn, entry);
+                UpdateRegisteredUser(pawn, hasAccess);
+                return StoreAccess(entry, hasAccess);
+            }
+        }
 
-                ResolveAmpoule(pawn, entry);
-                if (entry.hasAmpoule)
-                {
-                    return StoreAccess(entry, true);
-                }
+        public static void RegisterSpawnedUser(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
 
-                ResolvePsycast(pawn, entry);
-                if (entry.hasPsycast)
-                {
-                    return StoreAccess(entry, true);
-                }
+            Entry entry = entries.GetValue(pawn, CreateEntry);
+            bool hasAccess;
+            lock (entry)
+            {
+                hasAccess = entry.accessKnown
+                    ? entry.hasAccess
+                    : StoreAccess(entry, ResolveAccess(pawn, entry));
+            }
 
-                ResolveRole(pawn, entry);
-                if (entry.hasRole)
-                {
-                    return StoreAccess(entry, true);
-                }
-
-                ResolveDependencyGene(pawn, entry);
-                return StoreAccess(entry, entry.hasDependencyGene);
+            UpdateRegisteredUser(pawn, hasAccess);
+            if (!hasAccess)
+            {
+                entries.Remove(pawn);
             }
         }
 
@@ -225,6 +239,7 @@ namespace KRWF.RimKata
 
         public static void InvalidateGenes(Pawn pawn)
         {
+            RemoveRegisteredUser(pawn);
             if (!TryGetEntry(pawn, out Entry entry))
             {
                 return;
@@ -241,6 +256,7 @@ namespace KRWF.RimKata
 
         public static void InvalidatePsycast(Pawn pawn)
         {
+            RemoveRegisteredUser(pawn);
             if (TryGetEntry(pawn, out Entry entry))
             {
                 lock (entry)
@@ -253,6 +269,7 @@ namespace KRWF.RimKata
 
         public static void InvalidateRole(Pawn pawn)
         {
+            RemoveRegisteredUser(pawn);
             if (TryGetEntry(pawn, out Entry entry))
             {
                 lock (entry)
@@ -276,7 +293,17 @@ namespace KRWF.RimKata
 
         public static void InvalidateHediff(Pawn pawn, HediffDef changedDef)
         {
-            if (changedDef == null || !TryGetEntry(pawn, out Entry entry))
+            if (changedDef == null)
+            {
+                return;
+            }
+
+            if (changedDef == RimKataDefOf.RimKata_A_Effect)
+            {
+                RemoveRegisteredUser(pawn);
+            }
+
+            if (!TryGetEntry(pawn, out Entry entry))
             {
                 return;
             }
@@ -312,6 +339,61 @@ namespace KRWF.RimKata
             entry.hasAccess = value;
             entry.accessKnown = true;
             return value;
+        }
+
+        private static bool ResolveAccess(Pawn pawn, Entry entry)
+        {
+            ResolveRimKataGene(pawn, entry);
+            if (entry.hasRimKataGene)
+            {
+                return true;
+            }
+
+            ResolveAmpoule(pawn, entry);
+            if (entry.hasAmpoule)
+            {
+                return true;
+            }
+
+            ResolvePsycast(pawn, entry);
+            if (entry.hasPsycast)
+            {
+                return true;
+            }
+
+            ResolveRole(pawn, entry);
+            if (entry.hasRole)
+            {
+                return true;
+            }
+
+            ResolveDependencyGene(pawn, entry);
+            return entry.hasDependencyGene;
+        }
+
+        private static void UpdateRegisteredUser(Pawn pawn, bool hasAccess)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
+
+            if (hasAccess)
+            {
+                registeredUsers.GetValue(pawn, CreateRegisteredUser);
+            }
+            else
+            {
+                registeredUsers.Remove(pawn);
+            }
+        }
+
+        private static void RemoveRegisteredUser(Pawn pawn)
+        {
+            if (pawn != null)
+            {
+                registeredUsers.Remove(pawn);
+            }
         }
 
         private static void ResolveRimKataGene(Pawn pawn, Entry entry)
@@ -425,6 +507,16 @@ namespace KRWF.RimKata
             mindNumbSerumDef = DefDatabase<HediffDef>.GetNamedSilentFail("MindNumbSerum");
             psychicBondDef = DefDatabase<HediffDef>.GetNamedSilentFail("PsychicBond");
             anomalyDefsResolved = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn), nameof(Pawn.SpawnSetup))]
+    public static class Patch_Pawn_RimKataEligibilityRegistration
+    {
+        [HarmonyPriority(Priority.First)]
+        public static void Postfix(Pawn __instance)
+        {
+            RimKataEligibilityCache.RegisterSpawnedUser(__instance);
         }
     }
 

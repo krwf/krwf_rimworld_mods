@@ -14,12 +14,6 @@ namespace KRWF.RimKata
         Secondary
     }
 
-    public enum RimKataRushAuthority
-    {
-        None,
-        Counterattack
-    }
-
     public sealed class RimKataWeaponCycleState : IExposable
     {
         public ThingWithComps weapon;
@@ -150,6 +144,23 @@ namespace KRWF.RimKata
                 {
                     warmupTicksRemaining = 1;
                     warmupTotalTicks = Mathf.Max(1, warmupTotalTicks);
+                }
+
+                if (plannedInterception
+                    && !(plannedTarget is Projectile))
+                {
+                    ClearPlan(false);
+                    warmupTicksRemaining = -1;
+                    warmupTotalTicks = 0;
+                    openingWarmupBonusTicks = 0;
+                    openingWarmupPending = false;
+                }
+
+                if (cachedCandidateInterception
+                    && !(cachedCandidateTarget is Projectile))
+                {
+                    cachedCandidateTarget = null;
+                    cachedCandidateInterception = false;
                 }
             }
         }
@@ -404,6 +415,12 @@ namespace KRWF.RimKata
                 state.sharedTargetSearch?.Reset();
             }
 
+            if (NormalizeInvalidInterceptionState(pawn, state)
+                && allowAutomaticRangedFire)
+            {
+                state.QueueIdleProjectileSearchTrigger();
+            }
+
             Thing closeTarget = closeTargetResolved
                 && closeCombatContext
                 && IsImmediateCloseTarget(
@@ -460,8 +477,11 @@ namespace KRWF.RimKata
                 bool hasStoredCandidates =
                     state.primaryWeaponCycle?.HasAutomaticCandidates == true
                     || state.secondaryWeaponCycle?.HasAutomaticCandidates == true;
+                bool projectileOnlySearchWork =
+                    HasProjectileOnlySearchWork(pawn, state, assignedTarget);
                 state.CaptureAutomaticCandidateCounts();
                 if ((state.dualEngagementActive || hasStoredCandidates)
+                    && !projectileOnlySearchWork
                     && state.sharedTargetSearch?.scanActive != true)
                 {
                     RimKataSharedTargetSearch.Begin(
@@ -510,7 +530,6 @@ namespace KRWF.RimKata
             {
                 state.dualEngagementActive = false;
                 state.ResetCandidateSaturationExpansion(true);
-                state.ClearCounterattackRimKataSession();
                 return;
             }
 
@@ -537,13 +556,6 @@ namespace KRWF.RimKata
             bool blockedByStance = StanceBlocksRimKata(pawn);
             PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
             PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
-            if (TryPromotePreparedCounterattackJobTarget(
-                pawn,
-                state,
-                out Thing promotedCounterattackTarget))
-            {
-                assignedTarget = promotedCounterattackTarget;
-            }
             RefreshDualEngagementState(pawn, state);
 
             if (!blockedByStance && ReadyToAct(state.primaryWeaponCycle))
@@ -944,7 +956,41 @@ namespace KRWF.RimKata
             }
 
             RimKataPawnCombatState state = StateFor(pawn, true);
+            BindCurrentWeapons(pawn, state);
             state.QueueIdleProjectileSearchTrigger();
+            TryCacheSharedCandidate(
+                pawn,
+                state,
+                state.primaryWeaponCycle,
+                null);
+            TryCacheSharedCandidate(
+                pawn,
+                state,
+                state.secondaryWeaponCycle,
+                null);
+            bool cachedProjectile =
+                state.primaryWeaponCycle?.cachedCandidateInterception == true
+                || state.secondaryWeaponCycle?.cachedCandidateInterception
+                    == true;
+            if (!cachedProjectile)
+            {
+                state.ConsumeIdleProjectileSearchTrigger();
+                RefreshDualEngagementState(pawn, state);
+                return;
+            }
+
+            RefreshDualEngagementState(pawn, state);
+            if (pawn.Drafted)
+            {
+                return;
+            }
+
+            state.projectileWakeResumeJob = pawn.CurJob;
+            QueueDedicatedFollowupJob(pawn, null);
+            if (!state.dedicatedFollowupJobPending)
+            {
+                state.projectileWakeResumeJob = null;
+            }
         }
 
         public static bool CanAcceptIdleProjectileSearch(Pawn pawn)
@@ -956,24 +1002,45 @@ namespace KRWF.RimKata
                 || !pawn.Awake()
                 || pawn.InMentalState
                 || pawn.IsBurning()
-                || pawn.Drafted != true
-                || pawn.drafter?.FireAtWill != true
-                || pawn.pather?.MovingNow == true
                 || !pawn.IsPlayerControlled
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 return false;
             }
 
+            bool moving = pawn.pather?.MovingNow == true;
+            Job currentJob = pawn.CurJob;
+            if (pawn.Drafted)
+            {
+                if (pawn.drafter?.FireAtWill != true || moving)
+                {
+                    return false;
+                }
+            }
+            else if (currentJob?.playerForced == true
+                || pawn.carryTracker?.CarriedThing != null)
+            {
+                return false;
+            }
+
             JobDef jobDef = pawn.CurJobDef;
-            if (jobDef != JobDefOf.Wait
+            if (!moving
+                && jobDef != JobDefOf.Wait
                 && jobDef != JobDefOf.Wait_Combat
-                && jobDef?.defName != "Wait_MaintainPosture")
+                && jobDef?.defName != "Wait_MaintainPosture"
+                && jobDef?.defName != "GotoWander"
+                && jobDef?.defName != "Wait_Wander")
             {
                 return false;
             }
 
             RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state != null)
+            {
+                NormalizeInvalidInterceptionState(pawn, state);
+                RimKataSharedTargetSearch.Prune(pawn, state);
+                RefreshDualEngagementState(pawn, state);
+            }
             if (state != null
                 && (state.dualEngagementActive
                     || state.sharedTargetSearch?.KeepsCombatAlive == true
@@ -1113,7 +1180,7 @@ namespace KRWF.RimKata
             }
 
             if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && IsConfigurableCounterattackJob(pawn, pawn.CurJob))
+                && IsConfigurableCounterattackOpening(pawn, pawn.CurJob))
             {
                 return false;
             }
@@ -1125,13 +1192,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            bool pendingCounterattackOpening =
-                IsPendingCounterattackOpening(
-                    pawn,
-                    state,
-                    target.Thing);
-            if (IsDedicatedFollowupActive(pawn)
-                && !pendingCounterattackOpening)
+            if (IsDedicatedFollowupActive(pawn))
             {
                 return true;
             }
@@ -1300,7 +1361,7 @@ namespace KRWF.RimKata
             }
 
             if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && IsConfigurableCounterattackJob(pawn, pawn.CurJob))
+                && IsConfigurableCounterattackOpening(pawn, pawn.CurJob))
             {
                 return attempt;
             }
@@ -1320,11 +1381,7 @@ namespace KRWF.RimKata
             }
 
             RimKataPawnCombatState state = StateFor(pawn, false);
-            if (IsDedicatedFollowupActive(pawn)
-                && !IsPendingCounterattackOpening(
-                    pawn,
-                    state,
-                    castTarget.Thing))
+            if (IsDedicatedFollowupActive(pawn))
             {
                 return attempt;
             }
@@ -1414,19 +1471,6 @@ namespace KRWF.RimKata
             ResetCycleForOpeningHandoff(openingCycle);
             ResetCycleForOpeningHandoff(supportCycle);
             state.engagementOwnerWeapon = attempt.weapon;
-            state.ClearRushAuthority();
-
-            if (RimKataMod.Settings?.targetRushEnabled != false
-                && pawn.Drafted != true
-                && state.IsPendingCounterattack(target)
-                && TargetWithinAutomaticSearchRange(pawn, target))
-            {
-                state.SetRushAuthority(
-                    RimKataRushAuthority.Counterattack,
-                    target);
-                state.pendingCounterattackTarget = null;
-                state.pendingCounterattackTicksRemaining = 0;
-            }
 
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
@@ -1535,20 +1579,6 @@ namespace KRWF.RimKata
                     <= range * range;
         }
 
-        private static bool IsPendingCounterattackOpening(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            Thing target)
-        {
-            Job job = pawn?.CurJob;
-            return pawn?.Drafted != true
-                && target != null
-                && state?.IsPendingCounterattack(target) == true
-                && job?.targetA.Thing == target
-                && (job.def == JobDefOf.AttackStatic
-                    || job.def == JobDefOf.AttackMelee);
-        }
-
         public static bool ShouldConvertVanillaOpeningToSingleShot(Verb verb)
         {
             Pawn pawn = verb?.CasterPawn;
@@ -1577,6 +1607,7 @@ namespace KRWF.RimKata
             }
 
             RimKataSharedTargetSearch.Advance(pawn, state, currentTarget);
+            CancelProjectileWakeResumeForCombat(pawn, state);
 
             TryCacheSharedCandidate(
                 pawn,
@@ -1588,6 +1619,27 @@ namespace KRWF.RimKata
                 state,
                 state.secondaryWeaponCycle,
                 currentTarget);
+        }
+
+        private static void CancelProjectileWakeResumeForCombat(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            Job resumeJob = state?.projectileWakeResumeJob;
+            if (pawn?.jobs?.jobQueue == null
+                || resumeJob == null
+                || ((state.primaryWeaponCycle?.automaticCandidates?.Count ?? 0)
+                        == 0
+                    && (state.secondaryWeaponCycle?.automaticCandidates?.Count
+                            ?? 0) == 0))
+            {
+                return;
+            }
+
+            pawn.jobs.jobQueue.RemoveAll(
+                pawn,
+                queuedJob => queuedJob == resumeJob);
+            state.projectileWakeResumeJob = null;
         }
 
         private static bool TryCacheSharedCandidate(
@@ -1800,6 +1852,11 @@ namespace KRWF.RimKata
                 && HasEngagementContinuity(pawn, state);
         }
 
+        internal static bool IsDedicatedCloseCombatActive(Pawn pawn)
+        {
+            return StateFor(pawn, false)?.dualCloseCombatActive == true;
+        }
+
         public static void ReconcileCloseCombatBeforeContinuityCheck(
             Pawn pawn,
             Thing assignedTarget,
@@ -1908,6 +1965,89 @@ namespace KRWF.RimKata
                 cycle.plannedCloseContext);
         }
 
+        private static bool NormalizeInvalidInterceptionState(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            return NormalizeInvalidInterceptionCycle(
+                    pawn,
+                    state,
+                    state?.primaryWeaponCycle)
+                | NormalizeInvalidInterceptionCycle(
+                    pawn,
+                    state,
+                    state?.secondaryWeaponCycle);
+        }
+
+        private static bool NormalizeInvalidInterceptionCycle(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            RimKataWeaponCycleState cycle)
+        {
+            if (pawn?.Map == null || cycle == null)
+            {
+                return false;
+            }
+
+            bool changed = false;
+            bool invalidPlannedInterception = cycle.plannedInterception
+                && !IsActiveInterceptionTarget(
+                    pawn,
+                    cycle.plannedTarget as Projectile);
+            if (invalidPlannedInterception)
+            {
+                Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
+                    pawn,
+                    cycle.weapon,
+                    cycle.plannedCloseContext
+                        || state?.dualCloseCombatActive == true);
+                ApplyInterruptedBurstCooldown(pawn, cycle, verb);
+                if (cycle.openingWarmupPending
+                    && !cycle.firedInCurrentOpening)
+                {
+                    CancelUnfiredOpening(cycle);
+                }
+                else
+                {
+                    cycle.ClearPlan(false);
+                    cycle.warmupTicksRemaining = -1;
+                    cycle.warmupTotalTicks = 0;
+                    cycle.openingWarmupBonusTicks = 0;
+                    cycle.openingWarmupPending = false;
+                }
+
+                changed = true;
+            }
+
+            if (cycle.cachedCandidateInterception
+                && !IsActiveInterceptionTarget(
+                    pawn,
+                    cycle.cachedCandidateTarget as Projectile))
+            {
+                cycle.cachedCandidateTarget = null;
+                cycle.cachedCandidateInterception = false;
+                changed = true;
+            }
+
+            if (cycle.visualTarget is Projectile visualProjectile
+                && !IsActiveInterceptionTarget(pawn, visualProjectile))
+            {
+                cycle.visualTarget = null;
+                cycle.visualAimTicksRemaining = 0;
+                changed = true;
+            }
+
+            return changed;
+        }
+
+        private static bool IsActiveInterceptionTarget(
+            Pawn pawn,
+            Projectile projectile)
+        {
+            return projectile?.Map == pawn?.Map
+                && RimKataTargeting.IsInterceptionTargetActive(projectile);
+        }
+
         private static bool HasAnyCycleTargetWork(
             Pawn pawn,
             RimKataPawnCombatState state)
@@ -1942,15 +2082,10 @@ namespace KRWF.RimKata
                     pawn?.CurJob?.killIncappedTarget == true);
             state.dualEngagementActive = HasAnyCycleTargetWork(pawn, state)
                 || liveCloseTarget
-                || state.RushAuthorized
                 || activeScanLatch;
             if (wasActive && !state.dualEngagementActive)
             {
                 state.ResetCandidateSaturationExpansion(true);
-            }
-            if (!state.dualEngagementActive)
-            {
-                state.ClearCounterattackRimKataSession();
             }
         }
 
@@ -1964,7 +2099,6 @@ namespace KRWF.RimKata
             }
 
             if (HasAnyCycleTargetWork(pawn, state)
-                || state.RushAuthorized
                 || state.sharedTargetSearch?.KeepsCombatAlive == true)
             {
                 return true;
@@ -2010,14 +2144,6 @@ namespace KRWF.RimKata
             state.ClearDraftedMovementSearchTracking();
             CancelUnfiredWarmupForDraftChange(state.primaryWeaponCycle);
             CancelUnfiredWarmupForDraftChange(state.secondaryWeaponCycle);
-            if (pawn?.Drafted == true)
-            {
-                state.ClearCounterattackForDraft();
-            }
-            else
-            {
-                state.ClearRushAuthority();
-            }
             state.ClearDedicatedFollowupJobRequest();
             RearmOpeningOwnerIfBothWaiting(state);
             RimKataSharedTargetSearch.Prune(pawn, state);
@@ -2063,6 +2189,15 @@ namespace KRWF.RimKata
             state.QueueDedicatedFollowupJob(target, pawn.CurJob);
         }
 
+        public static void NotifyDedicatedCombatJobFinished(Pawn pawn)
+        {
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state != null)
+            {
+                state.projectileWakeResumeJob = null;
+            }
+        }
+
         public static void TryConsumePendingDedicatedFollowupJob(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
@@ -2099,6 +2234,10 @@ namespace KRWF.RimKata
                     && !playerForced
                     && pawn.drafter?.FireAtWill != true))
             {
+                if (state.projectileWakeResumeJob == sourceJob)
+                {
+                    state.projectileWakeResumeJob = null;
+                }
                 return;
             }
 
@@ -2211,8 +2350,16 @@ namespace KRWF.RimKata
             if (IsProtectedPlayerForcedJob(currentJob))
             {
                 state?.ClearDedicatedFollowupJobRequest();
+                if (state?.projectileWakeResumeJob == currentJob)
+                {
+                    state.projectileWakeResumeJob = null;
+                }
                 return;
             }
+
+            bool resumeCurrentJobAfterProjectile = pawn?.Drafted != true
+                && currentJob != null
+                && state?.projectileWakeResumeJob == currentJob;
 
             bool playerForced = playerForcedOverride
                 ?? currentJob?.playerForced == true;
@@ -2290,7 +2437,7 @@ namespace KRWF.RimKata
                         job,
                         JobCondition.InterruptForced,
                         null,
-                        false,
+                        resumeCurrentJobAfterProjectile,
                         true,
                         null,
                         JobTag.Misc,
@@ -2300,6 +2447,12 @@ namespace KRWF.RimKata
                         false,
                         true,
                         false);
+
+                    if (resumeCurrentJobAfterProjectile
+                        && pawn.CurJob != job)
+                    {
+                        state.projectileWakeResumeJob = null;
+                    }
                 }
             }
             finally
@@ -2313,144 +2466,7 @@ namespace KRWF.RimKata
             return job?.playerForced == true;
         }
 
-        public static void MarkPendingCounterattack(Pawn pawn, Thing target)
-        {
-            if (pawn?.Map == null
-                || pawn.InMentalState
-                || pawn.Drafted
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || target.Map != pawn.Map
-                || !RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                || (target is Pawn targetPawn
-                    && (targetPawn.Dead
-                        || targetPawn.Downed
-                        || targetPawn.Crawling
-                        || targetPawn.IsPsychologicallyInvisible())))
-            {
-                return;
-            }
-
-            StateFor(pawn, true)?.MarkPendingCounterattack(target);
-        }
-
-        public static void MarkStartedCounterattackJob(Pawn pawn, Job job)
-        {
-            if (RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && IsConfigurableCounterattackJob(pawn, job))
-            {
-                MarkPendingCounterattack(pawn, job.targetA.Thing);
-            }
-        }
-
-        public static bool ConsumeCounterattackMote(Pawn pawn)
-        {
-            if (pawn?.InMentalState == true
-                || pawn?.Drafted == true
-                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn))
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            return state?.ConsumeCounterattackMote() == true;
-        }
-
-        public static bool TryRestoreCounterattackJobTarget(
-            Pawn pawn,
-            Job job,
-            out Thing target)
-        {
-            target = null;
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (pawn?.Map == null
-                || pawn.InMentalState
-                || pawn.Drafted
-                || job?.def != RimKataDefOf.RimKata_Attack
-                || job.playerForced
-                || state?.counterattackRimKataSessionActive != true)
-            {
-                return false;
-            }
-
-            Thing previousJobTarget = state.counterattackJobTarget
-                ?? job.targetA.Thing;
-            Thing storedTarget = state.counterattackJobTarget;
-            bool repairLoadedTarget =
-                state.ConsumeCounterattackTargetLoadRepair();
-            if (!IsValidCounterattackJobTarget(pawn, storedTarget))
-            {
-                storedTarget = job.targetA.Thing;
-                if (!IsValidCounterattackJobTarget(pawn, storedTarget))
-                {
-                    storedTarget = state.rushAuthority ==
-                            RimKataRushAuthority.Counterattack
-                        ? state.rushAuthorityTarget
-                        : null;
-                }
-
-                if (IsValidCounterattackJobTarget(pawn, storedTarget))
-                {
-                    state.counterattackJobTarget = storedTarget;
-                }
-            }
-
-            if (!IsValidCounterattackJobTarget(pawn, storedTarget))
-            {
-                return false;
-            }
-
-            if (repairLoadedTarget
-                && state.dualCloseCombatActive
-                && !IsImmediateCloseTarget(
-                    pawn,
-                    storedTarget,
-                    false,
-                    false))
-            {
-                Thing closeTarget = ResolveCloseTarget(
-                    pawn,
-                    state,
-                    storedTarget,
-                    false,
-                    false);
-                if (closeTarget != null && closeTarget != storedTarget)
-                {
-                    storedTarget = closeTarget;
-                    state.counterattackJobTarget = storedTarget;
-                }
-            }
-
-            if (job.targetA.Thing != storedTarget)
-            {
-                job.targetA = storedTarget;
-            }
-
-            if (previousJobTarget != storedTarget)
-            {
-                MoteMaker.MakeColonistActionOverlay(
-                    pawn,
-                    ThingDefOf.Mote_ColonistAttacking);
-            }
-
-            if (CanAuthorizeCounterattackRush(pawn, storedTarget))
-            {
-                state.SetRushAuthority(
-                    RimKataRushAuthority.Counterattack,
-                    storedTarget);
-            }
-            else if (state.rushAuthority ==
-                RimKataRushAuthority.Counterattack)
-            {
-                state.ClearRushAuthority();
-            }
-
-            target = storedTarget;
-            return true;
-        }
-
-        public static bool TryAbsorbStartedCounterattackJob(
+        public static bool TryAbsorbCounterattackOpening(
             Pawn pawn,
             Job sourceJob,
             ThinkNode jobGiver)
@@ -2464,7 +2480,16 @@ namespace KRWF.RimKata
 
             Job currentJob = pawn?.CurJob;
             if (IsProtectedPlayerForcedJob(currentJob)
-                && IsAutomaticCounterattackJob(pawn, sourceJob))
+                && IsAutomaticThreatResponseJob(pawn, sourceJob))
+            {
+                return AbsorbAutomaticThreatIntoProtectedJob(
+                    pawn,
+                    sourceJob.targetA.Thing);
+            }
+
+            if (pawn.Drafted == true
+                && sourceJob?.def == JobDefOf.AttackMelee
+                && IsAutomaticThreatResponseJob(pawn, sourceJob))
             {
                 return AbsorbAutomaticThreatIntoProtectedJob(
                     pawn,
@@ -2472,31 +2497,21 @@ namespace KRWF.RimKata
             }
 
             if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                || !IsConfigurableCounterattackJob(pawn, sourceJob))
+                || !IsConfigurableCounterattackOpening(pawn, sourceJob))
             {
                 return false;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state?.counterattackRimKataSessionActive != true
-                || currentJob?.def != RimKataDefOf.RimKata_Attack
+            if (currentJob?.def != RimKataDefOf.RimKata_Attack
                 || currentJob.playerForced
                 || !(pawn.jobs?.curDriver is JobDriver_RimKataAttack driver)
-                || !driver.CanAbsorbCounterattackJob)
-            {
-                return false;
-            }
-
-            bool liveJobTarget = TryRestoreCounterattackJobTarget(
-                pawn,
-                currentJob,
-                out _);
-            if (!liveJobTarget && !HasEngagementContinuity(pawn, state))
+                || !driver.CanAbsorbAutomaticAttackJob)
             {
                 return false;
             }
 
             Thing target = sourceJob.targetA.Thing;
+            RimKataPawnCombatState state = StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
             RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
@@ -2530,7 +2545,7 @@ namespace KRWF.RimKata
                 || sourceJob.def != JobDefOf.AttackMelee
                 || sourceJob.maxNumMeleeAttacks != 1
                 || sourceJob.expiryInterval != 300
-                || !IsAutomaticCounterattackJob(pawn, sourceJob))
+                || !IsAutomaticThreatResponseJob(pawn, sourceJob))
             {
                 return false;
             }
@@ -2538,6 +2553,12 @@ namespace KRWF.RimKata
             Thing target = sourceJob.targetA.Thing;
             if (!(target is Pawn)
                 || !pawn.Position.AdjacentTo8WayOrInside(target.Position))
+            {
+                return false;
+            }
+
+            if (pawn.pather != null
+                && pawn.pather.nextCell == target.Position)
             {
                 return false;
             }
@@ -2603,7 +2624,7 @@ namespace KRWF.RimKata
             return true;
         }
 
-        private static bool IsAutomaticCounterattackJob(Pawn pawn, Job job)
+        private static bool IsAutomaticThreatResponseJob(Pawn pawn, Job job)
         {
             Thing target = job?.targetA.Thing;
             return pawn?.Map != null
@@ -2624,29 +2645,7 @@ namespace KRWF.RimKata
                         && !targetPawn.IsPsychologicallyInvisible()));
         }
 
-        public static bool IsCounterattackRimKataSessionActive(Pawn pawn)
-        {
-            return pawn?.Drafted != true
-                && pawn?.InMentalState != true
-                && RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && StateFor(pawn, false)?.counterattackRimKataSessionActive
-                    == true;
-        }
-
-        public static bool TryGetCounterattackRushTarget(
-            Pawn pawn,
-            out Thing target)
-        {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            target = state?.counterattackRimKataSessionActive == true
-                && state.rushAuthority == RimKataRushAuthority.Counterattack
-                && state.RushAuthorized
-                    ? state.rushAuthorityTarget
-                    : null;
-            return target != null;
-        }
-
-        public static bool TryConvertStartedCounterattackJob(
+        public static bool TryConvertCounterattackOpening(
             Pawn pawn,
             Job sourceJob,
             ThinkNode jobGiver,
@@ -2660,71 +2659,13 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (!IsConfigurableCounterattackJob(pawn, sourceJob))
+            if (!IsConfigurableCounterattackOpening(pawn, sourceJob))
             {
                 return false;
             }
 
             Thing target = sourceJob.targetA.Thing;
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            bool continuingSession = state.counterattackRimKataSessionActive
-                && (HasEngagementContinuity(pawn, state)
-                    || IsValidCounterattackJobTarget(
-                        pawn,
-                        state.counterattackJobTarget));
-            if (continuingSession)
-            {
-                Thing previousJobTarget = state.counterattackJobTarget;
-                Thing jobTarget = IsValidCounterattackJobTarget(
-                        pawn,
-                        previousJobTarget)
-                    ? previousJobTarget
-                    : ResolveCloseTarget(
-                            pawn,
-                            state,
-                            target,
-                            false,
-                            false)
-                        ?? target;
-                if (!CanAuthorizeCounterattackRush(pawn, jobTarget))
-                {
-                    return false;
-                }
-
-                BindCurrentWeapons(pawn, state);
-                RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
-                RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                    pawn,
-                    state,
-                    target);
-                ActivateCounterattackRush(
-                    pawn,
-                    state,
-                    jobTarget,
-                    sourceJob.verbToUse);
-                if (previousJobTarget != jobTarget)
-                {
-                    state.QueueCounterattackMote();
-                }
-                RefreshDualEngagementState(pawn, state);
-                state.dualLastDrivenTick = -1;
-
-                Job continuingJob = JobMaker.MakeJob(
-                    RimKataDefOf.RimKata_Attack,
-                    jobTarget);
-                continuingJob.playerForced = false;
-                continuingJob.killIncappedTarget = false;
-                continuingJob.verbToUse = sourceJob.verbToUse
-                    ?? RimKataWeaponSlotUtility.CombatVerb(
-                        pawn,
-                        state.engagementOwnerWeapon)
-                    ?? RimKataWeaponSlotUtility.CombatVerb(
-                        pawn,
-                        RimKataWeaponSlotUtility.PrimaryWeapon(pawn));
-                convertedJob = continuingJob;
-                return true;
-            }
-
+            RimKataPawnCombatState state = StateFor(pawn, false);
             Thing openingJobTarget = ResolveCloseTarget(
                     pawn,
                     state,
@@ -2732,20 +2673,45 @@ namespace KRWF.RimKata
                     false,
                     false)
                 ?? target;
-            if (!CanAuthorizeCounterattackRush(pawn, openingJobTarget))
+            if (RimKataMod.Settings?.targetRushEnabled == false
+                || !TargetWithinAutomaticSearchRange(
+                    pawn,
+                    openingJobTarget))
             {
                 return false;
             }
 
-            state.ClearCounterattackRimKataSession();
-            state.BeginCounterattackRimKataSession();
-            state.MarkPendingCounterattack(target);
+            state ??= StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
-            ActivateCounterattackRush(
+            ThingWithComps ownerWeapon =
+                sourceJob.verbToUse?.EquipmentSource as ThingWithComps;
+            if (CycleForWeapon(state, ownerWeapon) == null)
+            {
+                ownerWeapon = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            }
+
+            state.engagementOwnerWeapon = ownerWeapon;
+            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
+            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
-                openingJobTarget,
-                sourceJob.verbToUse);
+                target);
+            if (openingJobTarget != target)
+            {
+                RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
+                    pawn,
+                    state,
+                    openingJobTarget);
+            }
+            if (sourceJob.def == JobDefOf.AttackMelee
+                && pawn.CanReachImmediate(
+                    openingJobTarget,
+                    PathEndMode.Touch))
+            {
+                state.RequestCloseAttack(openingJobTarget);
+            }
+            RefreshDualEngagementState(pawn, state);
+            state.dualLastDrivenTick = -1;
 
             Job rimKataJob = JobMaker.MakeJob(
                 RimKataDefOf.RimKata_Attack,
@@ -2763,284 +2729,7 @@ namespace KRWF.RimKata
             return true;
         }
 
-        public static void RecoverCurrentCounterattackJob(Pawn pawn)
-        {
-            Job job = pawn?.CurJob;
-            if ((!(job?.jobGiver is JobGiver_ConfigurableHostilityResponse)
-                    && !(job?.jobGiver is JobGiver_ReactToCloseMeleeThreat))
-                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn))
-            {
-                return;
-            }
-
-            if (!IsConfigurableCounterattackJob(pawn, job))
-            {
-                return;
-            }
-
-            Thing sourceTarget = job.targetA.Thing;
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            Thing previousJobTarget = state.counterattackJobTarget;
-            bool continuingSession = state.counterattackRimKataSessionActive;
-            bool repairLoadedTarget =
-                state.ConsumeCounterattackTargetLoadRepair();
-            Thing target = continuingSession
-                && !repairLoadedTarget
-                && IsValidCounterattackJobTarget(pawn, previousJobTarget)
-                    ? previousJobTarget
-                    : ResolveCloseTarget(
-                            pawn,
-                            state,
-                            sourceTarget,
-                            false,
-                            false)
-                        ?? (IsValidCounterattackJobTarget(
-                                pawn,
-                                previousJobTarget)
-                            ? previousJobTarget
-                            : sourceTarget);
-            state.BeginCounterattackRimKataSession();
-            if (state.IsPendingCounterattack(target) != true)
-            {
-                state.MarkPendingCounterattack(target);
-            }
-
-            if (!CanAuthorizeCounterattackRush(pawn, target))
-            {
-                return;
-            }
-
-            BindCurrentWeapons(pawn, state);
-            ActivateCounterattackRush(pawn, state, target, job.verbToUse);
-            if (continuingSession && previousJobTarget != target)
-            {
-                state.QueueCounterattackMote();
-            }
-            QueueDedicatedFollowupJob(pawn, target);
-        }
-
-        private static bool CanAuthorizeCounterattackRush(
-            Pawn pawn,
-            Thing target)
-        {
-            return pawn?.Drafted != true
-                && pawn?.InMentalState != true
-                && RimKataMod.Settings?.targetRushEnabled != false
-                && TargetWithinAutomaticSearchRange(pawn, target);
-        }
-
-        private static bool IsValidCounterattackJobTarget(
-            Pawn pawn,
-            Thing target)
-        {
-            return pawn?.Map != null
-                && target != null
-                && !target.Destroyed
-                && target.Spawned
-                && target.Map == pawn.Map
-                && RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                && (!(target is Pawn targetPawn)
-                    || (!targetPawn.Dead
-                        && !targetPawn.Downed
-                        && !targetPawn.Crawling
-                        && !targetPawn.IsPsychologicallyInvisible()));
-        }
-
-        private static bool TryTransitionCounterattackJobTarget(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            Thing target,
-            bool showMote)
-        {
-            Job job = pawn?.CurJob;
-            if (pawn?.Map == null
-                || state?.counterattackRimKataSessionActive != true
-                || job?.def != RimKataDefOf.RimKata_Attack
-                || job.playerForced
-                || !IsValidCounterattackJobTarget(pawn, target))
-            {
-                return false;
-            }
-
-            Thing previousTarget = state.counterattackJobTarget
-                ?? job.targetA.Thing;
-            bool changed = previousTarget != target;
-            state.counterattackJobTarget = target;
-            if (job.targetA.Thing != target)
-            {
-                job.targetA = target;
-            }
-
-            if (CanAuthorizeCounterattackRush(pawn, target))
-            {
-                state.SetRushAuthority(
-                    RimKataRushAuthority.Counterattack,
-                    target);
-            }
-            else if (state.rushAuthority ==
-                RimKataRushAuthority.Counterattack)
-            {
-                state.ClearRushAuthority();
-            }
-
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                target);
-            RefreshDualEngagementState(pawn, state);
-            if (changed && showMote)
-            {
-                MoteMaker.MakeColonistActionOverlay(
-                    pawn,
-                    ThingDefOf.Mote_ColonistAttacking);
-            }
-
-            return true;
-        }
-
-        private static bool TryPromotePreparedCounterattackJobTarget(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            out Thing target)
-        {
-            target = null;
-            Job job = pawn?.CurJob;
-            if (state?.counterattackRimKataSessionActive != true
-                || job?.def != RimKataDefOf.RimKata_Attack
-                || job.playerForced
-                || IsValidCounterattackJobTarget(pawn, job.targetA.Thing))
-            {
-                return false;
-            }
-
-            Thing primaryTarget = PreparedCounterattackTarget(
-                pawn,
-                state,
-                state.primaryWeaponCycle,
-                out int primaryTicks);
-            Thing secondaryTarget = PreparedCounterattackTarget(
-                pawn,
-                state,
-                state.secondaryWeaponCycle,
-                out int secondaryTicks);
-            target = primaryTarget != null
-                && (secondaryTarget == null || primaryTicks <= secondaryTicks)
-                    ? primaryTarget
-                    : secondaryTarget;
-            return target != null
-                && TryTransitionCounterattackJobTarget(
-                    pawn,
-                    state,
-                    target,
-                    true);
-        }
-
-        private static Thing PreparedCounterattackTarget(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState cycle,
-            out int ticksUntilAttack)
-        {
-            ticksUntilAttack = int.MaxValue;
-            Thing target = cycle?.plannedTarget;
-            Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
-                pawn,
-                cycle?.weapon,
-                cycle?.plannedCloseContext == true
-                    || state?.dualCloseCombatActive == true);
-            if (target == null
-                || cycle.plannedInterception
-                || verb == null
-                || !RimKataSharedTargetSearch.IsValidForVerb(
-                    pawn,
-                    verb,
-                    target))
-            {
-                return null;
-            }
-
-            ticksUntilAttack = Mathf.Max(0, cycle.cooldownTicksRemaining)
-                + EstimatedPreparedWarmupTicks(pawn, state, cycle, verb)
-                + Mathf.Max(0, cycle.burstTicksUntilNextShot);
-            return target;
-        }
-
-        private static int EstimatedPreparedWarmupTicks(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState cycle,
-            Verb verb)
-        {
-            if (cycle.warmupTicksRemaining >= 0)
-            {
-                return cycle.warmupTicksRemaining;
-            }
-
-            int warmup = RimKataCombatMath.WarmupTicksForSingleShot(verb);
-            if (cycle.openingWarmupPending)
-            {
-                return warmup
-                    + Mathf.Max(0, cycle.openingWarmupBonusTicks);
-            }
-
-            if (cycle.openingSupportDelayConsumed
-                || state?.engagementOwnerWeapon == null
-                || state.engagementOwnerWeapon == cycle.weapon)
-            {
-                return warmup;
-            }
-
-            RimKataWeaponCycleState ownerCycle = CycleForWeapon(
-                state,
-                state.engagementOwnerWeapon);
-            Verb ownerVerb = RimKataWeaponSlotUtility.CombatVerbForContext(
-                pawn,
-                ownerCycle?.weapon,
-                state?.dualCloseCombatActive == true);
-            if (ownerVerb == null)
-            {
-                return warmup;
-            }
-
-            return warmup + Mathf.Max(
-                1,
-                Mathf.CeilToInt(
-                    RimKataCombatMath.CooldownTicksForSingleShot(
-                        ownerVerb,
-                        pawn,
-                        false) * 0.5f));
-        }
-
-        private static void ActivateCounterattackRush(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            Thing target,
-            Verb requestedVerb)
-        {
-            ThingWithComps ownerWeapon =
-                requestedVerb?.EquipmentSource as ThingWithComps;
-            if (CycleForWeapon(state, ownerWeapon) == null)
-            {
-                ownerWeapon = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            }
-
-            state.SetRushAuthority(
-                RimKataRushAuthority.Counterattack,
-                target);
-            state.counterattackJobTarget = target;
-            state.pendingCounterattackTarget = null;
-            state.pendingCounterattackTicksRemaining = 0;
-            state.engagementOwnerWeapon = ownerWeapon;
-            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                target);
-            RefreshDualEngagementState(pawn, state);
-            state.dualLastDrivenTick = -1;
-        }
-
-        private static bool IsConfigurableCounterattackJob(
+        private static bool IsConfigurableCounterattackOpening(
             Pawn pawn,
             Job job)
         {
@@ -3069,10 +2758,24 @@ namespace KRWF.RimKata
 
         public static bool CanRushTarget(Pawn pawn, Thing target)
         {
-            RimKataPawnCombatState state = StateFor(pawn, false);
             return RimKataMod.Settings?.targetRushEnabled != false
-                && state?.RushAuthorized == true
-                && state.rushAuthorityTarget == target;
+                && pawn?.Map != null
+                && pawn.Drafted != true
+                && !pawn.InMentalState
+                && pawn.CurJobDef == RimKataDefOf.RimKata_Attack
+                && pawn.CurJob?.playerForced != true
+                && pawn.CurJob.targetA.Thing == target
+                && target != null
+                && !target.Destroyed
+                && target.Spawned
+                && target.Map == pawn.Map
+                && TargetWithinAutomaticSearchRange(pawn, target)
+                && RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                && (!(target is Pawn targetPawn)
+                    || (!targetPawn.Dead
+                        && !targetPawn.Downed
+                        && !targetPawn.Crawling
+                        && !targetPawn.IsPsychologicallyInvisible()));
         }
 
         private static void ResetCycleForOpeningHandoff(
@@ -3332,22 +3035,6 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            target = state?.RushAuthorized == true
-                ? state.rushAuthorityTarget
-                : null;
-            if (target != null
-                && !PermanentlyInvalidCycleTarget(
-                    pawn,
-                    target,
-                    target,
-                    playerForced,
-                    killIncappedTarget,
-                    false))
-            {
-                return true;
-            }
-
-            state?.ClearRushAuthority();
             target = null;
             return false;
         }
@@ -3431,6 +3118,17 @@ namespace KRWF.RimKata
                 return true;
             }
 
+            if (HasProjectileOnlySearchWork(pawn, state))
+            {
+                return true;
+            }
+
+            if (state.projectileWakeResumeJob != null
+                && !HasNonProjectileSearchDemand(pawn, state))
+            {
+                return false;
+            }
+
             return state.sharedTargetSearch?.scanActive == true
                 || RimKataSharedTargetSearch.Begin(
                     pawn,
@@ -3504,12 +3202,6 @@ namespace KRWF.RimKata
             LocalTargetInfo target = targetThing != null && targetThing.Spawned
                 ? new LocalTargetInfo(targetThing)
                 : LocalTargetInfo.Invalid;
-            if (cycle.plannedInterception
-                && livePlannedTarget is Projectile projectile)
-            {
-                target = new LocalTargetInfo(projectile.ExactPosition.ToIntVec3());
-            }
-
             data = new RimKataWeaponVisualData
             {
                 weapon = weapon,
@@ -3529,6 +3221,9 @@ namespace KRWF.RimKata
                 && !target.Destroyed
                 && target.Spawned
                 && target.Map == pawn.Map
+                && (!(target is Projectile projectile)
+                    || RimKataTargeting
+                        .IsInterceptionTargetActive(projectile))
                 && (!(target is Pawn targetPawn) || !targetPawn.Dead);
         }
 
@@ -3674,11 +3369,19 @@ namespace KRWF.RimKata
                 return;
             }
 
+            NormalizeInvalidInterceptionState(pawn, state);
+
             RimKataSharedTargetSearch.Prune(pawn, state);
             RefreshDualEngagementState(pawn, state);
             if (state.dualEngagementActive)
             {
                 RearmOpeningOwnerIfBothWaiting(state);
+                if (state.sharedTargetSearch?.scanActive == true
+                    && !state.dedicatedFollowupJobPending
+                    && pawn?.Drafted != true)
+                {
+                    QueueDedicatedFollowupJob(pawn, null);
+                }
                 return;
             }
 
@@ -3687,8 +3390,6 @@ namespace KRWF.RimKata
             state.dualEngagementActive = false;
             state.ResetCandidateSaturationExpansion(true);
             RearmOpeningOwnerIfBothWaiting(state);
-            state.ClearRushAuthority();
-            state.ClearCounterattackRimKataSession();
         }
 
         public static void CancelOffenseForMentalState(Pawn pawn)
@@ -3703,8 +3404,6 @@ namespace KRWF.RimKata
             state.CancelDraftedFire(false);
             state.ClearDraftedMovementSearchTracking();
             state.CancelCloseCombat();
-            state.pendingCounterattackTarget = null;
-            state.pendingCounterattackTicksRemaining = 0;
             state.incomingThreatSource = null;
             state.incomingThreatTicksRemaining = 0;
             state.ClearCloseAttackRequest();
@@ -3740,10 +3439,9 @@ namespace KRWF.RimKata
 
             state.dualCloseTarget = null;
             state.engagementOwnerWeapon = null;
-            state.ClearRushAuthority();
-            state.ClearCounterattackRimKataSession();
             state.sharedTargetSearch?.Reset();
             state.ClearDedicatedFollowupJobRequest();
+            state.projectileWakeResumeJob = null;
             if (clearCooldowns)
             {
                 state.primaryWeaponCycle.Reset();
@@ -3818,6 +3516,97 @@ namespace KRWF.RimKata
                 && (cycle.HasAutomaticCandidates
                     || cycle.plannedInterception
                     || cycle.cachedCandidateInterception);
+        }
+
+        private static bool HasProjectileOnlySearchWork(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget = null)
+        {
+            if (pawn?.Map == null
+                || state == null
+                || HasNonProjectileSearchDemand(
+                    pawn,
+                    state,
+                    assignedTarget))
+            {
+                return false;
+            }
+
+            return HasActiveInterceptionWork(pawn, state.primaryWeaponCycle)
+                || HasActiveInterceptionWork(pawn, state.secondaryWeaponCycle);
+        }
+
+        private static bool HasNonProjectileSearchDemand(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget = null)
+        {
+            return state != null
+                && (state.dualCloseCombatActive
+                    || IsLiveNonProjectileTarget(pawn, assignedTarget)
+                    || IsLiveNonProjectileTarget(
+                        pawn,
+                        state.incomingThreatSource)
+                    || IsLiveNonProjectileTarget(
+                        pawn,
+                        state.automaticAttackRequestTarget)
+                    || IsLiveNonProjectileTarget(
+                        pawn,
+                        state.closeAttackRequestTarget)
+                    || HasNonProjectileCycleWork(
+                        pawn,
+                        state.primaryWeaponCycle)
+                    || HasNonProjectileCycleWork(
+                        pawn,
+                        state.secondaryWeaponCycle));
+        }
+
+        private static bool HasNonProjectileCycleWork(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle)
+        {
+            if (cycle == null || cycle.HasAutomaticCandidates)
+            {
+                return cycle?.HasAutomaticCandidates == true;
+            }
+
+            return IsLiveNonProjectileTarget(pawn, cycle.focusedTarget)
+                || (!cycle.cachedCandidateInterception
+                    && IsLiveNonProjectileTarget(
+                        pawn,
+                        cycle.cachedCandidateTarget))
+                || (!cycle.plannedInterception
+                    && IsLiveNonProjectileTarget(pawn, cycle.plannedTarget));
+        }
+
+        private static bool HasActiveInterceptionWork(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle)
+        {
+            return cycle != null
+                && ((cycle.plannedInterception
+                        && IsActiveInterceptionTarget(
+                            pawn,
+                            cycle.plannedTarget as Projectile))
+                    || (cycle.cachedCandidateInterception
+                        && IsActiveInterceptionTarget(
+                            pawn,
+                            cycle.cachedCandidateTarget as Projectile)));
+        }
+
+        private static bool IsLiveNonProjectileTarget(Pawn pawn, Thing target)
+        {
+            return target != null
+                && !(target is Projectile)
+                && !target.Destroyed
+                && target.Spawned
+                && target.Map == pawn?.Map
+                && (!(target is Pawn targetPawn)
+                    || (!targetPawn.Dead
+                        && !targetPawn.Downed
+                        && !targetPawn.Crawling
+                        && !targetPawn.IsPsychologicallyInvisible()));
         }
 
         private static Thing ResolveCloseTarget(
@@ -3938,20 +3727,10 @@ namespace KRWF.RimKata
             bool restartCloseContext = closeCombatContext
                 && (!state.dualCloseCombatActive
                     || state.dualCloseTarget == null);
-            bool enteringCloseCombat = closeCombatContext
-                && !state.dualCloseCombatActive;
             bool changedCloseTarget = closeCombatContext
                 && (!state.dualCloseCombatActive || state.dualCloseTarget != closeTarget);
             if (changedCloseTarget)
             {
-                if (enteringCloseCombat)
-                {
-                    TryTransitionCounterattackJobTarget(
-                        pawn,
-                        state,
-                        closeTarget,
-                        true);
-                }
                 state.dualCloseCombatActive = true;
                 state.dualCloseTarget = closeTarget;
                 state.EnterCloseCombat(closeTarget);
@@ -4132,10 +3911,13 @@ namespace KRWF.RimKata
                 && cycle.plannedTargetCell != cycle.plannedTarget.Position)
             {
                 cycle.plannedTargetCell = cycle.plannedTarget.Position;
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position);
+                if (!cycle.plannedInterception)
+                {
+                    RimKataSharedTargetSearch.Begin(
+                        pawn,
+                        state,
+                        pawn.Position);
+                }
             }
 
             bool focusedTargetControlsCycle = PrepareFocusedTarget(
@@ -4406,6 +4188,14 @@ namespace KRWF.RimKata
                     closeCombatContext,
                     true,
                     false);
+            if (promoted
+                && !cachedInterception
+                && !closeCombatContext
+                && !verb.IsMeleeAttack
+                && pawn?.jobs?.curDriver is JobDriver_RimKataAttack driver)
+            {
+                driver.TryPromoteReachableRangedJobTarget(cachedTarget);
+            }
             if (cachedInterception && promoted)
             {
                 SetCandidate(

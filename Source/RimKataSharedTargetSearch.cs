@@ -325,7 +325,7 @@ namespace KRWF.RimKata
             if (includeProjectiles
                 && RimKataMod.Settings?.explosiveInterceptionEnabled != false)
             {
-                float projectileRange = FullRangeForCycle(
+                float projectileRange = ProjectileRangeForCycle(
                     pawn,
                     cycle,
                     verb);
@@ -608,9 +608,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            float range = target is Projectile || useFullRange
-                ? FullRangeForCycle(pawn, cycle, verb)
-                : RangeForCycle(pawn, combatState, cycle, verb);
+            float range = target is Projectile
+                ? ProjectileRangeForCycle(pawn, cycle, verb)
+                : useFullRange
+                    ? FullRangeForCycle(pawn, cycle, verb)
+                    : RangeForCycle(pawn, combatState, cycle, verb);
             if (range <= 0f
                 || pawn.Position.DistanceToSquared(target.Position)
                     > range * range)
@@ -1141,6 +1143,22 @@ namespace KRWF.RimKata
                 0f,
                 RimKataRangeUtility.ResolveCandidateRange(verb));
             return actualRange;
+        }
+
+        private static float ProjectileRangeForCycle(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle,
+            Verb verb)
+        {
+            if (pawn?.Map == null
+                || cycle?.weapon == null
+                || verb == null
+                || verb.IsMeleeAttack)
+            {
+                return 0f;
+            }
+
+            return Mathf.Max(0f, verb.EffectiveRange);
         }
 
         private static bool IsCloseCombatContext(
