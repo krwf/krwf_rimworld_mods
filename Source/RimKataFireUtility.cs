@@ -753,13 +753,6 @@ namespace KRWF.RimKata
 
         public static void Postfix(Verb __instance, bool __result)
         {
-            if (__result)
-            {
-                RimKataDualWeaponController.NotifyVanillaOpeningFirstShot(
-                    __instance?.CasterPawn,
-                    __instance);
-            }
-
             if (RimKataFireContext.ActiveVerb == __instance
                 && (__result || __instance.IsMeleeAttack))
             {

@@ -346,7 +346,7 @@ namespace KRWF.RimKata
 
             bool cacheKnown = RimKataEligibilityCache.TryGetCachedAccess(pawn, out bool cachedAccess);
 
-            bool progressiveSearch = RimKataDualWeaponController.DebugProgressiveSearchActive(pawn);
+            bool sharedSearch = RimKataDualWeaponController.DebugSharedSearchActive(pawn);
 
             RimKataDualWeaponController.TryGetDebugState(pawn, out char primaryState, out char secondaryState, out bool usingRimKata, out bool combatActive);
 
@@ -447,7 +447,7 @@ namespace KRWF.RimKata
                 32f,
                 24f);
             Widgets.Label(primaryIndicatorRect, primaryResponse ? "AP" : "A-");
-            Widgets.Label(searchIndicatorRect, progressiveSearch ? "S" : "-");
+            Widgets.Label(searchIndicatorRect, sharedSearch ? "S" : "-");
             Widgets.Label(secondaryIndicatorRect, secondaryResponse ? "BP" : "B-");
 
             Rect usingRect = new Rect(screenPos.x - 50f, screenPos.y - 57f, 40f, 24f);

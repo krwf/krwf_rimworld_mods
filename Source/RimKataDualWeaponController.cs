@@ -35,27 +35,11 @@ namespace KRWF.RimKata
         public bool automaticCandidateCollectionClosed;
         public int pendingCandidateLimitOverride;
         public int activeCandidateLimitOverride;
-        public bool postShotCacheAttempted;
         public Thing lastFiredTarget;
-        public Thing vanillaOpeningTarget;
-        public Thing vanillaFollowupTarget;
-        public bool vanillaOpeningPending;
-        public bool vanillaOpeningSingleShotClaimed;
-        public bool vanillaOpeningFirstShotSearchTriggered;
-        public bool vanillaOpeningCloseContext;
-        public IntVec3 vanillaOpeningTargetCell = IntVec3.Invalid;
         public bool firedInCurrentOpening;
         public bool cooldownFromVanillaOpening;
-        public bool skipNextWarmup;
-        public int candidateRetryTicks;
         public int burstShotsRemaining;
         public int burstTicksUntilNextShot;
-        public int interceptionSearchRadius;
-        public bool progressiveSearchMode;
-        public bool progressiveSearchActive;
-        public bool progressiveSearchExhausted;
-        public int progressiveSearchRadius;
-        public IntVec3 progressiveSearchOrigin = IntVec3.Invalid;
         public Thing focusedTarget;
         public bool focusedTargetFromAttackGizmo;
         public Thing plannedTarget;
@@ -66,7 +50,6 @@ namespace KRWF.RimKata
         public Verb plannedActionVerb;
         public Thing visualTarget;
         public int visualAimTicksRemaining;
-        public bool progressiveSearchJustExhausted;
         private int lastTimerTick = -1;
 
         public bool HasPlan => plannedTarget != null;
@@ -75,12 +58,10 @@ namespace KRWF.RimKata
             && (cooldownTicksRemaining > 0
             || warmupTicksRemaining > 0
             || openingWarmupPending
-             || vanillaOpeningPending
              || cachedCandidateTarget != null
              || HasAutomaticCandidates
             || focusedTarget != null
             || HasPlan
-            || progressiveSearchActive
             || visualAimTicksRemaining > 0);
 
         public bool CombatActive => weapon != null
@@ -94,9 +75,7 @@ namespace KRWF.RimKata
             && (cachedCandidateTarget != null
                  || HasAutomaticCandidates
                 || focusedTarget != null
-                || HasPlan
-                || progressiveSearchMode
-                || progressiveSearchActive);
+                || HasPlan);
 
         public void ExposeData()
         {
@@ -126,33 +105,13 @@ namespace KRWF.RimKata
             Scribe_Values.Look(
                 ref cachedCandidateInterception,
                 "cachedCandidateInterception");
-            Scribe_Values.Look(ref postShotCacheAttempted, "postShotCacheAttempted");
             Scribe_References.Look(ref lastFiredTarget, "lastFiredTarget");
-            Scribe_References.Look(ref vanillaOpeningTarget, "vanillaOpeningTarget");
-            Scribe_References.Look(ref vanillaFollowupTarget, "vanillaFollowupTarget");
-            Scribe_Values.Look(ref vanillaOpeningPending, "vanillaOpeningPending");
-            Scribe_Values.Look(
-                ref vanillaOpeningSingleShotClaimed,
-                "vanillaOpeningSingleShotClaimed");
-            Scribe_Values.Look(
-                ref vanillaOpeningFirstShotSearchTriggered,
-                "vanillaOpeningFirstShotSearchTriggered");
-            Scribe_Values.Look(ref vanillaOpeningCloseContext, "vanillaOpeningCloseContext");
-            Scribe_Values.Look(ref vanillaOpeningTargetCell, "vanillaOpeningTargetCell", IntVec3.Invalid);
             Scribe_Values.Look(ref firedInCurrentOpening, "firedInCurrentOpening");
             Scribe_Values.Look(
                 ref cooldownFromVanillaOpening,
                 "cooldownFromVanillaOpening");
-            Scribe_Values.Look(ref skipNextWarmup, "skipNextWarmup");
-            Scribe_Values.Look(ref candidateRetryTicks, "candidateRetryTicks");
             Scribe_Values.Look(ref burstShotsRemaining, "burstShotsRemaining");
             Scribe_Values.Look(ref burstTicksUntilNextShot, "burstTicksUntilNextShot");
-            Scribe_Values.Look(ref interceptionSearchRadius, "interceptionSearchRadius");
-            Scribe_Values.Look(ref progressiveSearchMode, "progressiveSearchMode");
-            Scribe_Values.Look(ref progressiveSearchActive, "progressiveSearchActive");
-            Scribe_Values.Look(ref progressiveSearchExhausted, "progressiveSearchExhausted");
-            Scribe_Values.Look(ref progressiveSearchRadius, "progressiveSearchRadius");
-            Scribe_Values.Look(ref progressiveSearchOrigin, "progressiveSearchOrigin", IntVec3.Invalid);
             Scribe_References.Look(ref focusedTarget, "focusedTarget");
             Scribe_Values.Look(
                 ref focusedTargetFromAttackGizmo,
@@ -180,7 +139,6 @@ namespace KRWF.RimKata
                 }
                 lastTimerTick = -1;
                 plannedActionVerb = null;
-                skipNextWarmup = false;
                 cooldownTicksRemaining = Mathf.Max(0, cooldownTicksRemaining);
                 pendingCandidateLimitOverride = Mathf.Max(
                     0,
@@ -188,7 +146,6 @@ namespace KRWF.RimKata
                 activeCandidateLimitOverride = Mathf.Max(
                     0,
                     activeCandidateLimitOverride);
-                StopProgressiveSearch();
                 if (HasPlan && warmupTicksRemaining <= 0)
                 {
                     warmupTicksRemaining = 1;
@@ -228,8 +185,7 @@ namespace KRWF.RimKata
                 }
             }
             else if (burstShotsRemaining <= 0
-                && !openingWarmupPending
-                && !vanillaOpeningPending)
+                && !openingWarmupPending)
             {
                 cooldownFromVanillaOpening = false;
             }
@@ -334,98 +290,17 @@ namespace KRWF.RimKata
             activeCandidateLimitOverride = 0;
             focusedTarget = null;
             focusedTargetFromAttackGizmo = false;
-            postShotCacheAttempted = false;
             lastFiredTarget = null;
-            ClearVanillaOpening();
             firedInCurrentOpening = false;
             cooldownFromVanillaOpening = false;
-            skipNextWarmup = false;
-
-            candidateRetryTicks = 0;
 
             visualTarget = null;
             visualAimTicksRemaining = 0;
-            interceptionSearchRadius = 0;
             lastTimerTick = -1;
 
-            StopProgressiveSearch();
             ClearPlan();
         }
 
-        public void ShiftProgressiveSearch(IntVec3 offset, IntVec3 fallbackCenter)
-        {
-            if (!progressiveSearchMode && !progressiveSearchActive)
-            {
-                return;
-            }
-
-            progressiveSearchOrigin = progressiveSearchOrigin.IsValid
-                ? progressiveSearchOrigin + offset
-                : fallbackCenter;
-        }
-
-        public void ClearVanillaOpening()
-        {
-            vanillaOpeningTarget = null;
-            vanillaFollowupTarget = null;
-            vanillaOpeningPending = false;
-            vanillaOpeningSingleShotClaimed = false;
-            vanillaOpeningFirstShotSearchTriggered = false;
-            vanillaOpeningCloseContext = false;
-            vanillaOpeningTargetCell = IntVec3.Invalid;
-        }
-
-        public bool BeginProgressiveSearch(IntVec3 origin)
-        {
-            if (progressiveSearchMode
-                || progressiveSearchActive
-                || focusedTarget != null
-                || cachedCandidateTarget != null
-                || HasPlan
-                || openingWarmupPending
-                || vanillaOpeningPending
-                || burstShotsRemaining > 0)
-            {
-                return false;
-            }
-
-            progressiveSearchMode = true;
-            progressiveSearchActive = true;
-            progressiveSearchExhausted = false;
-            progressiveSearchJustExhausted = false;
-            progressiveSearchRadius = 0;
-            progressiveSearchOrigin = origin;
-            candidateRetryTicks = 1;
-            return true;
-        }
-
-        public void ExhaustProgressiveSearch(IntVec3 origin)
-        {
-            progressiveSearchMode = false;
-            progressiveSearchActive = false;
-            progressiveSearchExhausted = true;
-            progressiveSearchJustExhausted = true;
-            progressiveSearchRadius = 0;
-            progressiveSearchOrigin = origin;
-            candidateRetryTicks = 0;
-        }
-
-        public void RearmTargetSearch()
-        {
-            progressiveSearchExhausted = false;
-            progressiveSearchOrigin = IntVec3.Invalid;
-            candidateRetryTicks = 0;
-        }
-
-        public void StopProgressiveSearch()
-        {
-            progressiveSearchMode = false;
-            progressiveSearchActive = false;
-            progressiveSearchExhausted = false;
-            progressiveSearchJustExhausted = false;
-            progressiveSearchRadius = 0;
-            progressiveSearchOrigin = IntVec3.Invalid;
-        }
         // !!! Debug HUD !!!
         public char DebugState
         {
@@ -470,13 +345,14 @@ namespace KRWF.RimKata
     {
         public bool prepared;
         public ThingWithComps weapon;
+        public Thing target;
     }
 
     public static class RimKataDualWeaponController
     {
-        private const int CandidateRetryTicks = 3;
         [ThreadStatic] private static Pawn activePhysicalMeleePawn;
         [ThreadStatic] private static RimKataWeaponCycleState activePhysicalMeleeCycle;
+        [ThreadStatic] private static Verb pendingVanillaOpeningVerb;
 
         public static void Tick(
             Pawn pawn,
@@ -484,7 +360,6 @@ namespace KRWF.RimKata
             bool playerForced,
             bool killIncappedTarget,
             bool closeCombatContext,
-            bool progressiveSearchOnly = false,
             bool closeTargetResolved = false,
             bool allowAutomaticRangedFire = true)
         {
@@ -562,53 +437,15 @@ namespace KRWF.RimKata
                         pawn,
                         state,
                         state.primaryWeaponCycle,
-                        assignedTarget,
-                        true);
+                        assignedTarget);
                     TryCacheSharedCandidate(
                         pawn,
                         state,
                         state.secondaryWeaponCycle,
-                        assignedTarget,
-                        true);
+                        assignedTarget);
                 }
                 state.ConsumeIdleProjectileSearchTrigger();
                 RefreshDualEngagementState(pawn, state);
-            }
-
-            if (state.VanillaOpeningPending && closeCombatContext)
-            {
-                RimKataWeaponCycleState openingCycle = OpeningCycle(state);
-                if (openingCycle?.vanillaOpeningTarget != closeTarget
-                    || !openingCycle.vanillaOpeningCloseContext)
-                {
-                    Verb openingVerb = RimKataWeaponSlotUtility.CombatVerb(
-                        pawn,
-                        openingCycle?.weapon);
-                    CancelOpeningOwner(pawn, state, openingCycle);
-                    if (pawn.stances?.curStance is Stance_Warmup warmup
-                        && warmup.verb == openingVerb)
-                    {
-                        pawn.stances.SetStance(new Stance_Mobile());
-                    }
-                }
-            }
-
-            if (state.VanillaOpeningPending)
-            {
-                if (loadoutChanged)
-                {
-                    CancelOpeningSession(state);
-                    return;
-                }
-
-                state.dualLastDrivenTick = currentTick;
-                TickVanillaOpening(
-                    pawn,
-                    state,
-                    playerForced,
-                    killIncappedTarget,
-                    allowAutomaticRangedFire);
-                return;
             }
 
             if (!allowAutomaticRangedFire && !closeCombatContext)
@@ -616,9 +453,23 @@ namespace KRWF.RimKata
                 SuppressNewAutomaticRangedTargeting(pawn, state);
             }
 
-            RimKataSharedTargetSearch.Prune(
-                pawn,
-                state);
+            RimKataSharedTargetSearch.Prune(pawn, state);
+            if (state.AutomaticCandidateCountsChanged())
+            {
+                state.ResetCandidateSaturationExpansion(true);
+                bool hasStoredCandidates =
+                    state.primaryWeaponCycle?.HasAutomaticCandidates == true
+                    || state.secondaryWeaponCycle?.HasAutomaticCandidates == true;
+                state.CaptureAutomaticCandidateCounts();
+                if ((state.dualEngagementActive || hasStoredCandidates)
+                    && state.sharedTargetSearch?.scanActive != true)
+                {
+                    RimKataSharedTargetSearch.Begin(
+                        pawn,
+                        state,
+                        pawn.Position);
+                }
+            }
 
             if (!closeCombatContext
                 && state.AutomaticAttackRequestActive
@@ -639,7 +490,7 @@ namespace KRWF.RimKata
 
             if (state.sharedTargetSearch?.scanActive == true)
             {
-                AdvanceOpeningRingSearch(pawn, state, assignedTarget);
+                AdvanceSharedTargetSearch(pawn, state, assignedTarget);
                 RefreshDualEngagementState(pawn, state);
                 if (state.dualEngagementActive)
                 {
@@ -663,15 +514,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            state.primaryWeaponCycle.progressiveSearchJustExhausted = false;
-            state.secondaryWeaponCycle.progressiveSearchJustExhausted = false;
-            bool searchShouldRearm = state.dualLastDrivenTick < 0 || currentTick - state.dualLastDrivenTick > 30;
             state.dualLastDrivenTick = currentTick;
-            if (searchShouldRearm || loadoutChanged)
-            {
-                state.primaryWeaponCycle.RearmTargetSearch();
-                state.secondaryWeaponCycle.RearmTargetSearch();
-            }
 
             ImportLegacyDraftedState(state);
 
@@ -692,17 +535,8 @@ namespace KRWF.RimKata
             }
 
             bool blockedByStance = StanceBlocksRimKata(pawn);
-            Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerbForContext(
-                pawn,
-                state.primaryWeaponCycle.weapon,
-                closeCombatContext);
-
-            bool primarySearchOwner = primaryVerb != null && !primaryVerb.IsMeleeAttack;
-            bool primaryProgressiveSearch = progressiveSearchOnly && primarySearchOwner;
-            bool secondaryProgressiveSearch = progressiveSearchOnly && !primarySearchOwner;
-
-            PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, primaryProgressiveSearch, allowAutomaticRangedFire);
-            PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, secondaryProgressiveSearch, allowAutomaticRangedFire);
+            PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
+            PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
             if (TryPromotePreparedCounterattackJobTarget(
                 pawn,
                 state,
@@ -746,8 +580,7 @@ namespace KRWF.RimKata
                 dualEngagementActive = state.dualEngagementActive;
             }
 
-            combatActive = state?.dualEngagementActive == true
-                && !state.VanillaOpeningPending;
+            combatActive = state?.dualEngagementActive == true;
 
             return state != null || combatActive;
         }
@@ -806,19 +639,17 @@ namespace KRWF.RimKata
             }
 
             debugState = cycle?.DebugState ?? 'W';
-            vanillaOpeningState = state?.VanillaOpeningPending == true
-                || cycle?.openingWarmupPending == true
+            vanillaOpeningState = cycle?.openingWarmupPending == true
                 || (cycle?.cooldownFromVanillaOpening == true
                     && (cycle.cooldownTicksRemaining > 0
                         || cycle.burstShotsRemaining > 0));
         }
 
-        public static bool DebugProgressiveSearchActive(Pawn pawn)
+        public static bool DebugSharedSearchActive(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
 
-            return state?.sharedTargetSearch?.scanActive == true
-                ;
+            return state?.sharedTargetSearch?.scanActive == true;
         }
 
         public static bool NotifyPlayerWeaponTarget(
@@ -867,8 +698,6 @@ namespace KRWF.RimKata
             cycle.focusedTargetFromAttackGizmo = fromAttackGizmo;
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
-            cycle.postShotCacheAttempted = false;
-            cycle.StopProgressiveSearch();
             if (changedTarget)
             {
                 cycle.ClearPlan();
@@ -1000,7 +829,6 @@ namespace KRWF.RimKata
                 target);
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
-            cycle.StopProgressiveSearch();
             SetCandidate(cycle, target, false, true, true, true);
             RefreshDualEngagementState(pawn, state);
             state.dualLastDrivenTick = -1;
@@ -1056,11 +884,6 @@ namespace KRWF.RimKata
                     return true;
                 }
 
-                if (MovementSearchBlockedByCloseCombat(pawn, state))
-                {
-                    return true;
-                }
-
                 if (TryBeginMovementSearch(pawn, state, currentCell))
                 {
                     state.ConsumeDraftedMovementSearchTrigger();
@@ -1084,11 +907,6 @@ namespace KRWF.RimKata
             if (searchInProgress)
             {
                 return true;
-            }
-
-            if (MovementSearchBlockedByCloseCombat(pawn, state))
-            {
-                return false;
             }
 
             return TryBeginMovementSearch(pawn, state, currentCell);
@@ -1158,7 +976,6 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state = StateFor(pawn, false);
             if (state != null
                 && (state.dualEngagementActive
-                    || state.VanillaOpeningPending
                     || state.sharedTargetSearch?.KeepsCombatAlive == true
                     || state.DraftedMovementSearchTriggerPending
                     || state.idleProjectileSearchTriggerPending
@@ -1190,13 +1007,6 @@ namespace KRWF.RimKata
             return state?.sharedTargetSearch?.scanActive == true;
         }
 
-        private static bool MovementSearchBlockedByCloseCombat(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            return false;
-        }
-
         private static bool TryBeginMovementSearch(
             Pawn pawn,
             RimKataPawnCombatState state,
@@ -1208,24 +1018,6 @@ namespace KRWF.RimKata
                 return false;
             }
             return true;
-        }
-
-        private static bool CanOwnMovementSearch(
-            Pawn pawn,
-            RimKataWeaponCycleState cycle)
-        {
-            Verb verb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                cycle?.weapon);
-            return cycle != null
-                && verb != null
-                && !verb.IsMeleeAttack
-                && cycle.focusedTarget == null
-                && cycle.cachedCandidateTarget == null
-                && !cycle.HasPlan
-                && !cycle.openingWarmupPending
-                && !cycle.vanillaOpeningPending
-                && cycle.burstShotsRemaining <= 0;
         }
 
         public static void ClearDraftedMovementTracking(Pawn pawn)
@@ -1256,7 +1048,6 @@ namespace KRWF.RimKata
             }
 
             state.sharedTargetSearch?.Reset();
-            state.ClearOpeningRingSearch();
         }
 
         private static bool SuppressNewAutomaticRangedTargeting(
@@ -1279,8 +1070,6 @@ namespace KRWF.RimKata
             cycle.ClearAutomaticCandidates();
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
-            cycle.StopProgressiveSearch();
-            cycle.candidateRetryTicks = 0;
             return false;
         }
 
@@ -1395,7 +1184,6 @@ namespace KRWF.RimKata
                 && (busyWeapon == RimKataWeaponSlotUtility.PrimaryWeapon(pawn)
                     || busyWeapon == RimKataWeaponSlotUtility.SecondaryWeapon(pawn));
             return cycleBusy
-                || state?.VanillaOpeningPending == true
                 || state?.dedicatedFollowupJobPending == true
                 || state?.ResponsePoseActive == true
                 || pawn.CurJobDef == RimKataDefOf.RimKata_Attack
@@ -1438,15 +1226,11 @@ namespace KRWF.RimKata
 
             cycle.cooldownTicksRemaining = RimKataCombatMath.CooldownTicksForSingleShot(verb, pawn, true);
             cycle.cooldownFromVanillaOpening = false;
-            cycle.skipNextWarmup = false;
 
             cycle.openingWarmupBonusTicks = 0;
             cycle.openingWarmupPending = false;
 
-            cycle.candidateRetryTicks = 0;
-            cycle.interceptionSearchRadius = 0;
 
-            cycle.StopProgressiveSearch();
             cycle.ClearPlan();
 
             RimKataSharedTargetSearch.Prune(pawn, state);
@@ -1473,7 +1257,6 @@ namespace KRWF.RimKata
                 cycle.visualAimTicksRemaining = 0;
             }
 
-            cycle.postShotCacheAttempted = true;
             RefreshDualEngagementState(pawn, state);
 
             return true;
@@ -1507,6 +1290,7 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || verb == null
+                || verb.IsMeleeAttack
                 || !castTarget.IsValid
                 || !castTarget.HasThing
                 || RimKataFireContext.ActiveVerb != null
@@ -1535,8 +1319,7 @@ namespace KRWF.RimKata
                 return attempt;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state);
+            RimKataPawnCombatState state = StateFor(pawn, false);
             if (IsDedicatedFollowupActive(pawn)
                 && !IsPendingCounterattackOpening(
                     pawn,
@@ -1546,22 +1329,12 @@ namespace KRWF.RimKata
                 return attempt;
             }
 
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(state, firedWeapon);
-            RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
-            Verb supportVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, supportCycle?.weapon);
-            if (openingCycle == null)
-            {
-                return attempt;
-            }
-
-            attempt.prepared = true;
-            attempt.weapon = firedWeapon;
-
             Thing currentTarget = castTarget.Thing;
             bool playerForced = pawn.CurJob?.playerForced == true;
             bool killIncappedTarget = pawn.CurJob?.killIncappedTarget == true;
-            bool closeContext = verb.IsMeleeAttack
-                || pawn.CanReachImmediate(currentTarget, PathEndMode.Touch);
+            bool closeContext = pawn.CanReachImmediate(
+                currentTarget,
+                PathEndMode.Touch);
             if (!ValidOpeningTarget(
                 pawn,
                 currentTarget,
@@ -1569,388 +1342,141 @@ namespace KRWF.RimKata
                 killIncappedTarget,
                 closeContext))
             {
-                attempt.prepared = false;
                 return attempt;
             }
 
-            ResetCycleForNewOpening(openingCycle);
-            ResetCycleForNewOpening(supportCycle);
-            state.engagementOwnerWeapon = null;
-            state.ClearOpeningRingSearch();
-            state.ClearRushAuthority();
-
-            if (RimKataMod.Settings?.targetRushEnabled != false
-                && pawn.Drafted != true
-                && state.IsPendingCounterattack(currentTarget)
-                && TargetWithinAutomaticSearchRange(pawn, currentTarget))
-            {
-                state.SetRushAuthority(RimKataRushAuthority.Counterattack, currentTarget);
-                state.pendingCounterattackTarget = null;
-                state.pendingCounterattackTicksRemaining = 0;
-            }
-
-            openingCycle.vanillaOpeningTarget = currentTarget;
-            openingCycle.vanillaFollowupTarget = null;
-            openingCycle.vanillaOpeningPending = true;
-            openingCycle.vanillaOpeningCloseContext = closeContext;
-            openingCycle.vanillaOpeningTargetCell = currentTarget.Position;
-            state.engagementOwnerWeapon = firedWeapon;
-
-            TryStartOpeningRingSearch(pawn, state);
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                currentTarget);
-
-            TryArmOpeningSupport(
-                pawn,
-                state,
-                openingCycle,
-                supportCycle,
-                supportVerb,
-                currentTarget,
-                playerForced,
-                killIncappedTarget,
-                closeContext,
-                PredictedOpeningBonusSourceTicks(pawn, verb));
-            RefreshDualEngagementState(pawn, state);
-            state.dualLastDrivenTick = Find.TickManager.TicksGame;
+            attempt.prepared = true;
+            attempt.weapon = firedWeapon;
+            attempt.target = currentTarget;
+            pendingVanillaOpeningVerb = verb;
             return attempt;
         }
 
-        public static void CommitVanillaOpening(Pawn pawn, Verb verb)
-        {
-            if (pawn?.InMentalState == true)
-            {
-                CancelOffenseForMentalState(pawn);
-                return;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(
-                state,
-                verb?.EquipmentSource as ThingWithComps);
-            if (openingCycle?.vanillaOpeningPending != true
-                || !(pawn?.stances?.curStance is Stance_Warmup warmup)
-                || warmup.verb != verb
-                || !warmup.focusTarg.HasThing
-                || openingCycle.vanillaOpeningTarget != warmup.focusTarg.Thing)
-            {
-                return;
-            }
-
-            RefreshDualEngagementState(pawn, state);
-            state.dualLastDrivenTick = Find.TickManager.TicksGame;
-            if (state.rushAuthority != RimKataRushAuthority.Counterattack
-                || state.rushAuthorityTarget != openingCycle.vanillaOpeningTarget)
-            {
-                return;
-            }
-
-            Thing target = openingCycle.vanillaOpeningTarget;
-            bool closeContext = openingCycle.vanillaOpeningCloseContext;
-            openingCycle.ClearVanillaOpening();
-            SetCandidate(
-                openingCycle,
-                target,
-                false,
-                closeContext,
-                closeContext,
-                true);
-            openingCycle.warmupTotalTicks = Mathf.Max(0, warmup.ticksLeft);
-            openingCycle.warmupTicksRemaining = openingCycle.warmupTotalTicks;
-            pawn.stances.SetStance(new Stance_Mobile());
-            QueueDedicatedFollowupJob(pawn, target);
-        }
-
-        public static void NotifyVanillaOpeningTargetCell(
+        public static void CommitVanillaOpening(
             Pawn pawn,
             Verb verb,
-            Thing target)
+            RimKataVanillaOpeningAttempt attempt)
         {
-            if (pawn?.InMentalState == true)
+            if (!attempt.prepared
+                || pawn?.Map == null
+                || pawn.InMentalState
+                || verb == null
+                || verb.IsMeleeAttack
+                || attempt.weapon == null
+                || attempt.target == null)
             {
-                CancelOffenseForMentalState(pawn);
+                if (pawn?.InMentalState == true)
+                {
+                    CancelOffenseForMentalState(pawn);
+                }
                 return;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(
-                state,
-                verb?.EquipmentSource as ThingWithComps);
-            if (openingCycle?.vanillaOpeningPending != true
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || openingCycle.vanillaOpeningTarget != target
-                || openingCycle.vanillaOpeningTargetCell == target.Position)
-            {
-                return;
-            }
-
-            openingCycle.vanillaOpeningTargetCell = target.Position;
-            Verb openingVerb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                openingCycle.weapon);
-            openingCycle.vanillaOpeningCloseContext = openingVerb?.IsMeleeAttack == true
-                || pawn.CanReachImmediate(target, PathEndMode.Touch);
-            TryStartOpeningRingSearch(pawn, state);
-            RevalidateUnfiredOpeningSupport(
-                pawn,
-                state,
-                openingCycle,
-                OtherCycle(state, openingCycle),
-                target,
-                pawn.CurJob?.playerForced == true,
-                pawn.CurJob?.killIncappedTarget == true);
-        }
-
-        public static void NotifyVanillaOpeningFirstShot(
-            Pawn pawn,
-            Verb verb)
-        {
-            if (pawn?.InMentalState == true)
-            {
-                CancelOffenseForMentalState(pawn);
-                return;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(
-                state,
-                verb?.EquipmentSource as ThingWithComps);
-            if (openingCycle?.vanillaOpeningPending != true
-                || openingCycle.vanillaOpeningFirstShotSearchTriggered)
-            {
-                return;
-            }
-
-            openingCycle.vanillaOpeningFirstShotSearchTriggered = true;
-            TryStartOpeningRingSearch(pawn, state);
-        }
-
-        private static void TickVanillaOpening(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            bool playerForced,
-            bool killIncappedTarget,
-            bool allowAutomaticRangedFire)
-        {
-            RimKataWeaponCycleState openingCycle = OpeningCycle(state);
-            RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
-            Thing target = openingCycle?.vanillaOpeningTarget;
-            if (openingCycle == null
-                || supportCycle == null
+            Thing target = attempt.target;
+            bool playerForced = pawn.CurJob?.playerForced == true;
+            bool killIncappedTarget = pawn.CurJob?.killIncappedTarget == true;
+            bool closeContext = pawn.CanReachImmediate(target, PathEndMode.Touch);
+            if (verb.EquipmentSource != attempt.weapon
                 || !ValidOpeningTarget(
                     pawn,
                     target,
                     playerForced,
                     killIncappedTarget,
-                    openingCycle.vanillaOpeningCloseContext))
+                    closeContext))
             {
-                CancelOpeningOwner(pawn, state, openingCycle);
                 return;
             }
 
-            if (openingCycle.vanillaOpeningTargetCell != target.Position)
+            Stance_Warmup warmup = pawn.stances?.curStance as Stance_Warmup;
+            bool matchingWarmup = warmup?.verb == verb
+                && warmup.focusTarg.HasThing
+                && warmup.focusTarg.Thing == target;
+            Stance_Cooldown cooldown = pawn.stances?.curStance as Stance_Cooldown;
+            bool matchingCooldown = cooldown?.verb == verb
+                && cooldown.focusTarg.HasThing
+                && cooldown.focusTarg.Thing == target;
+            if (!matchingWarmup && !matchingCooldown)
             {
-                openingCycle.vanillaOpeningTargetCell = target.Position;
-                Verb openingVerb = RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    openingCycle.weapon);
-                openingCycle.vanillaOpeningCloseContext = openingVerb?.IsMeleeAttack == true
-                    || pawn.CanReachImmediate(target, PathEndMode.Touch);
-                TryStartOpeningRingSearch(pawn, state);
-                RevalidateUnfiredOpeningSupport(
-                    pawn,
-                    state,
-                    openingCycle,
-                    supportCycle,
-                    target,
-                    playerForced,
-                    killIncappedTarget);
+                return;
             }
 
-            AdvanceOpeningRingSearch(pawn, state, target);
-            RefreshDualEngagementState(pawn, state);
-            supportCycle.TickTimers();
-            if (!supportCycle.firedInCurrentOpening
-                && supportCycle.openingWarmupPending)
+            RimKataPawnCombatState state = StateFor(pawn, true);
+            BindCurrentWeapons(pawn, state);
+            RimKataWeaponCycleState openingCycle = CycleForWeapon(
+                state,
+                attempt.weapon);
+            if (openingCycle == null)
             {
-                Verb supportVerb = RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    supportCycle.weapon);
-                if (!supportCycle.openingWarmupPending
-                    || !supportCycle.HasPlan
-                    || !ValidCurrentTargetForVerb(
-                        pawn,
-                        supportVerb,
-                        target,
-                        playerForced,
-                        killIncappedTarget,
-                        openingCycle.vanillaOpeningCloseContext))
-                {
-                    if (supportCycle.openingWarmupPending || supportCycle.HasPlan)
-                    {
-                        ResetCycleForNewOpening(supportCycle);
-                    }
-                    return;
-                }
+                return;
             }
 
-            bool closeContext = openingCycle.vanillaOpeningCloseContext;
-            Thing supportAssignedTarget = supportCycle.openingWarmupPending
-                ? target
-                : null;
-            bool viable = PrepareCycle(
+            RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
+            ResetCycleForOpeningHandoff(openingCycle);
+            ResetCycleForOpeningHandoff(supportCycle);
+            state.engagementOwnerWeapon = attempt.weapon;
+            state.ClearRushAuthority();
+
+            if (RimKataMod.Settings?.targetRushEnabled != false
+                && pawn.Drafted != true
+                && state.IsPendingCounterattack(target)
+                && TargetWithinAutomaticSearchRange(pawn, target))
+            {
+                state.SetRushAuthority(
+                    RimKataRushAuthority.Counterattack,
+                    target);
+                state.pendingCounterattackTarget = null;
+                state.pendingCounterattackTicksRemaining = 0;
+            }
+
+            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
-                supportCycle,
-                supportAssignedTarget,
-                playerForced && supportAssignedTarget != null,
-                killIncappedTarget,
-                closeContext,
-                false,
-                false,
-                allowAutomaticRangedFire);
-            bool openingFiresThisTick =
-                pawn.stances?.curStance is Stance_Warmup openingWarmup
-                && openingWarmup.verb == RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    openingCycle.weapon)
-                && openingWarmup.ticksLeft <= 1;
-            if (viable
-                && ReadyToAct(supportCycle)
-                && !openingFiresThisTick)
-            {
-                ExecuteCycle(
-                    pawn,
-                    supportCycle,
-                    supportAssignedTarget,
-                    playerForced && supportAssignedTarget != null,
-                    killIncappedTarget,
-                    closeContext,
-                    allowAutomaticRangedFire);
-            }
-        }
-
-        private static void RevalidateUnfiredOpeningSupport(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState openingCycle,
-            RimKataWeaponCycleState supportCycle,
-            Thing target,
-            bool playerForced,
-            bool killIncappedTarget)
-        {
-            if (supportCycle?.firedInCurrentOpening == true)
-            {
-                return;
-            }
-
-            Verb supportVerb = RimKataWeaponSlotUtility.CombatVerb(
+                target);
+            RimKataSharedTargetSearch.Begin(
                 pawn,
-                supportCycle?.weapon);
-            if (supportCycle?.HasPlan == true
-                && supportCycle.plannedCloseContext
-                    != openingCycle.vanillaOpeningCloseContext)
-            {
-                ResetCycleForNewOpening(supportCycle);
-            }
+                state,
+                pawn.Position);
 
-            if (!ValidCurrentTargetForVerb(
-                pawn,
-                supportVerb,
-                target,
-                playerForced,
-                killIncappedTarget,
-                openingCycle.vanillaOpeningCloseContext))
+            if (matchingWarmup)
             {
-                ResetCycleForNewOpening(supportCycle);
-                return;
-            }
-
-            if (!supportCycle.openingWarmupPending || !supportCycle.HasPlan)
-            {
-                TryArmOpeningSupport(
-                    pawn,
-                    state,
+                SetCandidate(
                     openingCycle,
-                    supportCycle,
-                    supportVerb,
                     target,
-                    playerForced,
-                    killIncappedTarget,
-                    openingCycle.vanillaOpeningCloseContext,
-                    PredictedOpeningBonusSourceTicks(
-                        pawn,
-                        RimKataWeaponSlotUtility.CombatVerb(
-                            pawn,
-                            openingCycle.weapon)));
+                    false,
+                    closeContext,
+                    closeContext,
+                    true);
+                openingCycle.plannedActionVerb = verb;
+                openingCycle.warmupTotalTicks = Mathf.Max(0, warmup.ticksLeft);
+                openingCycle.warmupTicksRemaining =
+                    openingCycle.warmupTotalTicks;
             }
-        }
-
-        private static bool TryArmOpeningSupport(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState openingCycle,
-            RimKataWeaponCycleState supportCycle,
-            Verb supportVerb,
-            Thing target,
-            bool playerForced,
-            bool killIncappedTarget,
-            bool closeContext,
-            int openingBonusSourceTicks)
-        {
-            if (supportCycle == null
-                || supportVerb == null
-                || supportCycle.firedInCurrentOpening
-                || supportCycle.openingSupportDelayConsumed
-                || !ValidCurrentTargetForVerb(
-                    pawn,
-                    supportVerb,
-                    target,
-                    playerForced,
-                    killIncappedTarget,
-                    closeContext)
-                || (!closeContext
-                    && !RimKataSharedTargetSearch.IsValidForVerb(
-                        pawn,
-                        supportVerb,
-                        target)))
+            else
             {
-                return false;
+                int cooldownTicks = Mathf.Max(1, cooldown.ticksLeft);
+                openingCycle.cooldownTicksRemaining = cooldownTicks;
+                openingCycle.cooldownFromVanillaOpening = true;
+                openingCycle.firedInCurrentOpening = true;
+                openingCycle.lastFiredTarget = target;
+                openingCycle.visualTarget = target;
+                openingCycle.visualAimTicksRemaining = Mathf.Max(
+                    RimKataCombatTuning.PostShotAimTicks,
+                    cooldownTicks + 2);
+                RecordFirstFiredWeapon(state, attempt.weapon);
             }
 
-            SetCandidate(
-                supportCycle,
-                target,
-                false,
-                closeContext,
-                closeContext,
-                true);
-            int openingBonus = Mathf.Max(
-                0,
-                Mathf.CeilToInt(openingBonusSourceTicks * 0.5f));
-            int normalWarmup = RimKataCombatMath.WarmupTicksForSingleShot(
-                supportVerb);
-            supportCycle.openingWarmupBonusTicks = openingBonus;
-            supportCycle.openingWarmupPending = true;
-            supportCycle.openingSupportDelayConsumed = true;
-            supportCycle.warmupTotalTicks = normalWarmup + openingBonus;
-            supportCycle.warmupTicksRemaining = supportCycle.warmupTotalTicks;
-            supportCycle.visualTarget = target;
-            return true;
+            RefreshDualEngagementState(pawn, state);
+            state.dualLastDrivenTick = Find.TickManager.TicksGame;
+            pawn.stances.SetStance(new Stance_Mobile());
+            QueueDedicatedFollowupJob(pawn, target);
         }
 
-        private static int PredictedOpeningBonusSourceTicks(Pawn pawn, Verb verb)
+        public static void FinishVanillaOpeningAttempt(Verb verb)
         {
-            return Mathf.Max(
-                1,
-                RimKataCombatMath.CooldownTicksForSingleShot(
-                    verb,
-                    pawn,
-                    false));
+            if (pendingVanillaOpeningVerb == verb)
+            {
+                pendingVanillaOpeningVerb = null;
+            }
         }
 
         private static bool ValidOpeningTarget(
@@ -2036,67 +1562,10 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState cycle = CycleForWeapon(
-                state,
-                weapon);
-            LocalTargetInfo target = verb.CurrentTarget;
-            if ((!target.IsValid || !target.HasThing)
-                && pawn.stances?.curStance is Stance_Warmup activeWarmup
-                && activeWarmup.verb == verb)
-            {
-                target = activeWarmup.focusTarg;
-            }
-            if (cycle?.vanillaOpeningPending != true
-                || cycle.vanillaOpeningSingleShotClaimed
-                || cycle.weapon != weapon
-                || !target.IsValid
-                || !target.HasThing
-                || cycle.vanillaOpeningTarget != target.Thing
-                || target.Thing.Destroyed
-                || !target.Thing.Spawned
-                || target.Thing.Map != pawn.Map)
-            {
-                return false;
-            }
-
-            bool matchingWarmup = !(pawn.stances?.curStance is Stance_Warmup warmup)
-                || (warmup.verb == verb
-                    && warmup.focusTarg.HasThing
-                    && warmup.focusTarg.Thing == target.Thing);
-            if (matchingWarmup)
-            {
-                cycle.vanillaOpeningSingleShotClaimed = true;
-            }
-
-            return matchingWarmup;
+            return pendingVanillaOpeningVerb == verb;
         }
 
-        private static void TryStartOpeningRingSearch(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            if (pawn?.Map == null
-                || state == null)
-            {
-                return;
-            }
-
-            if (RimKataSharedTargetSearch.Begin(
-                pawn,
-                state,
-                pawn.Position))
-            {
-                state.openingRingSearchActive =
-                    state.sharedTargetSearch.scanActive;
-                state.openingRingSearchRadius = Mathf.CeilToInt(
-                    state.sharedTargetSearch.completedOuterRadius);
-                state.openingRingSearchOrigin =
-                    state.sharedTargetSearch.origin;
-            }
-        }
-
-        private static void AdvanceOpeningRingSearch(
+        private static void AdvanceSharedTargetSearch(
             Pawn pawn,
             RimKataPawnCombatState state,
             Thing currentTarget)
@@ -2108,10 +1577,6 @@ namespace KRWF.RimKata
             }
 
             RimKataSharedTargetSearch.Advance(pawn, state, currentTarget);
-            state.openingRingSearchActive = state.sharedTargetSearch.scanActive;
-            state.openingRingSearchRadius = Mathf.CeilToInt(
-                state.sharedTargetSearch.completedOuterRadius);
-            state.openingRingSearchOrigin = state.sharedTargetSearch.origin;
 
             TryCacheSharedCandidate(
                 pawn,
@@ -2123,41 +1588,21 @@ namespace KRWF.RimKata
                 state,
                 state.secondaryWeaponCycle,
                 currentTarget);
-            if (RimKataSharedTargetSearch
-                .CompleteIdleProjectilePriorityPass(pawn, state))
-            {
-                TryCacheSharedCandidate(
-                    pawn,
-                    state,
-                    state.primaryWeaponCycle,
-                    currentTarget);
-                TryCacheSharedCandidate(
-                    pawn,
-                    state,
-                    state.secondaryWeaponCycle,
-                    currentTarget);
-            }
         }
 
         private static bool TryCacheSharedCandidate(
             Pawn pawn,
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle,
-            Thing preferredTarget,
-            bool allowPendingProjectileTrigger = false)
+            Thing preferredTarget)
         {
-            bool searchAvailable = state?.sharedTargetSearch
-                    ?.sessionActive == true
-                || (allowPendingProjectileTrigger
-                    && state?.idleProjectileSearchTriggerPending == true);
             if (pawn?.Map == null
-                || !searchAvailable
+                || state == null
                 || cycle == null
                 || cycle.focusedTarget != null
                 || cycle.cachedCandidateTarget != null
                 || cycle.HasPlan
                 || cycle.openingWarmupPending
-                || cycle.vanillaOpeningPending
                 || cycle.burstShotsRemaining > 0)
             {
                 return false;
@@ -2182,24 +1627,7 @@ namespace KRWF.RimKata
 
             cycle.cachedCandidateTarget = candidate;
             cycle.cachedCandidateInterception = interception;
-            cycle.StopProgressiveSearch();
-            state.openingRingSearchCandidate = candidate;
             return true;
-        }
-
-        private static bool BeginProgressiveSearch(
-            Pawn pawn,
-            RimKataWeaponCycleState cycle,
-            IntVec3 origin)
-        {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            return pawn?.Map != null
-                && cycle != null
-                && state != null
-                && RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    origin);
         }
 
         private static Verb LongestAutomaticRangeVerb(Pawn pawn)
@@ -2221,139 +1649,6 @@ namespace KRWF.RimKata
                 : primaryRange >= 0f
                     ? primaryVerb
                     : null;
-        }
-
-        public static void RestoreVanillaOpening(
-            Pawn pawn,
-            RimKataVanillaOpeningAttempt attempt)
-        {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(state, attempt.weapon);
-            if (!attempt.prepared
-                || openingCycle?.vanillaOpeningPending != true)
-            {
-                return;
-            }
-
-            CancelOpeningSession(state);
-        }
-
-        public static void CancelVanillaOpening(
-            Pawn pawn,
-            Verb verb,
-            LocalTargetInfo castTarget)
-        {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState openingCycle = CycleForWeapon(
-                state,
-                verb?.EquipmentSource as ThingWithComps);
-            if (openingCycle?.vanillaOpeningPending == true
-                && (!castTarget.HasThing || openingCycle.vanillaOpeningTarget == castTarget.Thing))
-            {
-                CancelOpeningOwner(pawn, state, openingCycle);
-            }
-        }
-
-        public static bool TryBeginFromVanillaCooldown(
-            Pawn pawn,
-            Verb verb,
-            Thing firedTarget,
-            int vanillaCooldownTicks)
-        {
-            if (pawn?.Map == null
-                || pawn.InMentalState
-                || verb == null
-                || firedTarget == null
-                || RimKataFireContext.ActiveVerb != null)
-            {
-                return false;
-            }
-
-            ThingWithComps firedWeapon = verb.EquipmentSource as ThingWithComps;
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            RimKataWeaponCycleState firedCycle = CycleForWeapon(state, firedWeapon);
-            if (firedWeapon == null
-                || firedCycle?.vanillaOpeningPending != true
-                || firedCycle.vanillaOpeningTarget != firedTarget)
-            {
-                return false;
-            }
-
-            bool singleShotClaimed = firedCycle.vanillaOpeningSingleShotClaimed
-                || RimKataVanillaSingleShotContext.ActiveFor(verb);
-            if (verb.Bursting && !singleShotClaimed)
-            {
-                return false;
-            }
-
-            bool closeContext = firedCycle.vanillaOpeningCloseContext;
-            bool playerForced = pawn.CurJob?.playerForced == true;
-            bool killIncappedTarget = pawn.CurJob?.killIncappedTarget == true;
-            RimKataWeaponCycleState supportCycle = OtherCycle(state, firedCycle);
-            firedCycle.ClearVanillaOpening();
-
-            int fullCooldown = Mathf.Max(1, vanillaCooldownTicks);
-            if (RimKataVanillaSingleShotContext.TryGetOriginalBurstCount(
-                verb,
-                out int originalBurstCount))
-            {
-                fullCooldown = RimKataCombatMath.CooldownTicksForSingleShot(
-                    verb,
-                    pawn,
-                    false,
-                    originalBurstCount);
-            }
-            firedCycle.cooldownTicksRemaining = Mathf.Max(firedCycle.cooldownTicksRemaining, fullCooldown);
-            firedCycle.cooldownFromVanillaOpening = true;
-            firedCycle.StopProgressiveSearch();
-            firedCycle.ClearPlan();
-            firedCycle.firedInCurrentOpening = true;
-            firedCycle.lastFiredTarget = firedTarget;
-            RecordFirstFiredWeapon(state, firedCycle.weapon);
-            firedCycle.visualTarget = firedTarget;
-            firedCycle.visualAimTicksRemaining = Mathf.Max(RimKataCombatTuning.PostShotAimTicks, fullCooldown + 2);
-            firedCycle.postShotCacheAttempted = false;
-            bool cachedFollowup = CacheCandidateAfterAttack(
-                pawn,
-                firedCycle,
-                verb,
-                firedTarget,
-                playerForced,
-                killIncappedTarget,
-                closeContext);
-            if (!cachedFollowup
-                && !verb.IsMeleeAttack
-                && !closeContext
-                && !state.openingRingSearchActive)
-            {
-                BeginProgressiveSearch(pawn, firedCycle, pawn.Position);
-            }
-            else if (cachedFollowup)
-            {
-                state.ClearOpeningRingSearch();
-            }
-
-            if (supportCycle?.openingWarmupPending == true
-                && supportCycle.plannedTarget == firedTarget)
-            {
-                int actualOpeningBonus = Mathf.Max(
-                    0,
-                    Mathf.CeilToInt(fullCooldown * 0.5f));
-                int bonusDelta = actualOpeningBonus
-                    - supportCycle.openingWarmupBonusTicks;
-                supportCycle.openingWarmupBonusTicks = actualOpeningBonus;
-                supportCycle.warmupTotalTicks = Mathf.Max(
-                    0,
-                    supportCycle.warmupTotalTicks + bonusDelta);
-                supportCycle.warmupTicksRemaining = Mathf.Max(
-                    0,
-                    supportCycle.warmupTicksRemaining + bonusDelta);
-            }
-
-            RimKataSharedTargetSearch.Prune(pawn, state);
-            RefreshDualEngagementState(pawn, state);
-            state.dualLastDrivenTick = Find.TickManager.TicksGame;
-            return true;
         }
 
         public static void NotifyDefensiveCombatEvent(Pawn pawn, Thing attacker)
@@ -2393,10 +1688,6 @@ namespace KRWF.RimKata
                 state.RequestCloseAttack(attacker);
             }
 
-            RimKataSharedTargetSearch.Begin(
-                pawn,
-                state,
-                pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -2441,10 +1732,6 @@ namespace KRWF.RimKata
 
             RimKataPawnCombatState state = StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
-            RimKataSharedTargetSearch.Begin(
-                pawn,
-                state,
-                pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -2510,7 +1797,6 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state = StateFor(pawn, false);
             return pawn?.InMentalState != true
                 && state?.dualEngagementActive == true
-                && !state.VanillaOpeningPending
                 && HasEngagementContinuity(pawn, state);
         }
 
@@ -2538,12 +1824,6 @@ namespace KRWF.RimKata
                 state,
                 liveCloseTarget != null,
                 liveCloseTarget);
-        }
-
-        public static bool IsVanillaOpeningActive(Pawn pawn)
-        {
-            return pawn?.InMentalState != true
-                && StateFor(pawn, false)?.VanillaOpeningPending == true;
         }
 
         private static bool HasCycleTargetWork(
@@ -2668,8 +1948,7 @@ namespace KRWF.RimKata
             {
                 state.ResetCandidateSaturationExpansion(true);
             }
-            if (!state.dualEngagementActive
-                && !state.VanillaOpeningPending)
+            if (!state.dualEngagementActive)
             {
                 state.ClearCounterattackRimKataSession();
             }
@@ -2719,50 +1998,6 @@ namespace KRWF.RimKata
                 (Find.TickManager?.TicksGame ?? 0) + 3;
         }
 
-        private static bool HasCurrentDedicatedTarget(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            Job job = pawn?.CurJob;
-            Thing target = job?.targetA.Thing;
-            if (job?.def != RimKataDefOf.RimKata_Attack
-                || pawn.Map == null
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || target.Map != pawn.Map
-                || (!job.playerForced
-                    && !RimKataTargeting.IsAutomaticEnemy(pawn, target)))
-            {
-                return false;
-            }
-
-            if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (!job.playerForced && targetPawn.Crawling)
-                    || (!(job.playerForced && job.killIncappedTarget)
-                        && targetPawn.Downed)))
-            {
-                return false;
-            }
-
-            if (RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
-                    pawn,
-                    target))
-            {
-                state.dedicatedContinuityTarget = target;
-                state.dedicatedContinuityUntilTick =
-                    (Find.TickManager?.TicksGame ?? 0) + 3;
-                return true;
-            }
-
-            int currentTick = Find.TickManager?.TicksGame ?? -1;
-            return currentTick >= 0
-                && state.dedicatedContinuityTarget == target
-                && currentTick <= state.dedicatedContinuityUntilTick;
-        }
-
         public static void NotifyDraftStatusChanged(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
@@ -2808,7 +2043,6 @@ namespace KRWF.RimKata
             cycle.warmupTotalTicks = 0;
             cycle.openingWarmupBonusTicks = 0;
             cycle.openingWarmupPending = false;
-            cycle.ClearVanillaOpening();
             cycle.focusedTarget = null;
             cycle.focusedTargetFromAttackGizmo = false;
         }
@@ -3264,7 +2498,7 @@ namespace KRWF.RimKata
 
             Thing target = sourceJob.targetA.Thing;
             BindCurrentWeapons(pawn, state);
-            TryStartOpeningRingSearch(pawn, state);
+            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -3354,7 +2588,7 @@ namespace KRWF.RimKata
                 state.RequestCloseAttack(threat);
             }
 
-            TryStartOpeningRingSearch(pawn, state);
+            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -3458,7 +2692,7 @@ namespace KRWF.RimKata
                 }
 
                 BindCurrentWeapons(pawn, state);
-                TryStartOpeningRingSearch(pawn, state);
+                RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
                 RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                     pawn,
                     state,
@@ -3797,7 +3031,7 @@ namespace KRWF.RimKata
             state.pendingCounterattackTarget = null;
             state.pendingCounterattackTicksRemaining = 0;
             state.engagementOwnerWeapon = ownerWeapon;
-            TryStartOpeningRingSearch(pawn, state);
+            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -3841,85 +3075,7 @@ namespace KRWF.RimKata
                 && state.rushAuthorityTarget == target;
         }
 
-        private static void CancelOpeningOwner(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState openingCycle)
-        {
-            if (state == null || openingCycle == null)
-            {
-                return;
-            }
-
-            Thing target = openingCycle.vanillaOpeningTarget;
-            bool closeContext = openingCycle.vanillaOpeningCloseContext;
-            RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
-            Verb openingVerb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                openingCycle.weapon);
-            if (ValidCurrentTargetForVerb(
-                pawn,
-                openingVerb,
-                target,
-                pawn?.CurJob?.playerForced == true,
-                pawn?.CurJob?.killIncappedTarget == true,
-                closeContext))
-            {
-                CancelOpeningSession(state);
-                return;
-            }
-
-            ResetCycleForNewOpening(openingCycle);
-
-            bool supportCanContinue = supportCycle?.firedInCurrentOpening == true
-                && HasCycleTargetWork(pawn, state, supportCycle);
-            if (!supportCanContinue
-                && supportCycle?.openingWarmupPending == true)
-            {
-                Verb supportVerb = RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    supportCycle.weapon);
-                supportCanContinue = ValidCurrentTargetForVerb(
-                    pawn,
-                    supportVerb,
-                    target,
-                    pawn?.CurJob?.playerForced == true,
-                    pawn?.CurJob?.killIncappedTarget == true,
-                    closeContext);
-            }
-
-            if (!supportCanContinue)
-            {
-                ResetCycleForNewOpening(supportCycle);
-            }
-
-            RefreshDualEngagementState(pawn, state);
-            if (!state.dualEngagementActive)
-            {
-                state.ClearOpeningRingSearch();
-                state.engagementOwnerWeapon = null;
-                state.ClearRushAuthority();
-                state.dualLastDrivenTick = -1;
-            }
-        }
-
-        private static void CancelOpeningSession(RimKataPawnCombatState state)
-        {
-            if (state == null)
-            {
-                return;
-            }
-
-            ResetCycleForNewOpening(state.primaryWeaponCycle);
-            ResetCycleForNewOpening(state.secondaryWeaponCycle);
-            state.engagementOwnerWeapon = null;
-            state.ClearRushAuthority();
-            state.ClearOpeningRingSearch();
-            RefreshDualEngagementState(state.pawn, state);
-            state.dualLastDrivenTick = -1;
-        }
-
-        private static void ResetCycleForNewOpening(
+        private static void ResetCycleForOpeningHandoff(
             RimKataWeaponCycleState cycle)
         {
             if (cycle == null)
@@ -4001,19 +3157,6 @@ namespace KRWF.RimKata
             cycle.openingWarmupPending = false;
         }
 
-        private static RimKataWeaponCycleState OpeningCycle(
-            RimKataPawnCombatState state)
-        {
-            if (state?.primaryWeaponCycle?.vanillaOpeningPending == true)
-            {
-                return state.primaryWeaponCycle;
-            }
-
-            return state?.secondaryWeaponCycle?.vanillaOpeningPending == true
-                ? state.secondaryWeaponCycle
-                : null;
-        }
-
         private static RimKataWeaponCycleState OtherCycle(
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle)
@@ -4039,45 +3182,6 @@ namespace KRWF.RimKata
                 && weapon != null)
             {
                 state.engagementOwnerWeapon = weapon;
-            }
-        }
-
-        private static void ArmDedicatedFollowup(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState cycle,
-            Verb verb,
-            Thing target,
-            bool closeContext,
-            int openingBonusSourceTicks)
-        {
-            cycle.StopProgressiveSearch();
-            cycle.ClearPlan();
-            cycle.cachedCandidateTarget = null;
-            cycle.cachedCandidateInterception = false;
-            cycle.skipNextWarmup = false;
-            SetCandidate(
-                cycle,
-                target,
-                false,
-                closeContext,
-                closeContext,
-                true);
-
-            int openingBonus = Mathf.Max(
-                0,
-                Mathf.CeilToInt(openingBonusSourceTicks * 0.5f));
-            int normalWarmup = RimKataCombatMath.WarmupTicksForSingleShot(verb);
-            cycle.openingWarmupBonusTicks = openingBonus;
-            cycle.openingWarmupPending = true;
-            cycle.warmupTotalTicks = normalWarmup + openingBonus;
-            cycle.warmupTicksRemaining = cycle.warmupTotalTicks;
-            cycle.visualTarget = target;
-
-            if (closeContext)
-            {
-                state.dualCloseCombatActive = true;
-                state.dualCloseTarget = target;
             }
         }
 
@@ -4120,46 +3224,6 @@ namespace KRWF.RimKata
             return verb.CanHitTarget(target);
         }
 
-        private static bool ValidCachedFollowup(
-            Pawn pawn,
-            Verb verb,
-            Thing target,
-            bool playerForced,
-            bool killIncappedTarget,
-            bool closeContext)
-        {
-            if (pawn?.Map == null
-                || verb == null
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || target.Map != pawn.Map
-                || (!playerForced
-                    && !RimKataTargeting.IsAutomaticEnemy(pawn, target))
-                || !VerbUsable(pawn, verb, closeContext))
-            {
-                return false;
-            }
-
-            if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed && !(playerForced && killIncappedTarget))))
-            {
-                return false;
-            }
-
-            if (verb.IsMeleeAttack || closeContext)
-            {
-                return pawn.CanReachImmediate(target, PathEndMode.Touch);
-            }
-
-            float range = RimKataRangeUtility.ResolveCandidateRange(verb);
-            return pawn.Position.DistanceToSquared(target.Position) <= range * range
-                && verb.CanHitTarget(target);
-        }
-
         public static bool TryTakeVanillaMeleeCooldown(
             Pawn pawn,
             Verb verb,
@@ -4197,17 +3261,6 @@ namespace KRWF.RimKata
             if (cycle == null)
             {
                 return false;
-            }
-
-            if (cycle.vanillaOpeningPending)
-            {
-                cycle.ClearVanillaOpening();
-                RimKataWeaponCycleState supportCycle = OtherCycle(state, cycle);
-                if (supportCycle?.openingWarmupPending == true
-                    && !supportCycle.firedInCurrentOpening)
-                {
-                    CancelUnfiredOpening(supportCycle);
-                }
             }
 
             int cooldown = RimKataCombatMath.CooldownTicksForSingleShot(verb, pawn, false);
@@ -4308,7 +3361,6 @@ namespace KRWF.RimKata
                     null,
                     false,
                     false) != null
-                || state?.openingRingSearchActive == true
                 || state?.DraftedMovementSearchTriggerPending == true
                 || state?.sharedTargetSearch?.KeepsCombatAlive == true
                 || CycleHasContinuationSearchWork(state?.primaryWeaponCycle)
@@ -4324,7 +3376,6 @@ namespace KRWF.RimKata
                     null,
                     false,
                     false) != null
-                || state?.openingRingSearchActive == true
                 || state?.DraftedMovementSearchTriggerPending == true
                 || state?.sharedTargetSearch?.KeepsCombatAlive == true
                 || CycleHasContinuationSearchWork(state?.primaryWeaponCycle)
@@ -4366,11 +3417,6 @@ namespace KRWF.RimKata
 
             if (state.DraftedMovementSearchTriggerPending)
             {
-                if (MovementSearchBlockedByCloseCombat(pawn, state))
-                {
-                    return true;
-                }
-
                 if (TryBeginMovementSearch(pawn, state, pawn.Position))
                 {
                     state.ConsumeDraftedMovementSearchTrigger();
@@ -4379,32 +3425,17 @@ namespace KRWF.RimKata
             }
 
             BindCurrentWeapons(pawn, state);
-            Verb searchVerb = LongestAutomaticRangeVerb(pawn);
-            RimKataWeaponCycleState searchCycle = CycleForWeapon(
-                state,
-                searchVerb?.EquipmentSource as ThingWithComps);
-            if (!CanOwnMovementSearch(pawn, searchCycle))
+            if (state.primaryWeaponCycle?.HasAutomaticCandidates == true
+                || state.secondaryWeaponCycle?.HasAutomaticCandidates == true)
             {
-                return false;
+                return true;
             }
 
-            if (searchCycle.progressiveSearchExhausted
-                && searchCycle.progressiveSearchOrigin == pawn.Position)
-            {
-                return false;
-            }
-
-            if (searchCycle.progressiveSearchExhausted)
-            {
-                searchCycle.RearmTargetSearch();
-            }
-
-            if (!BeginProgressiveSearch(pawn, searchCycle, pawn.Position))
-            {
-                return false;
-            }
-
-            return true;
+            return state.sharedTargetSearch?.scanActive == true
+                || RimKataSharedTargetSearch.Begin(
+                    pawn,
+                    state,
+                    pawn.Position);
         }
 
         public static void ImportLegacyPrimaryState(
@@ -4626,7 +3657,6 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state = StateFor(pawn, false);
             int currentTick = Find.TickManager.TicksGame;
             if (state == null
-                || state.VanillaOpeningPending
                 || state.dualLastDrivenTick == currentTick)
             {
                 return;
@@ -4639,8 +3669,7 @@ namespace KRWF.RimKata
         public static void DeactivateNonJobCycleWork(Pawn pawn)
         {
             RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state == null
-                || state.VanillaOpeningPending)
+            if (state == null)
             {
                 return;
             }
@@ -4659,7 +3688,6 @@ namespace KRWF.RimKata
             state.ResetCandidateSaturationExpansion(true);
             RearmOpeningOwnerIfBothWaiting(state);
             state.ClearRushAuthority();
-            state.ClearOpeningRingSearch();
             state.ClearCounterattackRimKataSession();
         }
 
@@ -4714,7 +3742,6 @@ namespace KRWF.RimKata
             state.engagementOwnerWeapon = null;
             state.ClearRushAuthority();
             state.ClearCounterattackRimKataSession();
-            state.ClearOpeningRingSearch();
             state.sharedTargetSearch?.Reset();
             state.ClearDedicatedFollowupJobRequest();
             if (clearCooldowns)
@@ -4788,8 +3815,7 @@ namespace KRWF.RimKata
         private static bool CycleHasContinuationSearchWork(RimKataWeaponCycleState cycle)
         {
             return cycle != null
-                && (cycle.progressiveSearchMode
-                    || cycle.progressiveSearchActive
+                && (cycle.HasAutomaticCandidates
                     || cycle.plannedInterception
                     || cycle.cachedCandidateInterception);
         }
@@ -5079,7 +4105,6 @@ namespace KRWF.RimKata
             bool killIncappedTarget,
             bool closeCombatContext,
             bool blockedByStance,
-            bool progressiveSearchOnly,
             bool allowAutomaticRangedFire = true)
         {
             Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
@@ -5092,7 +4117,6 @@ namespace KRWF.RimKata
                 || !VerbUsable(pawn, verb, closeCombatContext))
             {
                 ApplyInterruptedBurstCooldown(pawn, cycle, verb);
-                cycle.StopProgressiveSearch();
                 cycle.ClearPlan();
                 return false;
             }
@@ -5128,7 +4152,6 @@ namespace KRWF.RimKata
                 && !focusedTargetControlsCycle
                 && !cycle.HasPlan)
             {
-                cycle.StopProgressiveSearch();
                 return cycle.cooldownTicksRemaining > 0
                     || cycle.visualAimTicksRemaining > 0;
             }
@@ -5143,12 +4166,10 @@ namespace KRWF.RimKata
                     false,
                     cycle.cachedCandidateInterception))
             {
+                Thing invalidCachedTarget = cycle.cachedCandidateTarget;
                 cycle.cachedCandidateTarget = null;
                 cycle.cachedCandidateInterception = false;
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position);
+                cycle.RemoveAutomaticCandidate(invalidCachedTarget);
             }
 
             if (!focusedTargetControlsCycle)
@@ -5170,96 +4191,6 @@ namespace KRWF.RimKata
                     cycle,
                     cycle.lastFiredTarget ?? assignedTarget);
             }
-
-            if (!focusedTargetControlsCycle
-                && progressiveSearchOnly
-                && !cycle.HasPlan
-                && !cycle.progressiveSearchMode
-                && !cycle.progressiveSearchExhausted)
-            {
-                BeginProgressiveSearch(pawn, cycle, pawn.Position);
-            }
-
-            if (!focusedTargetControlsCycle
-                && !verb.IsMeleeAttack
-                && !cycle.HasPlan
-                && cycle.progressiveSearchExhausted)
-            {
-                bool knownTargetReady = TrySetKnownTarget(
-                    pawn,
-                    cycle,
-                    verb,
-                    assignedTarget,
-                    playerForced,
-                    killIncappedTarget,
-                    closeCombatContext,
-                    !playerForced,
-                    cycle.cooldownTicksRemaining <= 0);
-
-                if (!knownTargetReady)
-                {
-                    if (cycle.progressiveSearchOrigin.IsValid
-                        && cycle.progressiveSearchOrigin != pawn.Position)
-                    {
-                        BeginProgressiveSearch(pawn, cycle, pawn.Position);
-                    }
-                    else
-                    {
-                        return cycle.cooldownTicksRemaining > 0;
-                    }
-                }
-            }
-
-            if (!focusedTargetControlsCycle
-                && !cycle.HasPlan
-                && cycle.progressiveSearchMode)
-            {
-                if (cycle.candidateRetryTicks > 0)
-                {
-                    cycle.candidateRetryTicks--;
-                    return cycle.cooldownTicksRemaining > 0;
-                }
-
-                if (!cycle.progressiveSearchActive)
-                {
-                    cycle.progressiveSearchActive = true;
-                    cycle.progressiveSearchRadius = 0;
-                }
-
-                if (TryAdvanceProgressiveSearch(pawn, state, cycle, assignedTarget, playerForced, closeCombatContext))
-                {
-                }
-                else if (cycle.progressiveSearchActive
-                    && (cycle.cooldownTicksRemaining > 1
-                        || !TrySetKnownTarget(
-                            pawn,
-                            cycle,
-                            verb,
-                            assignedTarget,
-                            playerForced,
-                            killIncappedTarget,
-                            closeCombatContext,
-                            !playerForced,
-                            cycle.cooldownTicksRemaining <= 0)))
-                {
-                    return true;
-                }
-                else
-                {
-                    if (!cycle.HasPlan
-                        && !cycle.progressiveSearchActive
-                        && TryReuseLastFiredTarget(
-                            pawn,
-                            cycle,
-                            verb))
-                    {
-                        return true;
-                    }
-
-                    cycle.ExhaustProgressiveSearch(pawn.Position);
-                    return cycle.cooldownTicksRemaining > 0;
-                }
-            }
             if (cycle.cooldownTicksRemaining > 1)
             {
                 return true;
@@ -5270,42 +4201,12 @@ namespace KRWF.RimKata
                 && cycle.cachedCandidateTarget != null
                 && cycle.cooldownTicksRemaining <= 1)
             {
-                Thing cachedTarget = cycle.cachedCandidateTarget;
-                bool cachedInterception =
-                    cycle.cachedCandidateInterception;
-                cycle.cachedCandidateTarget = null;
-                cycle.cachedCandidateInterception = false;
-                bool promoted = cachedInterception
-                    ? CanAssignProgressiveTarget(
-                        pawn,
-                        cycle,
-                        verb,
-                        cachedTarget)
-                    : TrySetKnownTarget(
-                        pawn,
-                        cycle,
-                        verb,
-                        cachedTarget,
-                        false,
-                        killIncappedTarget,
-                        closeCombatContext,
-                        true,
-                        false);
-                if (cachedInterception && promoted)
-                {
-                    SetCandidate(
-                        cycle,
-                        cachedTarget,
-                        true,
-                        false,
-                        false,
-                        false);
-                }
-
-                if (!promoted)
-                {
-                    cycle.ClearPlan();
-                }
+                TryPromoteCachedCandidate(
+                    pawn,
+                    cycle,
+                    verb,
+                    killIncappedTarget,
+                    closeCombatContext);
             }
 
             PromoteApproachingShotToCloseContext(pawn, cycle, verb, closeCombatContext);
@@ -5338,18 +4239,28 @@ namespace KRWF.RimKata
                 {
                     cycle.ClearPlan();
                 }
-                bool finalCooldownTick = cycle.cooldownTicksRemaining == 1;
-                if (!finalCooldownTick && cycle.candidateRetryTicks > 0)
+
+                if (invalidTarget != null
+                    && !(invalidTarget is Projectile))
                 {
-                    cycle.candidateRetryTicks--;
-                    return false;
+                    cycle.RemoveAutomaticCandidate(invalidTarget);
                 }
 
                 if (!focusedTargetControlsCycle
                     && !newAutomaticRangedAttacksBlocked
-                    && !cycle.progressiveSearchMode)
+                    && cycle.cooldownTicksRemaining <= 1)
                 {
-                    BeginProgressiveSearch(pawn, cycle, pawn.Position);
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        cycle,
+                        cycle.lastFiredTarget ?? assignedTarget);
+                    TryPromoteCachedCandidate(
+                        pawn,
+                        cycle,
+                        verb,
+                        killIncappedTarget,
+                        closeCombatContext);
                 }
             }
 
@@ -5357,27 +4268,46 @@ namespace KRWF.RimKata
                 && !focusedTargetControlsCycle
                 && !cycle.HasPlan)
             {
-                cycle.StopProgressiveSearch();
                 return cycle.cooldownTicksRemaining > 0
                     || cycle.visualAimTicksRemaining > 0;
             }
 
             if (!focusedTargetControlsCycle
                 && !cycle.HasPlan
-                && cycle.cachedCandidateTarget == null
-                && !cycle.progressiveSearchMode
                 && cycle.cooldownTicksRemaining <= 1)
             {
-                TrySetKnownTarget(
-                    pawn,
-                    cycle,
-                    verb,
-                    assignedTarget,
-                    playerForced,
-                    killIncappedTarget,
-                    closeCombatContext,
-                    !playerForced,
-                    cycle.cooldownTicksRemaining <= 0);
+                if (cycle.cachedCandidateTarget == null)
+                {
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        cycle,
+                        cycle.lastFiredTarget ?? assignedTarget);
+                }
+
+                if (cycle.cachedCandidateTarget != null)
+                {
+                    TryPromoteCachedCandidate(
+                        pawn,
+                        cycle,
+                        verb,
+                        killIncappedTarget,
+                        closeCombatContext);
+                }
+
+                if (!cycle.HasPlan)
+                {
+                    TrySetKnownTarget(
+                        pawn,
+                        cycle,
+                        verb,
+                        assignedTarget,
+                        playerForced,
+                        killIncappedTarget,
+                        closeCombatContext,
+                        !playerForced,
+                        cycle.cooldownTicksRemaining <= 0);
+                }
             }
 
             if (InterruptMovingFireOutsideAutomaticRange(
@@ -5396,8 +4326,9 @@ namespace KRWF.RimKata
 
             if (cycle.HasPlan && cycle.warmupTicksRemaining < 0)
             {
-                if (!newAutomaticRangedAttacksBlocked
-                    || focusedTargetControlsCycle)
+                if (!closeCombatContext
+                    && (!newAutomaticRangedAttacksBlocked
+                        || focusedTargetControlsCycle))
                 {
                     RimKataSharedTargetSearch.Begin(
                         pawn,
@@ -5405,7 +4336,6 @@ namespace KRWF.RimKata
                         pawn.Position);
                 }
 
-                cycle.skipNextWarmup = false;
                 cycle.plannedActionVerb = ResolveCycleActionVerb(
                     pawn,
                     cycle,
@@ -5414,7 +4344,6 @@ namespace KRWF.RimKata
                 if (cycle.plannedActionVerb == null)
                 {
                     cycle.ClearPlan();
-                    cycle.candidateRetryTicks = CandidateRetryTicks;
                     return false;
                 }
 
@@ -5442,6 +4371,61 @@ namespace KRWF.RimKata
             }
 
             return true;
+        }
+
+        private static bool TryPromoteCachedCandidate(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            bool killIncappedTarget,
+            bool closeCombatContext)
+        {
+            Thing cachedTarget = cycle?.cachedCandidateTarget;
+            bool cachedInterception =
+                cycle?.cachedCandidateInterception == true;
+            if (cycle == null || cachedTarget == null)
+            {
+                return false;
+            }
+
+            cycle.cachedCandidateTarget = null;
+            cycle.cachedCandidateInterception = false;
+            bool promoted = cachedInterception
+                ? CanAssignInterceptionTarget(
+                    pawn,
+                    cycle,
+                    verb,
+                    cachedTarget)
+                : TrySetKnownTarget(
+                    pawn,
+                    cycle,
+                    verb,
+                    cachedTarget,
+                    false,
+                    killIncappedTarget,
+                    closeCombatContext,
+                    true,
+                    false);
+            if (cachedInterception && promoted)
+            {
+                SetCandidate(
+                    cycle,
+                    cachedTarget,
+                    true,
+                    false,
+                    false,
+                    false);
+            }
+            else if (!promoted)
+            {
+                if (!(cachedTarget is Projectile))
+                {
+                    cycle.RemoveAutomaticCandidate(cachedTarget);
+                }
+                cycle.ClearPlan();
+            }
+
+            return promoted;
         }
 
         private static int ResolveOpeningSupportBonus(
@@ -5568,7 +4552,6 @@ namespace KRWF.RimKata
 
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
-            cycle.StopProgressiveSearch();
 
             if (cycle.HasPlan && cycle.plannedTarget != target)
             {
@@ -5655,8 +4638,6 @@ namespace KRWF.RimKata
             }
             cycle.warmupTicksRemaining = -1;
             cycle.warmupTotalTicks = 0;
-            cycle.candidateRetryTicks = 0;
-            cycle.StopProgressiveSearch();
         }
                 
         private static bool TrySetKnownTarget(
@@ -5725,91 +4706,7 @@ namespace KRWF.RimKata
             return true;
         }
 
-        private static bool TryAdvanceProgressiveSearch(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            RimKataWeaponCycleState searchCycle,
-            Thing assignedTarget,
-            bool playerForced,
-            bool closeCombatContext)
-        {
-            if (pawn?.Map == null
-                || state == null
-                || searchCycle == null
-                || closeCombatContext)
-            {
-                searchCycle?.StopProgressiveSearch();
-                return false;
-            }
-
-            Verb searchVerb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                searchCycle.weapon);
-            if (searchVerb == null || searchVerb.IsMeleeAttack)
-            {
-                searchCycle.StopProgressiveSearch();
-                return false;
-            }
-
-            if (state.sharedTargetSearch?.sessionActive != true
-                && !RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    searchCycle.progressiveSearchOrigin.IsValid
-                        ? searchCycle.progressiveSearchOrigin
-                        : pawn.Position))
-            {
-                searchCycle.StopProgressiveSearch();
-                return false;
-            }
-            if (TryCacheSharedCandidate(
-                pawn,
-                state,
-                searchCycle,
-                searchCycle.lastFiredTarget ?? assignedTarget))
-            {
-                return true;
-            }
-
-            searchCycle.progressiveSearchActive =
-                state.sharedTargetSearch?.scanActive == true;
-            return false;
-        }
-
-        private static bool TryReuseLastFiredTarget(
-            Pawn pawn,
-            RimKataWeaponCycleState cycle,
-            Verb verb)
-        {
-            Thing target = cycle?.lastFiredTarget;
-            if (!ValidCachedFollowup(
-                pawn,
-                verb,
-                target,
-                false,
-                false,
-                false)
-                || !RimKataSharedTargetSearch.IsValidForVerb(
-                    pawn,
-                    verb,
-                    target))
-            {
-                return false;
-            }
-
-            return TrySetKnownTarget(
-                pawn,
-                cycle,
-                verb,
-                target,
-                false,
-                false,
-                false,
-                true,
-                false);
-        }
-
-        private static bool CanAssignProgressiveTarget(
+        private static bool CanAssignInterceptionTarget(
             Pawn pawn,
             RimKataWeaponCycleState cycle,
             Verb verb,
@@ -5826,7 +4723,6 @@ namespace KRWF.RimKata
                 || cycle.cachedCandidateTarget != null
                 || cycle.HasPlan
                 || cycle.openingWarmupPending
-                || cycle.vanillaOpeningPending
                 || cycle.burstShotsRemaining > 0)
             {
                 return false;
@@ -6018,122 +4914,6 @@ namespace KRWF.RimKata
                 && cycle.warmupTicksRemaining == 0;
         }
 
-        private static bool CacheCandidateAfterAttack(
-            Pawn pawn,
-            RimKataWeaponCycleState cycle,
-            Verb verb,
-            Thing firedTarget,
-            bool playerForced,
-            bool killIncappedTarget,
-            bool closeCombatContext)
-        {
-            if (pawn?.Map == null
-                || cycle == null
-                || verb == null)
-            {
-                return false;
-            }
-
-            if (cycle.postShotCacheAttempted)
-            {
-                return cycle.cachedCandidateTarget != null;
-            }
-
-            cycle.postShotCacheAttempted = true;
-            cycle.cachedCandidateTarget = null;
-            cycle.cachedCandidateInterception = false;
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state != null)
-            {
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position);
-            }
-
-            Thing focusedTarget = cycle.focusedTarget;
-            if (focusedTarget != null)
-            {
-                bool focusAppliesNow = !closeCombatContext;
-                if (PermanentlyInvalidCycleTarget(
-                    pawn,
-                    focusedTarget,
-                    focusedTarget,
-                    true,
-                    false,
-                    false))
-                {
-                    cycle.focusedTarget = null;
-                    cycle.focusedTargetFromAttackGizmo = false;
-                }
-                else if (focusAppliesNow)
-                {
-                    if (ValidCurrentTargetForVerb(
-                        pawn,
-                        verb,
-                        focusedTarget,
-                        true,
-                        false,
-                        closeCombatContext))
-                    {
-                        cycle.cachedCandidateTarget = focusedTarget;
-                        cycle.cachedCandidateInterception = false;
-                    }
-
-                    return true;
-                }
-            }
-
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && ValidCachedFollowup(
-                    pawn,
-                    verb,
-                    firedTarget,
-                    playerForced,
-                    killIncappedTarget,
-                    closeCombatContext)
-                && RimKataSharedTargetSearch.IsValidForVerb(
-                    pawn,
-                    verb,
-                    firedTarget))
-            {
-                cycle.cachedCandidateTarget = firedTarget;
-                cycle.cachedCandidateInterception = false;
-                if (state != null)
-                {
-                    RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                        pawn,
-                        state,
-                        firedTarget);
-                }
-                return true;
-            }
-
-            if (state == null)
-            {
-                return false;
-            }
-
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                firedTarget);
-            if (!RimKataSharedTargetSearch.TrySelectCandidate(
-                pawn,
-                state,
-                verb,
-                firedTarget,
-                out Thing nextTarget,
-                out bool interception))
-            {
-                return false;
-            }
-
-            cycle.cachedCandidateTarget = nextTarget;
-            cycle.cachedCandidateInterception = interception;
-            return cycle.cachedCandidateTarget != null;
-        }
-
         private static int ExecuteCycle(
             Pawn pawn,
             RimKataWeaponCycleState cycle,
@@ -6185,7 +4965,6 @@ namespace KRWF.RimKata
             if (actionVerb == null)
             {
                 cycle.ClearPlan();
-                cycle.candidateRetryTicks = CandidateRetryTicks;
                 return -1;
             }
             cycle.plannedActionVerb = actionVerb;
@@ -6220,10 +4999,8 @@ namespace KRWF.RimKata
             }
 
             bool firedFromVanillaOpening = cycle.openingWarmupPending
-                || cycle.vanillaOpeningPending
                 || (cycle.burstShotsRemaining > 0
                     && cycle.cooldownFromVanillaOpening);
-            bool firstShotOfSequence = cycle.burstShotsRemaining <= 0;
             bool acted;
             Projectile interceptedProjectile = cycle.plannedTarget as Projectile;
             if (actionVerb.IsMeleeAttack)
@@ -6293,32 +5070,19 @@ namespace KRWF.RimKata
             {
                 ApplyInterruptedBurstCooldown(pawn, cycle, actionVerb);
                 cycle.ClearPlan();
-                cycle.candidateRetryTicks = CandidateRetryTicks;
                 return -1;
             }
 
             cycle.cooldownFromVanillaOpening = firedFromVanillaOpening;
 
             RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state?.VanillaOpeningPending == true)
-            {
-                cycle.firedInCurrentOpening = true;
-            }
+            cycle.firedInCurrentOpening = firedFromVanillaOpening;
             RecordFirstFiredWeapon(state, cycle.weapon);
             bool allowAutomaticContinuation = allowAutomaticRangedFire
                 || playerForced
                 || closeCombatContext
                 || verb.IsMeleeAttack
                 || cycle.focusedTargetFromAttackGizmo;
-            if (firstShotOfSequence
-                && state != null
-                && allowAutomaticContinuation)
-            {
-                RimKataSharedTargetSearch.Begin(
-                    pawn,
-                    state,
-                    pawn.Position);
-            }
 
             cycle.openingWarmupBonusTicks = 0;
             cycle.openingWarmupPending = false;
@@ -6349,35 +5113,20 @@ namespace KRWF.RimKata
             cycle.visualTarget = firedTarget;
             cycle.visualAimTicksRemaining = Mathf.Max(RimKataCombatTuning.PostShotAimTicks, cooldown + 2);
             cycle.ClearPlan();
-            cycle.postShotCacheAttempted = false;
 
             if (!allowAutomaticContinuation)
             {
-                cycle.StopProgressiveSearch();
                 cycle.cachedCandidateTarget = null;
                 cycle.cachedCandidateInterception = false;
                 return cooldown;
             }
 
-            if (!CacheCandidateAfterAttack(
-                pawn,
-                cycle,
-                verb,
-                firedTarget,
-                playerForced,
-                killIncappedTarget,
-                closeCombatContext))
+            if (state != null)
             {
-                if (!verb.IsMeleeAttack
-                    && !closeCombatContext
-                    && state?.openingRingSearchActive != true)
-                {
-                    BeginProgressiveSearch(pawn, cycle, pawn.Position);
-                }
-                else
-                {
-                    cycle.candidateRetryTicks = CandidateRetryTicks;
-                }
+                RimKataSharedTargetSearch.Begin(
+                    pawn,
+                    state,
+                    pawn.Position);
             }
 
             return cooldown;
@@ -6419,31 +5168,11 @@ namespace KRWF.RimKata
                 cycle.ClearPlan();
             }
 
-            cycle.candidateRetryTicks = 0;
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (!permanentlyInvalid
-                || verb.IsMeleeAttack
-                || closeCombatContext
-                || cycle.openingWarmupPending
-                || cycle.vanillaOpeningPending
-                || state == null
-                || state.VanillaOpeningPending)
+            if (invalidTarget != null
+                && !(invalidTarget is Projectile))
             {
-                return;
+                cycle.RemoveAutomaticCandidate(invalidTarget);
             }
-
-            RimKataSharedTargetSearch.Begin(
-                pawn,
-                state,
-                pawn.Position);
-            RimKataSharedTargetSearch.Prune(
-                pawn,
-                state);
-            TryCacheSharedCandidate(
-                pawn,
-                state,
-                cycle,
-                cycle.lastFiredTarget ?? assignedTarget);
         }
 
         private static void ApplyInterruptedBurstCooldown(
@@ -6526,7 +5255,14 @@ namespace KRWF.RimKata
             if (cycle.focusedTarget == null
                 && cycle.cachedCandidateTarget == null)
             {
-                BeginProgressiveSearch(pawn, cycle, pawn.Position);
+                RimKataPawnCombatState state = StateFor(pawn, false);
+                if (state != null)
+                {
+                    RimKataSharedTargetSearch.Begin(
+                        pawn,
+                        state,
+                        pawn.Position);
+                }
             }
 
             return true;
@@ -6756,22 +5492,30 @@ namespace KRWF.RimKata
             bool __result,
             RimKataVanillaOpeningAttempt __state)
         {
-            if (!__state.prepared)
+            try
             {
-                return;
+                if (__state.prepared && __result)
+                {
+                    RimKataDualWeaponController.CommitVanillaOpening(
+                        __instance?.CasterPawn,
+                        __instance,
+                        __state);
+                }
             }
-
-            if (!__result)
+            finally
             {
-                RimKataDualWeaponController.RestoreVanillaOpening(
-                    __instance?.CasterPawn,
-                    __state);
-                return;
+                RimKataDualWeaponController.FinishVanillaOpeningAttempt(
+                    __instance);
             }
+        }
 
-            RimKataDualWeaponController.CommitVanillaOpening(
-                __instance?.CasterPawn,
+        public static Exception Finalizer(
+            Verb __instance,
+            Exception __exception)
+        {
+            RimKataDualWeaponController.FinishVanillaOpeningAttempt(
                 __instance);
+            return __exception;
         }
     }
 
@@ -6798,52 +5542,15 @@ namespace KRWF.RimKata
         }
     }
 
-    [HarmonyPatch(typeof(Stance_Warmup), nameof(Stance_Warmup.StanceTick))]
-    public static class Patch_StanceWarmup_RimKataTargetCell
-    {
-        public static void Prefix(Stance_Warmup __instance)
-        {
-            if (__instance?.focusTarg.HasThing == true)
-            {
-                Pawn pawn = __instance.stanceTracker?.pawn;
-                Thing target = __instance.focusTarg.Thing;
-                RimKataDualWeaponController.NotifyVanillaOpeningTargetCell(
-                    pawn,
-                    __instance.verb,
-                    target);
-                if (RimKataDualWeaponController.IsVanillaOpeningActive(pawn))
-                {
-                    RimKataDualWeaponController.Tick(
-                        pawn,
-                        target,
-                        pawn.CurJob?.playerForced == true,
-                        pawn.CurJob?.killIncappedTarget == true,
-                        false);
-                }
-            }
-        }
-    }
-
     [HarmonyPatch(typeof(Pawn_StanceTracker), nameof(Pawn_StanceTracker.SetStance))]
     public static class Patch_PawnStanceTracker_RimKataCooldown
     {
         public static bool Prefix(
             Stance newStance,
-            Pawn ___pawn,
-            ref bool __state)
+            Pawn ___pawn)
         {
-            __state = false;
             if (!(newStance is Stance_Cooldown cooldown))
             {
-                if (!(newStance is Stance_Warmup)
-                    && ___pawn?.stances?.curStance is Stance_Warmup nonCooldownInterruptedWarmup)
-                {
-                    RimKataDualWeaponController.CancelVanillaOpening(
-                        ___pawn,
-                        nonCooldownInterruptedWarmup.verb,
-                        nonCooldownInterruptedWarmup.focusTarg);
-                }
-
                 return true;
             }
 
@@ -6861,50 +5568,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            LocalTargetInfo focus = cooldown.focusTarg;
-            if (focus.IsValid
-                && focus.HasThing
-                && RimKataDualWeaponController.TryBeginFromVanillaCooldown(
-                    ___pawn,
-                    cooldown.verb,
-                    focus.Thing,
-                    Mathf.Max(1, cooldown.ticksLeft)))
-            {
-                __state = true;
-                return false;
-            }
-
-            if (!cooldown.verb.Bursting
-                && ___pawn?.stances?.curStance is Stance_Warmup interruptedWarmup)
-            {
-                RimKataDualWeaponController.CancelVanillaOpening(
-                    ___pawn,
-                    interruptedWarmup.verb,
-                    interruptedWarmup.focusTarg);
-            }
-
             return true;
-        }
-
-        public static void Postfix(
-            Stance newStance,
-            Pawn ___pawn,
-            bool __state)
-        {
-            if (!__state
-                || !(newStance is Stance_Cooldown cooldown)
-                || !cooldown.focusTarg.HasThing)
-            {
-                return;
-            }
-
-            RimKataDualWeaponController.QueueDedicatedFollowupJob(
-                ___pawn,
-                cooldown.focusTarg.Thing);
-            RimKataDualWeaponController.RefreshPendingDedicatedFollowupAim(
-                ___pawn,
-                cooldown.verb,
-                cooldown.focusTarg);
         }
     }
 

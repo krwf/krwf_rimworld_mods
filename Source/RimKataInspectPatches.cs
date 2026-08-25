@@ -62,7 +62,7 @@ namespace KRWF.RimKata
                 .GetState(pawn, false);
             if (state == null
                 || (!state.dualEngagementActive
-                    && !state.VanillaOpeningPending
+                    && state.sharedTargetSearch?.scanActive != true
                     && !HasInspectWork(state.primaryWeaponCycle)
                     && !HasInspectWork(state.secondaryWeaponCycle)))
             {
@@ -80,12 +80,14 @@ namespace KRWF.RimKata
                 pawn,
                 "KRWF_RimKata_InspectSlotPrimary".Translate(),
                 primary,
-                state.primaryWeaponCycle);
+                state.primaryWeaponCycle,
+                state.sharedTargetSearch?.scanActive == true);
             string secondaryLine = SlotReport(
                 pawn,
                 "KRWF_RimKata_InspectSlotSecondary".Translate(),
                 secondary,
-                state.secondaryWeaponCycle);
+                state.secondaryWeaponCycle,
+                state.sharedTargetSearch?.scanActive == true);
             report = primaryLine.EndWithPeriod() + "\n" + secondaryLine;
             return true;
         }
@@ -93,16 +95,15 @@ namespace KRWF.RimKata
         private static bool HasInspectWork(RimKataWeaponCycleState cycle)
         {
             return cycle?.Active == true
-                || cycle?.DedicatedActive == true
-                || cycle?.vanillaOpeningPending == true
-                || cycle?.progressiveSearchMode == true;
+                || cycle?.DedicatedActive == true;
         }
 
         private static string SlotReport(
             Pawn pawn,
             string slot,
             ThingWithComps weapon,
-            RimKataWeaponCycleState cycle)
+            RimKataWeaponCycleState cycle,
+            bool sharedSearchActive)
         {
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(pawn, weapon);
             RimKataDualWeaponController.GetDebugWeaponState(
@@ -148,8 +149,7 @@ namespace KRWF.RimKata
                 return "KRWF_RimKata_InspectCooldown".Translate(slot);
             }
 
-            if (cycle?.progressiveSearchMode == true
-                || cycle?.progressiveSearchActive == true)
+            if (sharedSearchActive)
             {
                 return "KRWF_RimKata_InspectSearching".Translate(slot);
             }
@@ -162,10 +162,7 @@ namespace KRWF.RimKata
             Verb verb,
             RimKataWeaponCycleState cycle)
         {
-            Thing target = cycle?.vanillaOpeningPending == true
-                ? LiveTarget(pawn, cycle.vanillaOpeningTarget)
-                : null;
-            target ??= LiveTarget(pawn, cycle?.plannedTarget);
+            Thing target = LiveTarget(pawn, cycle?.plannedTarget);
             target ??= LiveTarget(pawn, cycle?.focusedTarget);
             target ??= LiveTarget(pawn, cycle?.visualTarget);
             if (target != null)

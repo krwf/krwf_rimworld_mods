@@ -51,7 +51,6 @@ namespace KRWF.RimKata
     {
         private int warmupTicksRemaining = -1;
         private int cooldownTicksRemaining;
-        private int candidateRetryTicks;
         private Thing plannedTarget;
         private bool plannedInterception;
         private bool plannedCloseAttack;
@@ -73,7 +72,6 @@ namespace KRWF.RimKata
             base.ExposeData();
             Scribe_Values.Look(ref warmupTicksRemaining, "rimKataWarmupTicksRemaining", -1);
             Scribe_Values.Look(ref cooldownTicksRemaining, "rimKataCooldownTicksRemaining");
-            Scribe_Values.Look(ref candidateRetryTicks, "rimKataCandidateRetryTicks");
             Scribe_References.Look(ref plannedTarget, "rimKataPlannedTarget");
             Scribe_Values.Look(ref plannedInterception, "rimKataPlannedInterception");
             Scribe_Values.Look(ref plannedCloseAttack, "rimKataPlannedCloseAttack");
@@ -125,7 +123,6 @@ namespace KRWF.RimKata
                         plannedCloseContext);
                     cooldownTicksRemaining = 0;
                     warmupTicksRemaining = -1;
-                    candidateRetryTicks = 0;
                     plannedTarget = null;
                     plannedInterception = false;
                     plannedCloseAttack = false;
@@ -214,8 +211,7 @@ namespace KRWF.RimKata
                         null,
                         false,
                         false,
-                        false,
-                        true);
+                        false);
                     if (RimKataDualWeaponController
                         .TryRestoreCounterattackJobTarget(
                             pawn,
@@ -254,7 +250,12 @@ namespace KRWF.RimKata
                     }
                     else
                     {
-                        RimKataDualWeaponController.Tick(pawn, null, IsPlayerForced, job.killIncappedTarget, false, true);
+                        RimKataDualWeaponController.Tick(
+                            pawn,
+                            null,
+                            IsPlayerForced,
+                            job.killIncappedTarget,
+                            false);
 
                         if (TryAdoptContinuationTarget(out assignedTarget))
                         {
@@ -281,8 +282,7 @@ namespace KRWF.RimKata
                     assignedTarget,
                     IsPlayerForced,
                     job.killIncappedTarget);
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn)
-                && !RimKataDualWeaponController.IsVanillaOpeningActive(pawn))
+            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
             {
                 EndRimKataJobWith(JobCondition.Succeeded);
                 return;
@@ -373,7 +373,6 @@ namespace KRWF.RimKata
                 IsPlayerForced,
                 job.killIncappedTarget,
                 closeCombatContext,
-                false,
                 closeTargetResolved);
         }
 
@@ -407,7 +406,6 @@ namespace KRWF.RimKata
         {
             warmupTicksRemaining = -1;
             cooldownTicksRemaining = 0;
-            candidateRetryTicks = 0;
             ClearPlannedAttack();
             ClearAimStance();
             RimKataDraftedFireController.CancelForFire(pawn);

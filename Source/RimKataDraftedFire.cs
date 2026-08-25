@@ -110,7 +110,6 @@ namespace KRWF.RimKata
                 false,
                 false,
                 closeContext,
-                false,
                 true,
                 automaticRangedFireAllowed);
         }
@@ -280,7 +279,6 @@ namespace KRWF.RimKata
                 || state?.secondaryWeaponCycle?.CombatActive == true
                 || state?.primaryWeaponCycle?.DedicatedActive == true
                 || state?.secondaryWeaponCycle?.DedicatedActive == true
-                || state?.openingRingSearchActive == true
                 || state?.sharedTargetSearch?.KeepsCombatAlive == true
                 || state?.DraftedMovementSearchTriggerPending == true
                 || state?.idleProjectileSearchTriggerPending == true
@@ -306,7 +304,6 @@ namespace KRWF.RimKata
                 || state?.secondaryWeaponCycle?.CombatActive == true
                 || state?.primaryWeaponCycle?.DedicatedActive == true
                 || state?.secondaryWeaponCycle?.DedicatedActive == true
-                || state?.openingRingSearchActive == true
                 || state?.sharedTargetSearch?.KeepsCombatAlive == true
                 || state?.DraftedMovementSearchTriggerPending == true
                 || state?.idleProjectileSearchTriggerPending == true
@@ -390,11 +387,6 @@ namespace KRWF.RimKata
 
         private static void ResetIfActive(Pawn pawn, RimKataPawnCombatState state)
         {
-            if (state?.primaryWeaponCycle?.vanillaOpeningPending == true)
-            {
-                return;
-            }
-
             if (state == null
                 || (!state.DraftedFireActive
                     && !state.WeaponCyclesActive

@@ -103,6 +103,8 @@ namespace KRWF.RimKata
         public int dualLastDrivenTick = -1;
         public bool dualCloseCombatActive;
         public bool candidateSaturationExpansionUsed;
+        public int observedPrimaryCandidateCount = -1;
+        public int observedSecondaryCandidateCount = -1;
         public Thing dualCloseTarget;
         public ThingWithComps engagementOwnerWeapon;
         public RimKataRushAuthority rushAuthority;
@@ -115,10 +117,6 @@ namespace KRWF.RimKata
         public int counterattackTargetContractVersion =
             CurrentCounterattackTargetContractVersion;
         public bool counterattackTargetLoadRepairPending;
-        public bool openingRingSearchActive;
-        public int openingRingSearchRadius;
-        public IntVec3 openingRingSearchOrigin = IntVec3.Invalid;
-        public Thing openingRingSearchCandidate;
         public ThingWithComps responsePoseWeapon;
         public ThingWithComps deflectionWeapon;
         public Job loadoutInvalidatedCombatJob;
@@ -187,8 +185,6 @@ namespace KRWF.RimKata
             || (secondaryWeaponCycle?.Active == true)
             || dualEngagementActive
             || sharedTargetSearch?.KeepsCombatAlive == true;
-        public bool VanillaOpeningPending => primaryWeaponCycle?.vanillaOpeningPending == true
-            || secondaryWeaponCycle?.vanillaOpeningPending == true;
         public bool RushAuthorized
         {
             get
@@ -241,7 +237,6 @@ namespace KRWF.RimKata
             || IncomingThreatActive
             || CloseAttackRequestActive
             || AutomaticAttackRequestActive
-            || openingRingSearchActive
             || sharedTargetSearch?.KeepsCombatAlive == true
             || dedicatedFollowupJobPending
             || weaponSwapPending;
@@ -356,10 +351,6 @@ namespace KRWF.RimKata
                 ref counterattackTargetContractVersion,
                 "counterattackTargetContractVersion",
                 0);
-            Scribe_Values.Look(ref openingRingSearchActive, "openingRingSearchActive");
-            Scribe_Values.Look(ref openingRingSearchRadius, "openingRingSearchRadius");
-            Scribe_Values.Look(ref openingRingSearchOrigin, "openingRingSearchOrigin", IntVec3.Invalid);
-            Scribe_References.Look(ref openingRingSearchCandidate, "openingRingSearchCandidate");
             Scribe_References.Look(ref responsePoseWeapon, "responsePoseWeapon");
             Scribe_References.Look(ref deflectionWeapon, "deflectionWeapon");
             Scribe_References.Look(ref incomingThreatSource, "incomingThreatSource");
@@ -373,6 +364,7 @@ namespace KRWF.RimKata
                 primaryWeaponCycle ??= new RimKataWeaponCycleState();
                 secondaryWeaponCycle ??= new RimKataWeaponCycleState();
                 sharedTargetSearch ??= new RimKataSharedTargetSearchState();
+                ResetAutomaticCandidateCountTracking();
                 movementFireContinuityUntilTick = -1;
                 counterattackTargetLoadRepairPending =
                     counterattackRimKataSessionActive
@@ -936,7 +928,6 @@ namespace KRWF.RimKata
             pendingCounterattackTarget = null;
             pendingCounterattackTicksRemaining = 0;
             ClearCounterattackRimKataSession();
-            ClearOpeningRingSearch();
             incomingThreatSource = null;
             incomingThreatTicksRemaining = 0;
             closeAttackRequestTarget = null;
@@ -947,6 +938,7 @@ namespace KRWF.RimKata
             dedicatedContinuityUntilTick = -1;
             movementFireContinuityUntilTick = -1;
             candidateSaturationExpansionUsed = false;
+            ResetAutomaticCandidateCountTracking();
             absorbedPathBlockedGotoJobId = -1;
             absorbedPathBlockedThreat = null;
             absorbedPathBlockedRefreshTick = -1;
@@ -970,6 +962,35 @@ namespace KRWF.RimKata
                 secondaryWeaponCycle.pendingCandidateLimitOverride = 0;
                 secondaryWeaponCycle.activeCandidateLimitOverride = 0;
             }
+        }
+
+        public bool AutomaticCandidateCountsChanged()
+        {
+            int primaryCount = primaryWeaponCycle?.automaticCandidates?.Count ?? 0;
+            int secondaryCount = secondaryWeaponCycle?.automaticCandidates?.Count ?? 0;
+            if (observedPrimaryCandidateCount < 0
+                || observedSecondaryCandidateCount < 0)
+            {
+                CaptureAutomaticCandidateCounts();
+                return false;
+            }
+
+            return observedPrimaryCandidateCount != primaryCount
+                || observedSecondaryCandidateCount != secondaryCount;
+        }
+
+        public void CaptureAutomaticCandidateCounts()
+        {
+            observedPrimaryCandidateCount =
+                primaryWeaponCycle?.automaticCandidates?.Count ?? 0;
+            observedSecondaryCandidateCount =
+                secondaryWeaponCycle?.automaticCandidates?.Count ?? 0;
+        }
+
+        public void ResetAutomaticCandidateCountTracking()
+        {
+            observedPrimaryCandidateCount = -1;
+            observedSecondaryCandidateCount = -1;
         }
 
         public void QueueDedicatedFollowupJob(Thing target, Job sourceJob)
@@ -1102,32 +1123,14 @@ namespace KRWF.RimKata
             rushAuthorityTarget = null;
         }
 
-        public void ClearOpeningRingSearch()
-        {
-            openingRingSearchActive = false;
-            openingRingSearchRadius = 0;
-            openingRingSearchOrigin = IntVec3.Invalid;
-            openingRingSearchCandidate = null;
-        }
-
         public void NotifyIncomingThreat(Pawn attacker)
         {
-            if (incomingThreatSource != attacker)
-            {
-                RearmWeaponTargetSearch();
-            }
-
             incomingThreatSource = attacker;
             incomingThreatTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
         }
 
         public void RequestCloseAttack(Thing target)
         {
-            if (closeAttackRequestTarget != target)
-            {
-                RearmWeaponTargetSearch();
-            }
-
             closeAttackRequestTarget = target;
             EnterCloseCombat(target);
         }
@@ -1139,12 +1142,6 @@ namespace KRWF.RimKata
 
         public void RequestAutomaticAttack(Thing target)
         {
-            if (automaticAttackRequestTarget != target
-                || automaticAttackRequestTicksRemaining <= 0)
-            {
-                RearmWeaponTargetSearch();
-            }
-
             if (target != null)
             {
                 automaticAttackRequestTarget = target;
@@ -1152,13 +1149,6 @@ namespace KRWF.RimKata
             }
 
         }
-
-        private void RearmWeaponTargetSearch()
-        {
-            primaryWeaponCycle?.RearmTargetSearch();
-            secondaryWeaponCycle?.RearmTargetSearch();
-        }
-
         private bool IsIncomingThreatActive()
         {
             Pawn attacker = incomingThreatSource;
@@ -1388,8 +1378,7 @@ namespace KRWF.RimKata
                             RimKataDualWeaponController
                                 .RecoverCurrentCounterattackJob(state.pawn);
                             state.CancelDraftedFire(false);
-                            if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack
-                                && !state.VanillaOpeningPending)
+                            if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack)
                             {
                                 state.ClearDraftedMovementSearchTracking();
                                 RimKataDualWeaponController.DeactivateNonJobCycleWork(
@@ -1408,20 +1397,6 @@ namespace KRWF.RimKata
                         && state.pawn.IsBurning())
                     {
                         state.CancelOffenseForFire();
-                    }
-
-                    if (state.VanillaOpeningPending)
-                    {
-                        RimKataWeaponCycleState openingCycle =
-                            state.primaryWeaponCycle?.vanillaOpeningPending == true
-                                ? state.primaryWeaponCycle
-                                : state.secondaryWeaponCycle;
-                        RimKataDualWeaponController.Tick(
-                            state.pawn,
-                            openingCycle?.vanillaOpeningTarget,
-                            state.pawn.CurJob?.playerForced == true,
-                            state.pawn.CurJob?.killIncappedTarget == true,
-                            openingCycle?.vanillaOpeningCloseContext == true);
                     }
 
                     RimKataDualWeaponController.TickIdleCycleTimers(state.pawn);

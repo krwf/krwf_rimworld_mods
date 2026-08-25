@@ -11,13 +11,13 @@ namespace KRWF.RimKata
         public bool sessionActive;
         public bool scanActive;
         public bool reachedMaximum;
-        public bool idleProjectileTrigger;
         public int maximumRing;
         public int completedRing;
         public float effectiveMaximumRange;
         public float completedOuterRadius;
         public IntVec3 origin = IntVec3.Invalid;
         public int lastAdvancedTick = -1;
+        public int lastStartedTick = -1;
 
         public bool KeepsCombatAlive => scanActive;
 
@@ -26,9 +26,6 @@ namespace KRWF.RimKata
             Scribe_Values.Look(ref sessionActive, "sessionActive");
             Scribe_Values.Look(ref scanActive, "scanActive");
             Scribe_Values.Look(ref reachedMaximum, "reachedMaximum");
-            Scribe_Values.Look(
-                ref idleProjectileTrigger,
-                "idleProjectileTrigger");
             Scribe_Values.Look(ref maximumRing, "maximumRing");
             Scribe_Values.Look(ref completedRing, "completedRing");
             Scribe_Values.Look(
@@ -46,6 +43,7 @@ namespace KRWF.RimKata
                 effectiveMaximumRange = Mathf.Max(0f, effectiveMaximumRange);
                 completedOuterRadius = Mathf.Max(0f, completedOuterRadius);
                 lastAdvancedTick = -1;
+                lastStartedTick = -1;
                 if (scanActive)
                 {
                     sessionActive = true;
@@ -58,7 +56,6 @@ namespace KRWF.RimKata
             sessionActive = false;
             scanActive = false;
             reachedMaximum = false;
-            idleProjectileTrigger = false;
             maximumRing = 0;
             completedRing = 0;
             effectiveMaximumRange = 0f;
@@ -83,8 +80,7 @@ namespace KRWF.RimKata
         internal static bool Begin(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            IntVec3 origin,
-            bool idleProjectileTrigger = false)
+            IntVec3 origin)
         {
             RimKataSharedTargetSearchState search =
                 combatState?.sharedTargetSearch;
@@ -97,9 +93,14 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool removedCandidate = Prune(pawn, combatState, false);
-            if (!idleProjectileTrigger
-                && ShouldSkipSaturatedCandidateSearch(
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (currentTick >= 0 && search.lastStartedTick == currentTick)
+            {
+                return false;
+            }
+
+            bool removedCandidate = Prune(pawn, combatState);
+            if (ShouldSkipSaturatedCandidateSearch(
                     pawn,
                     combatState,
                     origin,
@@ -117,14 +118,13 @@ namespace KRWF.RimKata
             search.sessionActive = true;
             search.scanActive = true;
             search.reachedMaximum = false;
-            search.idleProjectileTrigger = idleProjectileTrigger
-                && !RandomAttackEnabled(pawn);
             search.effectiveMaximumRange = maximumRange;
             search.maximumRing = MaximumLogicalRing(maximumRange);
             search.completedRing = 0;
             search.completedOuterRadius = 0f;
             search.origin = origin;
             search.lastAdvancedTick = -1;
+            search.lastStartedTick = currentTick;
             InitializeCollectionClosure(
                 pawn,
                 combatState,
@@ -134,6 +134,7 @@ namespace KRWF.RimKata
                 combatState,
                 combatState.secondaryWeaponCycle);
             RimKataDebugHUD.RecordSearchIndicator(pawn);
+            combatState.CaptureAutomaticCandidateCounts();
             return true;
         }
 
@@ -142,7 +143,14 @@ namespace KRWF.RimKata
             RimKataPawnCombatState combatState,
             IntVec3 origin)
         {
-            combatState?.sharedTargetSearch?.Reset();
+            RimKataSharedTargetSearchState search =
+                combatState?.sharedTargetSearch;
+            if (search?.scanActive == true)
+            {
+                return false;
+            }
+
+            search?.Reset();
             return Begin(pawn, combatState, origin);
         }
 
@@ -236,6 +244,8 @@ namespace KRWF.RimKata
                 Finish(combatState, reachedMaximum);
             }
 
+            combatState.CaptureAutomaticCandidateCounts();
+
             return true;
         }
 
@@ -263,8 +273,7 @@ namespace KRWF.RimKata
             PruneCycle(pawn, combatState, cycle, verb);
             bool randomAttack = RandomAttackEnabled(pawn);
             bool idleProjectilePriority = !randomAttack
-                && (combatState.idleProjectileSearchTriggerPending
-                    || combatState.sharedTargetSearch.idleProjectileTrigger);
+                && combatState.idleProjectileSearchTriggerPending;
             if (!randomAttack
                 && !idleProjectilePriority
                 && !(preferredTarget is Projectile)
@@ -350,22 +359,6 @@ namespace KRWF.RimKata
             return target != null;
         }
 
-        internal static bool CompleteIdleProjectilePriorityPass(
-            Pawn pawn,
-            RimKataPawnCombatState combatState)
-        {
-            RimKataSharedTargetSearchState search =
-                combatState?.sharedTargetSearch;
-            if (search?.idleProjectileTrigger != true || search.scanActive)
-            {
-                return false;
-            }
-
-            search.idleProjectileTrigger = false;
-            Prune(pawn, combatState);
-            return true;
-        }
-
         internal static void TryAddKnownAutomaticTarget(
             Pawn pawn,
             RimKataPawnCombatState combatState,
@@ -392,17 +385,9 @@ namespace KRWF.RimKata
                 target);
         }
 
-        internal static void Prune(
+        internal static bool Prune(
             Pawn pawn,
             RimKataPawnCombatState combatState)
-        {
-            Prune(pawn, combatState, true);
-        }
-
-        private static bool Prune(
-            Pawn pawn,
-            RimKataPawnCombatState combatState,
-            bool restartFinishedSearchAfterRemoval)
         {
             if (combatState == null)
             {
@@ -426,17 +411,6 @@ namespace KRWF.RimKata
                     combatState,
                     combatState.secondaryWeaponCycle));
 
-            RimKataSharedTargetSearchState search =
-                combatState.sharedTargetSearch;
-            if (restartFinishedSearchAfterRemoval
-                && removedCandidate
-                && combatState.dualEngagementActive
-                && search?.sessionActive == true
-                && !search.scanActive)
-            {
-                combatState.ResetCandidateSaturationExpansion(true);
-                Restart(pawn, combatState, pawn.Position);
-            }
             return removedCandidate;
         }
 
@@ -600,6 +574,11 @@ namespace KRWF.RimKata
                     cycle.RemoveAutomaticCandidate(candidate);
                     removed = true;
                 }
+            }
+
+            if (removed)
+            {
+                cycle.automaticCandidateCollectionClosed = false;
             }
             return removed;
         }
@@ -1274,6 +1253,7 @@ namespace KRWF.RimKata
             {
                 combatState.secondaryWeaponCycle.activeCandidateLimitOverride = 0;
             }
+            combatState.CaptureAutomaticCandidateCounts();
         }
     }
 }
