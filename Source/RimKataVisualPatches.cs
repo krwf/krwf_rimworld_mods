@@ -11,6 +11,94 @@ namespace KRWF.RimKata
 {
     public static class RimKataVisualUtility
     {
+        public static bool IsCachedWorldVisualUser(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return false;
+            }
+
+            if (RimKataMod.Settings?.accessRestrictionsDisabled == true)
+            {
+                return RimKataEligibility.FactionEffectsEnabled(pawn);
+            }
+
+            return RimKataEligibilityCache.IsRegisteredUser(pawn)
+                && RimKataEligibility.FactionEffectsEnabled(pawn);
+        }
+
+        public static bool TryGetCachedWorldLoadout(
+            Pawn pawn,
+            out ThingWithComps primary,
+            out ThingWithComps secondary)
+        {
+            return TryGetVisualLoadout(
+                pawn,
+                false,
+                out primary,
+                out secondary);
+        }
+
+        public static bool TryGetUiLoadout(
+            Pawn pawn,
+            out ThingWithComps primary,
+            out ThingWithComps secondary)
+        {
+            return TryGetVisualLoadout(
+                pawn,
+                true,
+                out primary,
+                out secondary);
+        }
+
+        public static bool IsSecondaryUsable(
+            Pawn pawn,
+            ThingWithComps primary,
+            ThingWithComps secondary)
+        {
+            return pawn != null
+                && secondary != null
+                && RimKataMod.Settings?.secondaryWeaponEnabled != false
+                && RimKataEquipmentUtility.IsWeaponEnabled(primary?.def)
+                && RimKataGripUtility.GripTypeFor(primary?.def)
+                    == RimKataGripType.OneHand;
+        }
+
+        public static bool TryGetResponseParticipantLoadout(
+            Pawn pawn,
+            out ThingWithComps primary,
+            out ThingWithComps secondary)
+        {
+            primary = null;
+            secondary = null;
+            if (!RimKataResponseVisualParticipantCache
+                .TryGetParticipantWeapons(
+                    pawn,
+                    out ThingWithComps deflectionWeapon,
+                    out ThingWithComps responsePoseWeapon))
+            {
+                return false;
+            }
+
+            primary = pawn?.equipment?.Primary;
+            if (IsHeldNonPrimary(
+                pawn,
+                primary,
+                responsePoseWeapon))
+            {
+                secondary = responsePoseWeapon;
+            }
+            else if (IsHeldNonPrimary(
+                pawn,
+                primary,
+                deflectionWeapon))
+            {
+                secondary = deflectionWeapon;
+            }
+
+            return true;
+        }
+
         public static bool TryGetActiveSnapshot(
             Pawn pawn,
             out RimKataVisualSnapshot snapshot)
@@ -21,6 +109,21 @@ namespace KRWF.RimKata
             return component?.TryGetActiveVisualSnapshot(
                 pawn,
                 out snapshot) == true;
+        }
+
+        public static bool TryGetCachedActiveSnapshot(
+            Pawn pawn,
+            out RimKataVisualSnapshot snapshot)
+        {
+            snapshot = default(RimKataVisualSnapshot);
+            if (!RimKataResponseVisualParticipantCache.IsParticipant(pawn)
+                && !RimKataResponseVisualParticipantCache
+                    .IsBodyVisualParticipant(pawn))
+            {
+                return false;
+            }
+
+            return TryGetActiveSnapshot(pawn, out snapshot);
         }
 
         public static RimKataVisualSnapshot SnapshotFor(Pawn pawn)
@@ -80,9 +183,35 @@ namespace KRWF.RimKata
             out Rot4 facing)
         {
             facing = Rot4.Invalid;
+            if (!snapshot.responsePoseLookAtFocus
+                || !TryGetLiveResponseFocus(
+                    pawn,
+                    snapshot,
+                    out LocalTargetInfo focus))
+            {
+                return false;
+            }
+
+            Thing target = focus.Thing;
+            Vector3 direction = target.DrawPos - pawn.DrawPos;
+            direction.y = 0f;
+            if (direction.sqrMagnitude <= 0.001f)
+            {
+                return false;
+            }
+
+            facing = Rot4.FromAngleFlat(direction.AngleFlat());
+            return facing.IsValid;
+        }
+
+        public static bool TryGetLiveResponseFocus(
+            Pawn pawn,
+            RimKataVisualSnapshot snapshot,
+            out LocalTargetInfo focus)
+        {
+            focus = LocalTargetInfo.Invalid;
             if (pawn?.Map == null
                 || !snapshot.responsePoseActive
-                || !snapshot.responsePoseLookAtFocus
                 || !snapshot.responsePoseFocus.HasThing)
             {
                 return false;
@@ -106,15 +235,77 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Vector3 direction = target.DrawPos - pawn.DrawPos;
-            direction.y = 0f;
-            if (direction.sqrMagnitude <= 0.001f)
+            focus = snapshot.responsePoseFocus;
+            return true;
+        }
+
+        private static bool TryGetVisualLoadout(
+            Pawn pawn,
+            bool resolveAccess,
+            out ThingWithComps primary,
+            out ThingWithComps secondary)
+        {
+            primary = null;
+            secondary = null;
+            bool hasAccess = resolveAccess
+                ? RimKataEligibility.HasRimKataAccess(pawn)
+                : IsCachedWorldVisualUser(pawn);
+            if (!hasAccess)
             {
                 return false;
             }
 
-            facing = Rot4.FromAngleFlat(direction.AngleFlat());
-            return facing.IsValid;
+            primary = pawn?.equipment?.Primary;
+            bool cached = RimKataEligibilityCache
+                .TryGetRegisteredSecondaryWeapon(
+                    pawn,
+                    out secondary);
+            if (!cached)
+            {
+                secondary = RimKataSecondaryWeaponRegistry
+                    .CurrentRegistry
+                    ?.Get(pawn);
+            }
+
+            if (IsHeldSecondary(pawn, primary, secondary))
+            {
+                return true;
+            }
+
+            if (cached && secondary != null)
+            {
+                secondary = RimKataSecondaryWeaponRegistry
+                    .CurrentRegistry
+                    ?.Get(pawn);
+            }
+
+            if (!IsHeldSecondary(pawn, primary, secondary))
+            {
+                secondary = null;
+            }
+
+            return true;
+        }
+
+        private static bool IsHeldSecondary(
+            Pawn pawn,
+            ThingWithComps primary,
+            ThingWithComps secondary)
+        {
+            return secondary == null
+                || IsHeldNonPrimary(pawn, primary, secondary);
+        }
+
+        private static bool IsHeldNonPrimary(
+            Pawn pawn,
+            ThingWithComps primary,
+            ThingWithComps weapon)
+        {
+            return weapon != null
+                && !weapon.Destroyed
+                && weapon != primary
+                && pawn?.equipment?.AllEquipmentListForReading
+                    ?.Contains(weapon) == true;
         }
 
         public static Pawn FindPawnOwner(Thing thing)
@@ -139,6 +330,9 @@ namespace KRWF.RimKata
         public bool active;
         public Pawn pawn;
         public ThingWithComps primary;
+        public ThingWithComps secondary;
+        public bool snapshotActive;
+        public RimKataVisualSnapshot snapshot;
         public Vector3 drawPos;
     }
 
@@ -153,16 +347,74 @@ namespace KRWF.RimKata
             Vector3 drawPos)
         {
             RimKataCarryDrawContext previous = current;
-            Pawn pawn = RimKataVisualUtility.FindPawnOwner(weapon);
-            current = pawn?.equipment?.Primary == weapon
-                ? new RimKataCarryDrawContext
+            current = default(RimKataCarryDrawContext);
+            RimKataGunReadyDrawContext renderContext =
+                RimKataGunReadyDrawUtility.Current;
+            if (renderContext.scoped)
+            {
+                if (renderContext.active
+                    && renderContext.primary == weapon)
                 {
-                    active = true,
-                    pawn = pawn,
-                    primary = weapon,
-                    drawPos = drawPos
+                    current = new RimKataCarryDrawContext
+                    {
+                        active = true,
+                        pawn = renderContext.pawn,
+                        primary = renderContext.primary,
+                        secondary = renderContext.secondary,
+                        snapshotActive = renderContext.snapshotActive,
+                        snapshot = renderContext.snapshot,
+                        drawPos = drawPos
+                    };
                 }
-                : default(RimKataCarryDrawContext);
+
+                return previous;
+            }
+
+            Pawn pawn = RimKataVisualUtility.FindPawnOwner(weapon);
+            bool rimKataUser = RimKataVisualUtility
+                .TryGetCachedWorldLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary);
+            bool responseParticipant = RimKataVisualUtility
+                .TryGetResponseParticipantLoadout(
+                    pawn,
+                    out ThingWithComps participantPrimary,
+                    out ThingWithComps participantSecondary);
+            if (!rimKataUser && responseParticipant)
+            {
+                primary = participantPrimary;
+            }
+
+            if ((!rimKataUser && !responseParticipant) || primary != weapon)
+            {
+                return previous;
+            }
+
+            ThingWithComps secondary = rimKataUser
+                ? RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null
+                : participantSecondary;
+            RimKataVisualSnapshot snapshot =
+                default(RimKataVisualSnapshot);
+            bool snapshotActive = (secondary != null || responseParticipant)
+                && RimKataVisualUtility.TryGetCachedActiveSnapshot(
+                    pawn,
+                    out snapshot);
+            current = new RimKataCarryDrawContext
+            {
+                active = true,
+                pawn = pawn,
+                primary = primary,
+                secondary = secondary,
+                snapshotActive = snapshotActive,
+                snapshot = snapshot,
+                drawPos = drawPos
+            };
             return previous;
         }
 
@@ -211,10 +463,87 @@ namespace KRWF.RimKata
             Vector3 originalDrawLoc,
             float originalAimAngle)
         {
-            Pawn pawn = RimKataVisualUtility.FindPawnOwner(equipment);
-            ThingWithComps primary = pawn?.equipment?.Primary;
-            ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
-            if (drawingPair || equipment != primary || secondary == null || !RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn))
+            if (drawingPair)
+            {
+                return false;
+            }
+
+            RimKataCarryDrawContext carryContext =
+                RimKataCarryDrawUtility.Current;
+            Pawn pawn;
+            ThingWithComps primary;
+            ThingWithComps secondary;
+            bool snapshotActive;
+            RimKataVisualSnapshot snapshot;
+            if (carryContext.active)
+            {
+                pawn = carryContext.pawn;
+                primary = carryContext.primary;
+                secondary = carryContext.secondary;
+                snapshotActive = carryContext.snapshotActive;
+                snapshot = carryContext.snapshot;
+            }
+            else
+            {
+                RimKataGunReadyDrawContext renderContext =
+                    RimKataGunReadyDrawUtility.Current;
+                if (renderContext.scoped)
+                {
+                    if (!renderContext.active)
+                    {
+                        return false;
+                    }
+
+                    pawn = renderContext.pawn;
+                    primary = renderContext.primary;
+                    secondary = renderContext.secondary;
+                    snapshotActive = renderContext.snapshotActive;
+                    snapshot = renderContext.snapshot;
+                }
+                else
+                {
+                    pawn = RimKataVisualUtility.FindPawnOwner(equipment);
+                    bool rimKataUser = RimKataVisualUtility
+                        .TryGetCachedWorldLoadout(
+                            pawn,
+                            out primary,
+                            out ThingWithComps rawSecondary);
+                    bool responseParticipant = RimKataVisualUtility
+                        .TryGetResponseParticipantLoadout(
+                            pawn,
+                            out ThingWithComps participantPrimary,
+                            out ThingWithComps participantSecondary);
+                    if (!rimKataUser && !responseParticipant)
+                    {
+                        return false;
+                    }
+
+                    if (!rimKataUser)
+                    {
+                        primary = participantPrimary;
+                    }
+
+                    secondary = rimKataUser
+                        ? RimKataVisualUtility.IsSecondaryUsable(
+                            pawn,
+                            primary,
+                            rawSecondary)
+                                ? rawSecondary
+                                : null
+                        : participantSecondary;
+                    if (equipment != primary || secondary == null)
+                    {
+                        return false;
+                    }
+
+                    snapshotActive = RimKataVisualUtility
+                        .TryGetCachedActiveSnapshot(
+                            pawn,
+                            out snapshot);
+                }
+            }
+
+            if (equipment != primary || secondary == null)
             {
                 return false;
             }
@@ -222,8 +551,24 @@ namespace KRWF.RimKata
             drawingPair = true;
             try
             {
-                DrawWeapon(pawn, primary, originalDrawLoc, originalAimAngle, false);
-                DrawWeapon(pawn, secondary, originalDrawLoc, originalAimAngle, true);
+                DrawWeapon(
+                    pawn,
+                    primary,
+                    primary,
+                    originalDrawLoc,
+                    originalAimAngle,
+                    false,
+                    snapshotActive,
+                    snapshot);
+                DrawWeapon(
+                    pawn,
+                    primary,
+                    secondary,
+                    originalDrawLoc,
+                    originalAimAngle,
+                    true,
+                    snapshotActive,
+                    snapshot);
             }
             finally
             {
@@ -237,20 +582,22 @@ namespace KRWF.RimKata
         public static void DrawCombatIndicators(Pawn pawn)
         {
             if (pawn?.Spawned != true
-                || !Find.Selector.IsSelected(pawn))
+                || !Find.Selector.IsSelected(pawn)
+                || !RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary))
             {
                 return;
             }
 
-            ThingWithComps primary =RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
             ThingWithComps secondary =
-                RimKataWeaponSlotUtility
-                    .CanUseSecondarySlot(
-                        pawn)
-                    ? RimKataWeaponSlotUtility
-                        .SecondaryWeapon(
-                            pawn)
-                    : null;
+                RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null;
 
             DrawFocusedTargetLine(
                 pawn,
@@ -328,17 +675,22 @@ namespace KRWF.RimKata
 
         private static void DrawWeapon(
             Pawn pawn,
+            ThingWithComps primary,
             ThingWithComps weapon,
             Vector3 primaryDrawLoc,
             float fallbackAngle,
-            bool secondary)
+            bool secondary,
+            bool snapshotActive,
+            RimKataVisualSnapshot snapshot)
         {
             float aimAngle = fallbackAngle;
             Vector3 drawLoc = primaryDrawLoc;
-            RimKataPawnCombatState combatState = pawn.Map?.GetComponent<RimKataMapComponent>()?.GetState(pawn, false);
             LocalTargetInfo responseFocus = LocalTargetInfo.Invalid;
-            bool responseTarget = combatState?.responsePoseWeapon == weapon
-                && combatState.TryGetLiveResponsePoseFocus(
+            bool responseTarget = snapshotActive
+                && snapshot.responsePoseWeapon == weapon
+                && RimKataVisualUtility.TryGetLiveResponseFocus(
+                    pawn,
+                    snapshot,
                     out responseFocus);
             RimKataWeaponVisualData visual = default(RimKataWeaponVisualData);
             bool cycleTarget = RimKataDualWeaponController.TryGetVisualData(
@@ -354,14 +706,26 @@ namespace KRWF.RimKata
                     : visual.target;
 
                 aimAngle = AngleToTarget(pawn, target, fallbackAngle);
-                drawLoc = EquipmentCenter(pawn, weapon, aimAngle, primaryDrawLoc.y);
+                drawLoc = EquipmentCenter(
+                    pawn,
+                    weapon,
+                    aimAngle,
+                    primaryDrawLoc.y,
+                    snapshotActive,
+                    snapshot);
             }
             else if (!secondary
                 && RimKataDualWeaponController.TryGetNextAim(pawn, out ThingWithComps activeWeapon, out LocalTargetInfo _)
                 && activeWeapon != weapon)
             {
                 aimAngle = pawn.Rotation.AsAngle;
-                drawLoc = EquipmentCenter(pawn, weapon, aimAngle, primaryDrawLoc.y);
+                drawLoc = EquipmentCenter(
+                    pawn,
+                    weapon,
+                    aimAngle,
+                    primaryDrawLoc.y,
+                    snapshotActive,
+                    snapshot);
             }
 
             bool sharedFallbackAim = false;
@@ -379,13 +743,15 @@ namespace KRWF.RimKata
                             pawn,
                             weapon,
                             aimAngle,
-                            primaryDrawLoc.y);
+                            primaryDrawLoc.y,
+                            snapshotActive,
+                            snapshot);
                     }
                     else
                     {
                         drawLoc = SymmetricIdleSecondaryLoc(
                             pawn,
-                            RimKataWeaponSlotUtility.PrimaryWeapon(pawn),
+                            primary,
                             weapon,
                             primaryDrawLoc,
                             fallbackAngle,
@@ -662,12 +1028,21 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            ThingWithComps primary =
-                RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            if (!RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary))
+            {
+                return false;
+            }
+
             ThingWithComps secondary =
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
+                RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null;
             if (weapon != primary && weapon != secondary)
             {
                 return false;
@@ -700,10 +1075,15 @@ namespace KRWF.RimKata
             Pawn pawn,
             ThingWithComps weapon,
             float aimAngle,
-            float renderHeight)
+            float renderHeight,
+            bool snapshotActive,
+            RimKataVisualSnapshot snapshot)
         {
             float distanceFactor = pawn.ageTracker?.CurLifeStage?.equipmentDrawDistanceFactor ?? 1f;
-            Vector3 drawLoc = pawn.DrawPos + RimKataVisualUtility.DrawOffset(RimKataVisualUtility.SnapshotFor(pawn));
+            Vector3 drawLoc = pawn.DrawPos
+                + (snapshotActive
+                    ? RimKataVisualUtility.DrawOffset(snapshot)
+                    : Vector3.zero);
             drawLoc.y = renderHeight;
             return drawLoc + new Vector3(0f, 0f, 0.4f + weapon.def.equippedDistanceOffset).RotatedBy(aimAngle) * distanceFactor;
         }
@@ -750,8 +1130,29 @@ namespace KRWF.RimKata
                 return;
             }
 
-            float radius = MaximumAutomaticSearchVisualRange(pawn);
-            if (radius <= 0f && HasDualMeleeLoadout(pawn))
+            bool hasAccess = RimKataVisualUtility.TryGetUiLoadout(
+                pawn,
+                out ThingWithComps primary,
+                out ThingWithComps rawSecondary);
+            if (!hasAccess)
+            {
+                primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+                rawSecondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
+            }
+
+            ThingWithComps usableSecondary = hasAccess
+                && RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null;
+            float radius = MaximumAutomaticSearchVisualRange(
+                pawn,
+                primary,
+                usableSecondary);
+            if (radius <= 0f
+                && HasDualMeleeLoadout(primary, rawSecondary))
             {
                 radius = DualMeleeSearchRange;
             }
@@ -786,18 +1187,28 @@ namespace KRWF.RimKata
 
         private static Verb LongestRangedWeaponVerb(Pawn pawn)
         {
-            ThingWithComps secondary = RimKataWeaponSlotUtility
-                .CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
-            if (secondary == null
-                || !RimKataEligibility.HasRimKataAccess(pawn))
+            if (!RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary))
+            {
+                return FirstVanillaRangedCommandVerb(pawn);
+            }
+
+            ThingWithComps secondary =
+                RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null;
+            if (secondary == null)
             {
                 return FirstVanillaRangedCommandVerb(pawn);
             }
 
             Verb longest = StandardCommandVerb(
-                RimKataWeaponSlotUtility.PrimaryWeapon(pawn));
+                primary);
             Verb secondaryVerb = StandardCommandVerb(secondary);
             if (secondaryVerb?.IsMeleeAttack == false
                 && (longest == null
@@ -853,13 +1264,11 @@ namespace KRWF.RimKata
             return null;
         }
 
-        private static float MaximumAutomaticSearchVisualRange(Pawn pawn)
+        private static float MaximumAutomaticSearchVisualRange(
+            Pawn pawn,
+            ThingWithComps primary,
+            ThingWithComps secondary)
         {
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility
-                .CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
             return Mathf.Max(
                 AutomaticSearchVisualRange(
                     RimKataWeaponSlotUtility.CombatVerb(pawn, primary)),
@@ -885,9 +1294,22 @@ namespace KRWF.RimKata
 
         public static bool HasDualMeleeLoadout(Pawn pawn)
         {
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
+            if (!RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps secondary))
+            {
+                primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+                secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
+            }
 
+            return HasDualMeleeLoadout(primary, secondary);
+        }
+
+        private static bool HasDualMeleeLoadout(
+            ThingWithComps primary,
+            ThingWithComps secondary)
+        {
             return primary?.def?.IsMeleeWeapon == true
                 && secondary?.def?.IsMeleeWeapon == true;
         }
@@ -972,7 +1394,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+            if (!RimKataVisualUtility.TryGetCachedActiveSnapshot(
                     ___pawn,
                     out RimKataVisualSnapshot snapshot))
             {
@@ -1002,7 +1424,7 @@ namespace KRWF.RimKata
     {
         public static void Prefix(Pawn ___pawn, ref bool disableCache)
         {
-            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+            if (!RimKataVisualUtility.TryGetCachedActiveSnapshot(
                     ___pawn,
                     out RimKataVisualSnapshot snapshot))
             {
@@ -1021,7 +1443,8 @@ namespace KRWF.RimKata
     {
         public static void Prefix(ref PawnDrawParms parms)
         {
-            if (!RimKataVisualUtility.TryGetActiveSnapshot(
+            if (parms.Portrait
+                || !RimKataVisualUtility.TryGetCachedActiveSnapshot(
                     parms.pawn,
                     out RimKataVisualSnapshot snapshot))
             {
@@ -1110,16 +1533,36 @@ namespace KRWF.RimKata
             __state = visualAngleOffset;
             visualAngleOffset = 0f;
 
-            Pawn owner = RimKataVisualUtility.FindPawnOwner(eq);
-            if (!RimKataVisualUtility.TryGetActiveSnapshot(
-                    owner,
-                    out RimKataVisualSnapshot snapshot))
+            RimKataGunReadyDrawContext renderContext =
+                RimKataGunReadyDrawUtility.Current;
+            if (renderContext.portrait
+                || !(eq is ThingWithComps weapon)
+                || !RimKataResponseVisualParticipantCache
+                    .TryGetWeaponOwner(weapon, out Pawn owner)
+                || owner.equipment?.AllEquipmentListForReading
+                    ?.Contains(weapon) != true)
             {
                 return;
             }
 
-            bool deflectThisWeapon = snapshot.deflectionActive && snapshot.deflectionWeapon == eq;
-            bool poseThisWeapon = snapshot.responsePoseActive && snapshot.responsePoseWeapon == eq;
+            RimKataVisualSnapshot snapshot;
+            if (renderContext.active
+                && renderContext.pawn == owner
+                && renderContext.snapshotActive)
+            {
+                snapshot = renderContext.snapshot;
+            }
+            else if (!RimKataVisualUtility.TryGetCachedActiveSnapshot(
+                owner,
+                out snapshot))
+            {
+                return;
+            }
+
+            bool deflectThisWeapon = snapshot.deflectionActive
+                && snapshot.deflectionWeapon == weapon;
+            bool poseThisWeapon = snapshot.responsePoseActive
+                && snapshot.responsePoseWeapon == weapon;
             if (!deflectThisWeapon && !poseThisWeapon)
             {
                 return;
@@ -1190,8 +1633,15 @@ namespace KRWF.RimKata
 
     public struct RimKataGunReadyDrawContext
     {
+        public bool scoped;
+        public bool portrait;
         public bool active;
+        public bool gunReady;
         public Pawn pawn;
+        public ThingWithComps primary;
+        public ThingWithComps secondary;
+        public bool snapshotActive;
+        public RimKataVisualSnapshot snapshot;
         public float aimAngle;
     }
 
@@ -1204,9 +1654,64 @@ namespace KRWF.RimKata
         public static RimKataGunReadyDrawContext Push(Pawn pawn, PawnRenderFlags flags)
         {
             RimKataGunReadyDrawContext previous = current;
-            current = default(RimKataGunReadyDrawContext);
-            ThingWithComps primary = pawn?.equipment?.Primary;
-            if (pawn?.Spawned != true
+            bool portrait = (flags & PawnRenderFlags.Portrait) != 0;
+            current = new RimKataGunReadyDrawContext
+            {
+                scoped = true,
+                portrait = portrait
+            };
+            if (portrait || pawn?.Spawned != true)
+            {
+                return previous;
+            }
+
+            bool rimKataUser = RimKataVisualUtility
+                .TryGetCachedWorldLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary);
+            bool responseParticipant = RimKataVisualUtility
+                .TryGetResponseParticipantLoadout(
+                    pawn,
+                    out ThingWithComps participantPrimary,
+                    out ThingWithComps participantSecondary);
+            if (!rimKataUser && !responseParticipant)
+            {
+                return previous;
+            }
+
+            if (!rimKataUser)
+            {
+                primary = participantPrimary;
+            }
+
+            ThingWithComps secondary = rimKataUser
+                ? RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null
+                : participantSecondary;
+            RimKataVisualSnapshot snapshot =
+                default(RimKataVisualSnapshot);
+            bool snapshotActive = (secondary != null || responseParticipant)
+                && RimKataVisualUtility.TryGetCachedActiveSnapshot(
+                    pawn,
+                    out snapshot);
+            RimKataGunReadyDrawContext next =
+                new RimKataGunReadyDrawContext
+                {
+                    scoped = true,
+                    active = true,
+                    pawn = pawn,
+                    primary = primary,
+                    secondary = secondary,
+                    snapshotActive = snapshotActive,
+                    snapshot = snapshot
+                };
+            current = next;
+            if (!rimKataUser
                 || pawn.Dead
                 || pawn.Downed
                 || pawn.IsBurning()
@@ -1247,12 +1752,9 @@ namespace KRWF.RimKata
                 aimAngle = direction.ToVector3().AngleFlat();
             }
 
-            current = new RimKataGunReadyDrawContext
-            {
-                active = true,
-                pawn = pawn,
-                aimAngle = aimAngle
-            };
+            next.gunReady = true;
+            next.aimAngle = aimAngle;
+            current = next;
             return previous;
         }
 
@@ -1288,7 +1790,7 @@ namespace KRWF.RimKata
         public static void Postfix(Pawn pawn, ref bool __result)
         {
             RimKataGunReadyDrawContext context = RimKataGunReadyDrawUtility.Current;
-            if (context.active && context.pawn == pawn)
+            if (context.gunReady && context.pawn == pawn)
             {
                 __result = true;
             }
@@ -1326,15 +1828,12 @@ namespace KRWF.RimKata
             float equipmentDrawDistanceFactor)
         {
             RimKataGunReadyDrawContext context = RimKataGunReadyDrawUtility.Current;
-            Pawn pawn = RimKataVisualUtility.FindPawnOwner(weapon);
-            if (!context.active || context.pawn?.equipment?.Primary != weapon)
+            if (!context.gunReady || context.primary != weapon)
             {
                 return true;
             }
 
-            float aimAngle = context.active && context.pawn == pawn
-                ? context.aimAngle
-                : pawn?.Rotation.AsAngle ?? 0f;
+            float aimAngle = context.aimAngle;
             Vector3 aimedDrawLoc = drawPos + new Vector3(0f, 0f, 0.4f + weapon.def.equippedDistanceOffset).RotatedBy(aimAngle) * equipmentDrawDistanceFactor;
             PawnRenderUtility.DrawEquipmentAiming(weapon, aimedDrawLoc, aimAngle);
             return false;
@@ -1384,11 +1883,21 @@ namespace KRWF.RimKata
                 return;
             }
 
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            if (!RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps primary,
+                    out ThingWithComps rawSecondary))
+            {
+                return;
+            }
+
             ThingWithComps secondary =
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
+                RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    primary,
+                    rawSecondary)
+                        ? rawSecondary
+                        : null;
             if (commandWeapon != primary
                 && commandWeapon != secondary)
             {

@@ -58,10 +58,17 @@ namespace KRWF.RimKata
             new ConcurrentDictionary<Pawn, Entry>();
         private static readonly ConcurrentDictionary<ThingWithComps, Pawn>
             ByWeapon = new ConcurrentDictionary<ThingWithComps, Pawn>();
+        private static readonly ConcurrentDictionary<Pawn, Map>
+            BodyVisualByPawn = new ConcurrentDictionary<Pawn, Map>();
 
         public static bool IsParticipant(Pawn pawn)
         {
             return pawn != null && ByPawn.ContainsKey(pawn);
+        }
+
+        public static bool IsBodyVisualParticipant(Pawn pawn)
+        {
+            return pawn != null && BodyVisualByPawn.ContainsKey(pawn);
         }
 
         public static bool TryGetParticipantWeapons(
@@ -124,6 +131,25 @@ namespace KRWF.RimKata
             }
         }
 
+        internal static void RefreshBodyVisual(
+            RimKataPawnCombatState state)
+        {
+            Pawn pawn = state?.pawn;
+            Map map = pawn?.Map;
+            if (pawn != null
+                && map != null
+                && (state.VisualActive || state.CloseDodgeActive))
+            {
+                BodyVisualByPawn[pawn] = map;
+                return;
+            }
+
+            if (pawn != null)
+            {
+                BodyVisualByPawn.TryRemove(pawn, out Map _);
+            }
+        }
+
         internal static void Clear(Pawn pawn)
         {
             if (pawn == null)
@@ -135,6 +161,8 @@ namespace KRWF.RimKata
             {
                 RemoveEntry(pawn);
             }
+
+            BodyVisualByPawn.TryRemove(pawn, out Map _);
         }
 
         internal static void ClearForMap(Map map)
@@ -152,6 +180,14 @@ namespace KRWF.RimKata
                     {
                         RemoveEntry(pair.Key);
                     }
+                }
+            }
+
+            foreach (KeyValuePair<Pawn, Map> pair in BodyVisualByPawn)
+            {
+                if (pair.Value == map)
+                {
+                    BodyVisualByPawn.TryRemove(pair.Key, out Map _);
                 }
             }
         }
@@ -590,12 +626,18 @@ namespace KRWF.RimKata
 
             if (!DodgeMovementActive && ticksRemaining <= 0)
             {
+                bool visualEnded = visualState != RimKataVisualState.None;
                 visualState = RimKataVisualState.None;
                 additionalDodgeUsed = false;
                 dodgeDirection = IntVec3.Zero;
                 totalTicks = 0;
                 tumbleSign = 1;
                 ClearDodgeMovementFields();
+                if (visualEnded)
+                {
+                    RimKataResponseVisualParticipantCache
+                        .RefreshBodyVisual(this);
+                }
             }
         }
 
@@ -608,6 +650,8 @@ namespace KRWF.RimKata
             dodgeDirection = IntVec3.Zero;
             ClearDodgeMovementFields();
             tumbleSign = 1;
+            RimKataResponseVisualParticipantCache
+                .RefreshBodyVisual(this);
         }
 
         public void HoldDodgeLanding()
@@ -777,6 +821,8 @@ namespace KRWF.RimKata
             closeDodgeStartAngle = Mathf.Clamp(currentAngle + addedAngle, -30f, 30f);
             closeDodgeTicksRemaining = Mathf.Max(1, durationTicks);
             closeDodgeTotalTicks = closeDodgeTicksRemaining;
+            RimKataResponseVisualParticipantCache
+                .RefreshBodyVisual(this);
         }
 
         public void CancelCloseDodge()
@@ -784,6 +830,8 @@ namespace KRWF.RimKata
             closeDodgeTicksRemaining = 0;
             closeDodgeTotalTicks = 0;
             closeDodgeStartAngle = 0f;
+            RimKataResponseVisualParticipantCache
+                .RefreshBodyVisual(this);
         }
 
         public void EnterCloseCombat(Thing trigger)
@@ -1876,6 +1924,8 @@ namespace KRWF.RimKata
                 {
                     statesByPawn[state.pawn] = state;
                     RimKataResponseVisualParticipantCache.Refresh(state);
+                    RimKataResponseVisualParticipantCache
+                        .RefreshBodyVisual(state);
                 }
             }
         }
@@ -1911,6 +1961,8 @@ namespace KRWF.RimKata
                 state.dodgeDirection = dodgeDirection;
                 state.tumbleSign = Rand.Bool ? 1 : -1;
                 state.additionalDodgeUsed = visualState == RimKataVisualState.AdditionalDodge || visualState == RimKataVisualState.Tumble;
+                RimKataResponseVisualParticipantCache
+                    .RefreshBodyVisual(state);
 
                 return true;
             }
@@ -1957,6 +2009,8 @@ namespace KRWF.RimKata
                 state.dodgeFailureStaggerTicks = Mathf.Max(0, failureStaggerTicks);
                 state.dodgeFailureStaggerSpeedFactor = Mathf.Max(0f, failureStaggerSpeedFactor);
                 state.tumbleSign = Rand.Bool ? 1 : -1;
+                RimKataResponseVisualParticipantCache
+                    .RefreshBodyVisual(state);
             }
 
             try

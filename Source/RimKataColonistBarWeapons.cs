@@ -10,8 +10,7 @@ namespace KRWF.RimKata
     [HarmonyPatch(typeof(ColonistBar), nameof(ColonistBar.ColonistBarOnGUI))]
     public static class Patch_ColonistBar_RimKataDualWeaponIcons
     {
-        private const float PrimaryAngle = 15f;
-        private const float SecondaryAngle = -15f;
+        private const float SecondaryAngle = 45f;
 
         private static readonly MethodInfo ThingIconMethod = AccessTools.Method(
             typeof(Widgets),
@@ -61,18 +60,42 @@ namespace KRWF.RimKata
         {
             Pawn pawn = RimKataVisualUtility.FindPawnOwner(primary);
             ThingWithComps primaryWeapon = primary as ThingWithComps;
-            ThingWithComps secondary = pawn?.equipment?.Primary == primaryWeapon
-                && RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
-            if (secondary == null)
+            ThingWithComps secondary = null;
+            if (pawn?.equipment?.Primary == primaryWeapon
+                && RimKataVisualUtility.TryGetUiLoadout(
+                    pawn,
+                    out ThingWithComps cachedPrimary,
+                    out ThingWithComps rawSecondary)
+                && cachedPrimary == primaryWeapon
+                && RimKataVisualUtility.IsSecondaryUsable(
+                    pawn,
+                    cachedPrimary,
+                    rawSecondary))
             {
-                Widgets.ThingIcon(rect, primary, alpha, rot, stackOfOne, scale, grayscale);
-                return;
+                secondary = rawSecondary;
             }
 
-            DrawRotatedIcon(rect, secondary, SecondaryAngle, alpha, rot, stackOfOne, scale, grayscale);
-            DrawRotatedIcon(rect, primary, PrimaryAngle, alpha, rot, stackOfOne, scale, grayscale);
+            if (secondary != null)
+            {
+                DrawRotatedIcon(
+                    rect,
+                    secondary,
+                    SecondaryAngle,
+                    alpha,
+                    rot,
+                    stackOfOne,
+                    scale,
+                    grayscale);
+            }
+
+            Widgets.ThingIcon(
+                rect,
+                primary,
+                alpha,
+                rot,
+                stackOfOne,
+                scale,
+                grayscale);
         }
 
         private static void DrawRotatedIcon(

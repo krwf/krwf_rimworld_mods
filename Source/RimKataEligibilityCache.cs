@@ -279,18 +279,18 @@ namespace KRWF.RimKata
         public static void InvalidateGenes(Pawn pawn)
         {
             RemoveRegisteredUser(pawn);
-            if (!TryGetEntry(pawn, out Entry entry))
+            if (TryGetEntry(pawn, out Entry entry))
             {
-                return;
+                lock (entry)
+                {
+                    entry.accessKnown = false;
+                    entry.rimKataGeneKnown = false;
+                    entry.dependencyGeneKnown = false;
+                    entry.dependencyGene = null;
+                }
             }
 
-            lock (entry)
-            {
-                entry.accessKnown = false;
-                entry.rimKataGeneKnown = false;
-                entry.dependencyGeneKnown = false;
-                entry.dependencyGene = null;
-            }
+            RefreshRegisteredSpawnedUser(pawn);
         }
 
         public static void InvalidatePsycast(Pawn pawn)
@@ -304,6 +304,8 @@ namespace KRWF.RimKata
                     entry.psycastKnown = false;
                 }
             }
+
+            RefreshRegisteredSpawnedUser(pawn);
         }
 
         public static void InvalidateRole(Pawn pawn)
@@ -317,6 +319,8 @@ namespace KRWF.RimKata
                     entry.roleKnown = false;
                 }
             }
+
+            RefreshRegisteredSpawnedUser(pawn);
         }
 
         public static void InvalidateRelations(Pawn pawn)
@@ -342,28 +346,39 @@ namespace KRWF.RimKata
                 RemoveRegisteredUser(pawn);
             }
 
-            if (!TryGetEntry(pawn, out Entry entry))
+            if (TryGetEntry(pawn, out Entry entry))
             {
-                return;
+                lock (entry)
+                {
+                    if (changedDef == RimKataDefOf.RimKata_A_Effect)
+                    {
+                        entry.accessKnown = false;
+                        entry.ampouleKnown = false;
+                    }
+
+                    if (changedDef.defName == "MindNumbSerum")
+                    {
+                        entry.mindNumbedKnown = false;
+                    }
+
+                    if (changedDef.defName == "PsychicBond")
+                    {
+                        entry.bondKnown = false;
+                    }
+                }
             }
 
-            lock (entry)
+            if (changedDef == RimKataDefOf.RimKata_A_Effect)
             {
-                if (changedDef == RimKataDefOf.RimKata_A_Effect)
-                {
-                    entry.accessKnown = false;
-                    entry.ampouleKnown = false;
-                }
+                RefreshRegisteredSpawnedUser(pawn);
+            }
+        }
 
-                if (changedDef.defName == "MindNumbSerum")
-                {
-                    entry.mindNumbedKnown = false;
-                }
-
-                if (changedDef.defName == "PsychicBond")
-                {
-                    entry.bondKnown = false;
-                }
+        private static void RefreshRegisteredSpawnedUser(Pawn pawn)
+        {
+            if (pawn?.Spawned == true)
+            {
+                RegisterSpawnedUser(pawn);
             }
         }
 
