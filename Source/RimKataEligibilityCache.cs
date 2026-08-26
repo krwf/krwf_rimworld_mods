@@ -31,6 +31,7 @@ namespace KRWF.RimKata
 
         private sealed class RegisteredUser
         {
+            public volatile ThingWithComps secondaryWeapon;
         }
 
         private static readonly ConditionalWeakTable<Pawn, Entry> entries = new ConditionalWeakTable<Pawn, Entry>();
@@ -139,6 +140,44 @@ namespace KRWF.RimKata
                 bool hasAccess = ResolveAccess(pawn, entry);
                 UpdateRegisteredUser(pawn, hasAccess);
                 return StoreAccess(entry, hasAccess);
+            }
+        }
+
+        public static bool IsRegisteredUser(Pawn pawn)
+        {
+            return pawn != null
+                && registeredUsers.TryGetValue(
+                    pawn,
+                    out RegisteredUser _);
+        }
+
+        public static bool TryGetRegisteredSecondaryWeapon(
+            Pawn pawn,
+            out ThingWithComps secondaryWeapon)
+        {
+            secondaryWeapon = null;
+            if (pawn == null
+                || !registeredUsers.TryGetValue(
+                    pawn,
+                    out RegisteredUser registeredUser))
+            {
+                return false;
+            }
+
+            secondaryWeapon = registeredUser.secondaryWeapon;
+            return true;
+        }
+
+        public static void NotifySecondaryWeaponChanged(
+            Pawn pawn,
+            ThingWithComps secondaryWeapon)
+        {
+            if (pawn != null
+                && registeredUsers.TryGetValue(
+                    pawn,
+                    out RegisteredUser registeredUser))
+            {
+                registeredUser.secondaryWeapon = secondaryWeapon;
             }
         }
 
@@ -380,7 +419,11 @@ namespace KRWF.RimKata
 
             if (hasAccess)
             {
-                registeredUsers.GetValue(pawn, CreateRegisteredUser);
+                RegisteredUser registeredUser = registeredUsers.GetValue(
+                    pawn,
+                    CreateRegisteredUser);
+                registeredUser.secondaryWeapon =
+                    RimKataSecondaryWeaponRegistry.CurrentRegistry?.Get(pawn);
             }
             else
             {

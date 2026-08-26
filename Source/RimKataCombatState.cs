@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Collections.Concurrent;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -40,6 +41,153 @@ namespace KRWF.RimKata
         public bool responsePoseLookAtFocus;
         public bool closeDodgeActive;
         public float closeDodgeAngle;
+    }
+
+    internal static class RimKataResponseVisualParticipantCache
+    {
+        private sealed class Entry
+        {
+            public Pawn pawn;
+            public Map map;
+            public ThingWithComps deflectionWeapon;
+            public ThingWithComps responsePoseWeapon;
+        }
+
+        private static readonly object UpdateLock = new object();
+        private static readonly ConcurrentDictionary<Pawn, Entry> ByPawn =
+            new ConcurrentDictionary<Pawn, Entry>();
+        private static readonly ConcurrentDictionary<ThingWithComps, Pawn>
+            ByWeapon = new ConcurrentDictionary<ThingWithComps, Pawn>();
+
+        public static bool IsParticipant(Pawn pawn)
+        {
+            return pawn != null && ByPawn.ContainsKey(pawn);
+        }
+
+        public static bool TryGetParticipantWeapons(
+            Pawn pawn,
+            out ThingWithComps deflectionWeapon,
+            out ThingWithComps responsePoseWeapon)
+        {
+            deflectionWeapon = null;
+            responsePoseWeapon = null;
+            if (pawn == null || !ByPawn.TryGetValue(pawn, out Entry entry))
+            {
+                return false;
+            }
+
+            deflectionWeapon = entry.deflectionWeapon;
+            responsePoseWeapon = entry.responsePoseWeapon;
+            return true;
+        }
+
+        public static bool TryGetWeaponOwner(
+            ThingWithComps weapon,
+            out Pawn pawn)
+        {
+            pawn = null;
+            return weapon != null
+                && ByWeapon.TryGetValue(weapon, out pawn)
+                && pawn != null;
+        }
+
+        internal static void Refresh(RimKataPawnCombatState state)
+        {
+            Pawn pawn = state?.pawn;
+            if (pawn == null)
+            {
+                return;
+            }
+
+            lock (UpdateLock)
+            {
+                RemoveEntry(pawn);
+                if (!state.DeflectionActive && !state.ResponsePoseActive)
+                {
+                    return;
+                }
+
+                Entry entry = new Entry
+                {
+                    pawn = pawn,
+                    map = pawn.Map,
+                    deflectionWeapon = state.DeflectionActive
+                        ? state.deflectionWeapon
+                        : null,
+                    responsePoseWeapon = state.ResponsePoseActive
+                        ? state.responsePoseWeapon
+                        : null
+                };
+                ByPawn[pawn] = entry;
+                AddWeapon(entry.deflectionWeapon, pawn);
+                AddWeapon(entry.responsePoseWeapon, pawn);
+            }
+        }
+
+        internal static void Clear(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
+
+            lock (UpdateLock)
+            {
+                RemoveEntry(pawn);
+            }
+        }
+
+        internal static void ClearForMap(Map map)
+        {
+            if (map == null)
+            {
+                return;
+            }
+
+            lock (UpdateLock)
+            {
+                foreach (KeyValuePair<Pawn, Entry> pair in ByPawn)
+                {
+                    if (pair.Value?.map == map)
+                    {
+                        RemoveEntry(pair.Key);
+                    }
+                }
+            }
+        }
+
+        private static void AddWeapon(
+            ThingWithComps weapon,
+            Pawn pawn)
+        {
+            if (weapon != null)
+            {
+                ByWeapon[weapon] = pawn;
+            }
+        }
+
+        private static void RemoveEntry(Pawn pawn)
+        {
+            if (!ByPawn.TryRemove(pawn, out Entry entry))
+            {
+                return;
+            }
+
+            RemoveWeapon(entry.deflectionWeapon, pawn);
+            RemoveWeapon(entry.responsePoseWeapon, pawn);
+        }
+
+        private static void RemoveWeapon(
+            ThingWithComps weapon,
+            Pawn pawn)
+        {
+            if (weapon != null
+                && ByWeapon.TryGetValue(weapon, out Pawn indexedPawn)
+                && indexedPawn == pawn)
+            {
+                ByWeapon.TryRemove(weapon, out Pawn _);
+            }
+        }
     }
 
     public sealed class RimKataPawnCombatState : IExposable
@@ -402,7 +550,7 @@ namespace KRWF.RimKata
                 deflectionTicksRemaining--;
                 if (deflectionTicksRemaining <= 0)
                 {
-                    deflectionWeapon = null;
+                    CancelDeflection();
                 }
             }
 
@@ -574,6 +722,7 @@ namespace KRWF.RimKata
             deflectionTotalTicks = 0;
             deflectionSign = 1;
             deflectionWeapon = null;
+            RimKataResponseVisualParticipantCache.Refresh(this);
         }
 
         public void CancelResponsePose()
@@ -585,6 +734,7 @@ namespace KRWF.RimKata
             responsePoseFocus = LocalTargetInfo.Invalid;
             responsePoseWeapon = null;
             responsePoseLookAtFocus = false;
+            RimKataResponseVisualParticipantCache.Refresh(this);
         }
 
         public bool TryGetLiveResponsePoseFocus(
@@ -1126,6 +1276,7 @@ namespace KRWF.RimKata
         {
             UnsubscribeProjectileEvents();
             ClearProjectileScheduler();
+            RimKataResponseVisualParticipantCache.ClearForMap(map);
             base.MapRemoved();
         }
 
@@ -1711,6 +1862,7 @@ namespace KRWF.RimKata
 
         private void RebuildStateIndex()
         {
+            RimKataResponseVisualParticipantCache.ClearForMap(map);
             statesByPawn.Clear();
             if (states == null)
             {
@@ -1723,6 +1875,7 @@ namespace KRWF.RimKata
                 if (state?.pawn != null)
                 {
                     statesByPawn[state.pawn] = state;
+                    RimKataResponseVisualParticipantCache.Refresh(state);
                 }
             }
         }
@@ -1731,6 +1884,7 @@ namespace KRWF.RimKata
         {
             RimKataPawnCombatState state = states[index];
             states.RemoveAt(index);
+            RimKataResponseVisualParticipantCache.Clear(state?.pawn);
             if (state?.pawn != null
                 && statesByPawn.TryGetValue(
                     state.pawn,
@@ -2203,6 +2357,7 @@ namespace KRWF.RimKata
                     state.deflectionTicksRemaining = Mathf.Max(1, durationTicks);
                     state.deflectionTotalTicks = state.deflectionTicksRemaining;
                     state.deflectionWeapon = weapon;
+                    RimKataResponseVisualParticipantCache.Refresh(state);
                     return;
                 }
 
@@ -2210,6 +2365,7 @@ namespace KRWF.RimKata
                 state.deflectionTotalTicks = state.deflectionTicksRemaining;
                 state.deflectionWeapon = weapon;
                 state.deflectionSign = sign < 0 ? -1 : 1;
+                RimKataResponseVisualParticipantCache.Refresh(state);
             }
         }
 
@@ -2248,6 +2404,7 @@ namespace KRWF.RimKata
                 state.responsePoseFocus = focus;
                 state.responsePoseWeapon = weapon;
                 state.responsePoseLookAtFocus = lookAtFocus;
+                RimKataResponseVisualParticipantCache.Refresh(state);
             }
 
             RimKataDebugHUD.RecordResponseIndicator(pawn, weapon);

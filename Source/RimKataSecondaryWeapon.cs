@@ -114,7 +114,11 @@ namespace KRWF.RimKata
             CleanupRecoveries();
             for (int i = pawns.Count - 1; i >= 0; i--)
             {
-                RimKataWeaponSlotUtility.ValidateLoadout(pawns[i]);
+                Pawn pawn = pawns[i];
+                RimKataWeaponSlotUtility.ValidateLoadout(pawn);
+                RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                    pawn,
+                    Get(pawn));
             }
         }
 
@@ -164,6 +168,10 @@ namespace KRWF.RimKata
             {
                 weapons[index] = weapon;
             }
+
+            RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                pawn,
+                weapon);
         }
 
         public void Clear(Pawn pawn, ThingWithComps expectedWeapon = null)
@@ -473,8 +481,12 @@ namespace KRWF.RimKata
 
         private void RemoveAt(int index)
         {
+            Pawn pawn = pawns[index];
             pawns.RemoveAt(index);
             weapons.RemoveAt(index);
+            RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                pawn,
+                null);
         }
     }
 
