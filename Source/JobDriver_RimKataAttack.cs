@@ -90,28 +90,9 @@ namespace KRWF.RimKata
                     .NotifyDedicatedCombatJobFinished(pawn);
             });
 
-            Toil counterattackMoteGate = ToilMaker.MakeToil(
-                "RimKataCounterattackMoteGate");
-            counterattackMoteGate.initAction = delegate
-            {
-                if ((job?.jobGiver is JobGiver_ConfigurableHostilityResponse
-                        || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat)
-                    && job?.targetA.HasThing == true
-                    && pawn?.Drafted != true
-                    && pawn?.InMentalState != true
-                    && RimKataEligibility.RandomAttackEnabledForPawn(pawn))
-                {
-                    MoteMaker.MakeColonistActionOverlay(
-                        pawn,
-                        ThingDefOf.Mote_ColonistAttacking);
-                }
-            };
-            counterattackMoteGate.defaultCompleteMode =
-                ToilCompleteMode.Instant;
-            yield return counterattackMoteGate;
-
-            Toil combat = ToilMaker.MakeToil("RimKataCombatLoop");
-            combat.initAction = delegate
+            Toil initialization = ToilMaker.MakeToil(
+                "RimKataCombatInitialization");
+            initialization.initAction = delegate
             {
                 if (!dualCycleStateImported)
                 {
@@ -134,6 +115,11 @@ namespace KRWF.RimKata
 
                 EnsurePathToAssignedTarget();
             };
+            initialization.defaultCompleteMode =
+                ToilCompleteMode.Instant;
+            yield return initialization;
+
+            Toil combat = ToilMaker.MakeToil("RimKataCombatLoop");
             combat.tickAction = CombatTick;
             combat.defaultCompleteMode = ToilCompleteMode.Never;
             yield return combat;
@@ -755,6 +741,22 @@ namespace KRWF.RimKata
             Job newJob,
             ThinkNode jobGiver)
         {
+            ThinkNode effectiveJobGiver = jobGiver ?? newJob?.jobGiver;
+            if (___pawn?.CurJob == newJob
+                && newJob?.def == RimKataDefOf.RimKata_Attack
+                && !newJob.playerForced
+                && ___pawn.Drafted != true
+                && ___pawn.InMentalState != true
+                && (effectiveJobGiver is JobGiver_ConfigurableHostilityResponse
+                    || effectiveJobGiver is JobGiver_ReactToCloseMeleeThreat)
+                && newJob.targetA.HasThing
+                && RimKataEligibility.RandomAttackEnabledForPawn(___pawn))
+            {
+                MoteMaker.MakeColonistActionOverlay(
+                    ___pawn,
+                    ThingDefOf.Mote_ColonistAttacking);
+            }
+
             if ((newJob?.def == JobDefOf.Goto
                     || newJob?.def == JobDefOf.AttackMelee)
                 && newJob.playerForced
