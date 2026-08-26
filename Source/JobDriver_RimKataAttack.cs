@@ -437,7 +437,8 @@ namespace KRWF.RimKata
             if (!IsPlayerForced
                 && pawn?.Drafted != true
                 && (job?.jobGiver is JobGiver_ConfigurableHostilityResponse
-                    || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat))
+                    || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat)
+                && RimKataEligibility.RandomAttackEnabledForPawn(pawn))
             {
                 MoteMaker.MakeColonistActionOverlay(
                     pawn,

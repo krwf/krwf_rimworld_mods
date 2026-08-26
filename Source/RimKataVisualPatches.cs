@@ -340,14 +340,8 @@ namespace KRWF.RimKata
             bool responseTarget = combatState?.responsePoseWeapon == weapon
                 && combatState.TryGetLiveResponsePoseFocus(
                     out responseFocus);
-            Verb normalVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, weapon);
-            bool physicalGunMelee =
-                combatState?.dualCloseCombatActive == true
-                && RimKataMod.Settings?.closeFireEnabled == false
-                && normalVerb?.IsMeleeAttack == false;
             RimKataWeaponVisualData visual = default(RimKataWeaponVisualData);
-            bool cycleTarget = !physicalGunMelee
-                && RimKataDualWeaponController.TryGetVisualData(
+            bool cycleTarget = RimKataDualWeaponController.TryGetVisualData(
                     pawn,
                     weapon,
                     out visual)
@@ -362,8 +356,7 @@ namespace KRWF.RimKata
                 aimAngle = AngleToTarget(pawn, target, fallbackAngle);
                 drawLoc = EquipmentCenter(pawn, weapon, aimAngle, primaryDrawLoc.y);
             }
-            else if (!physicalGunMelee
-                && !secondary
+            else if (!secondary
                 && RimKataDualWeaponController.TryGetNextAim(pawn, out ThingWithComps activeWeapon, out LocalTargetInfo _)
                 && activeWeapon != weapon)
             {
@@ -987,9 +980,12 @@ namespace KRWF.RimKata
             }
 
             drawLoc += RimKataVisualUtility.DrawOffset(snapshot);
-            if (snapshot.dodgeMovementActive && !snapshot.dodgeMovementTumbling && snapshot.dodgeMovementDirection != IntVec3.Zero)
+            if (snapshot.dodgeMovementActive
+                && !snapshot.dodgeMovementTumbling
+                && snapshot.dodgeMovementDirection != IntVec3.Zero)
             {
-                rotOverride = Rot4.FromIntVec3(snapshot.dodgeMovementDirection);
+                rotOverride = Rot4.FromIntVec3(
+                    snapshot.dodgeMovementDirection);
             }
             else if (RimKataVisualUtility.TryGetResponseFacing(
                 ___pawn,

@@ -2673,8 +2673,7 @@ namespace KRWF.RimKata
                     false,
                     false)
                 ?? target;
-            if (RimKataMod.Settings?.targetRushEnabled == false
-                || !TargetWithinAutomaticSearchRange(
+            if (!TargetWithinAutomaticSearchRange(
                     pawn,
                     openingJobTarget))
             {
@@ -5108,17 +5107,10 @@ namespace KRWF.RimKata
 
             if (state.dualCloseCombatActive
                 && RimKataMod.Settings?.closeFireEnabled == false
-                && pawn.stances?.curStance is Stance_RimKataAim closeAim)
+                && pawn.stances?.curStance is Stance_RimKataAim closeAim
+                && closeAim.verb?.IsMeleeAttack == false)
             {
-                ThingWithComps closeAimWeapon =
-                    closeAim.verb?.EquipmentSource as ThingWithComps;
-                Verb closeAimCombatVerb = RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    closeAimWeapon);
-                if (closeAimCombatVerb?.IsMeleeAttack == false)
-                {
-                    pawn.stances.SetStance(new Stance_Mobile());
-                }
+                pawn.stances.SetStance(new Stance_Mobile());
             }
 
             if (!TryGetNextAim(
@@ -5140,15 +5132,39 @@ namespace KRWF.RimKata
                 pawn,
                 weapon,
                 state?.dualCloseCombatActive == true);
-            if (UsesPhysicalMeleeAction(
+            RimKataWeaponCycleState aimCycle = CycleForWeapon(state, weapon);
+            bool physicalMeleeAction = UsesPhysicalMeleeAction(
                 slotVerb,
-                state?.dualCloseCombatActive == true))
+                state?.dualCloseCombatActive == true);
+            Verb verb = aimCycle?.plannedActionVerb ?? slotVerb;
+            if (physicalMeleeAction)
             {
-                return;
+                if (verb?.IsMeleeAttack != true
+                    && pawn.stances?.curStance is Stance_RimKataAim currentAim
+                    && currentAim.verb?.IsMeleeAttack == true
+                    && currentAim.focusTarg.Equals(target))
+                {
+                    verb = currentAim.verb;
+                }
+
+                if (verb?.IsMeleeAttack != true && target.HasThing)
+                {
+                    verb = pawn.meleeVerbs?.TryGetMeleeVerb(target.Thing);
+                }
+
+                if (verb == null)
+                {
+                    if (target.IsValid
+                        && target.Cell.IsValid
+                        && target.Cell != pawn.Position)
+                    {
+                        pawn.rotationTracker.FaceCell(target.Cell);
+                    }
+
+                    return;
+                }
             }
 
-            RimKataWeaponCycleState aimCycle = CycleForWeapon(state, weapon);
-            Verb verb = aimCycle?.plannedActionVerb ?? slotVerb;
             if (verb == null)
             {
                 return;
