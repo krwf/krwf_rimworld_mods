@@ -54,7 +54,7 @@ namespace KRWF.RimKata
                 && !primaryVerb.IsMeleeAttack
                     ? Mathf.Max(
                         0f,
-                        RimKataRangeUtility.ResolveCandidateRange(
+                        RimKataRangeUtility.ResolveCandidateApiRange(
                             primaryVerb))
                     : 0f;
 
@@ -63,7 +63,7 @@ namespace KRWF.RimKata
                 && !secondaryVerb.IsMeleeAttack
                     ? Mathf.Max(
                         0f,
-                        RimKataRangeUtility.ResolveCandidateRange(
+                        RimKataRangeUtility.ResolveCandidateApiRange(
                             secondaryVerb))
                     : 0f;
 

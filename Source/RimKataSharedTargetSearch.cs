@@ -67,7 +67,8 @@ namespace KRWF.RimKata
 
     internal static class RimKataSharedTargetSearch
     {
-        internal const float ApiRadiusPadding = 0.7f;
+        internal const float ApiRadiusPadding =
+            RimKataRangeUtility.CandidateApiRadiusPadding;
         private const float RadiusEpsilon = 0.001f;
         private const int TouchCandidateLimit = 8;
         private const int ShortCandidateLimit = 16;
@@ -87,8 +88,18 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || search == null
-                || !origin.IsValid
-                || search.scanActive)
+                || !origin.IsValid)
+            {
+                return false;
+            }
+
+            if (!RandomAttackEnabled(pawn))
+            {
+                StopOrdinaryTargetSearch(combatState);
+                return false;
+            }
+
+            if (search.scanActive)
             {
                 return false;
             }
@@ -166,6 +177,12 @@ namespace KRWF.RimKata
                 || search?.sessionActive != true
                 || !search.scanActive)
             {
+                return false;
+            }
+
+            if (!RandomAttackEnabled(pawn))
+            {
+                StopOrdinaryTargetSearch(combatState);
                 return false;
             }
 
@@ -274,18 +291,21 @@ namespace KRWF.RimKata
             bool randomAttack = RandomAttackEnabled(pawn);
             bool idleProjectilePriority = !randomAttack
                 && combatState.idleProjectileSearchTriggerPending;
-            if (!randomAttack
-                && !idleProjectilePriority
-                && !(preferredTarget is Projectile)
-                && IsValidForCycle(
-                    pawn,
-                    combatState,
-                    cycle,
-                    verb,
-                    preferredTarget))
+            if (!randomAttack && !idleProjectilePriority)
             {
-                target = preferredTarget;
-                return true;
+                if (!(preferredTarget is Projectile)
+                    && IsValidForCycle(
+                        pawn,
+                        combatState,
+                        cycle,
+                        verb,
+                        preferredTarget))
+                {
+                    target = preferredTarget;
+                    return true;
+                }
+
+                return false;
             }
 
             EligibleCandidates.Clear();
@@ -342,18 +362,9 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (randomAttack)
-            {
-                target = EligibleCandidates.RandomElement();
-            }
-            else if (idleProjectilePriority)
-            {
-                target = ClosestProjectile(pawn, EligibleCandidates);
-            }
-            else
-            {
-                target = ClosestOrdinaryTarget(pawn, EligibleCandidates);
-            }
+            target = randomAttack
+                ? EligibleCandidates.RandomElement()
+                : ClosestProjectile(pawn, EligibleCandidates);
 
             interception = target is Projectile;
             return target != null;
@@ -1114,19 +1125,7 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             Verb verb)
         {
-            float fullRange = FullRangeForCycle(pawn, cycle, verb);
-            if (fullRange <= 0f || verb?.IsMeleeAttack != false)
-            {
-                return fullRange;
-            }
-
-            bool closeContext = IsCloseCombatContext(combatState);
-            if (closeContext)
-            {
-                return Mathf.Min(1.7f, fullRange);
-            }
-
-            return fullRange;
+            return FullRangeForCycle(pawn, cycle, verb);
         }
 
         private static float FullRangeForCycle(
@@ -1139,10 +1138,10 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
-            float actualRange = Mathf.Max(
+            float apiRange = Mathf.Max(
                 0f,
-                RimKataRangeUtility.ResolveCandidateRange(verb));
-            return actualRange;
+                RimKataRangeUtility.ResolveCandidateApiRange(verb));
+            return apiRange;
         }
 
         private static float ProjectileRangeForCycle(
@@ -1197,30 +1196,6 @@ namespace KRWF.RimKata
                 : null;
         }
 
-        private static Thing ClosestOrdinaryTarget(
-            Pawn pawn,
-            List<Thing> candidates)
-        {
-            Thing selected = null;
-            int bestDistance = int.MaxValue;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                Thing candidate = candidates[i];
-                if (candidate is Projectile)
-                {
-                    continue;
-                }
-
-                int distance = pawn.Position.DistanceToSquared(candidate.Position);
-                if (distance < bestDistance)
-                {
-                    selected = candidate;
-                    bestDistance = distance;
-                }
-            }
-            return selected;
-        }
-
         private static Thing ClosestProjectile(
             Pawn pawn,
             List<Thing> candidates)
@@ -1248,6 +1223,31 @@ namespace KRWF.RimKata
         private static bool RandomAttackEnabled(Pawn pawn)
         {
             return RimKataEligibility.RandomAttackEnabledForPawn(pawn);
+        }
+
+        private static void StopOrdinaryTargetSearch(
+            RimKataPawnCombatState combatState)
+        {
+            ClearOrdinaryCandidateList(
+                combatState?.primaryWeaponCycle);
+            ClearOrdinaryCandidateList(
+                combatState?.secondaryWeaponCycle);
+            combatState?.sharedTargetSearch?.Reset();
+            combatState?.CaptureAutomaticCandidateCounts();
+        }
+
+        private static void ClearOrdinaryCandidateList(
+            RimKataWeaponCycleState cycle)
+        {
+            cycle?.automaticCandidates?.Clear();
+            if (cycle == null)
+            {
+                return;
+            }
+
+            cycle.automaticCandidateCollectionClosed = false;
+            cycle.pendingCandidateLimitOverride = 0;
+            cycle.activeCandidateLimitOverride = 0;
         }
 
         private static void Finish(

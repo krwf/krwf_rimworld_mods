@@ -903,6 +903,13 @@ namespace KRWF.RimKata
                 && visual.warmupTotalTicks > 0;
 
             bool cooling = visual.cooldownTicksRemaining > 0;
+            if (warming
+                && RimKataDualWeaponController
+                    .ShouldPauseFireForDodge(pawn))
+            {
+                return;
+            }
+
             if (verb.IsMeleeAttack)
             {
                 if (warming)
@@ -1283,13 +1290,9 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
-            float actualRange = Mathf.Max(0f, verb.EffectiveRange);
-            float automaticRange = Mathf.Max(
+            return Mathf.Max(
                 0f,
-                RimKataRangeUtility.ResolveCandidateRange(verb));
-            return Mathf.Min(
-                actualRange,
-                automaticRange + RimKataSharedTargetSearch.ApiRadiusPadding);
+                RimKataRangeUtility.ResolveCandidateApiRange(verb));
         }
 
         public static bool HasDualMeleeLoadout(Pawn pawn)

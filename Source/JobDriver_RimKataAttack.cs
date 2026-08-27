@@ -281,6 +281,13 @@ namespace KRWF.RimKata
                     return;
                 }
 
+                if (canRush
+                    && (pawn.pather?.Moving != true
+                        || pawn.pather.Destination.Thing != assignedTarget))
+                {
+                    EnsurePathToAssignedTarget();
+                }
+
                 TickAdvancingFire(assignedTarget);
                 return;
             }
@@ -424,7 +431,8 @@ namespace KRWF.RimKata
                 && pawn?.Drafted != true
                 && (job?.jobGiver is JobGiver_ConfigurableHostilityResponse
                     || job?.jobGiver is JobGiver_ReactToCloseMeleeThreat)
-                && RimKataEligibility.RandomAttackEnabledForPawn(pawn))
+                && RimKataDualWeaponController
+                    .CounterattackControlEnabled(pawn))
             {
                 MoteMaker.MakeColonistActionOverlay(
                     pawn,
@@ -695,7 +703,8 @@ namespace KRWF.RimKata
             bool preserveVanillaCounterattack =
                 (jobGiver is JobGiver_ConfigurableHostilityResponse
                     || jobGiver is JobGiver_ReactToCloseMeleeThreat)
-                && !RimKataEligibility.RandomAttackEnabledForPawn(___pawn);
+                && !RimKataDualWeaponController
+                    .CounterattackControlEnabled(___pawn);
             if (!preserveVanillaCounterattack)
             {
                 NormalizeMeleeVerb(___pawn, newJob);
@@ -750,7 +759,8 @@ namespace KRWF.RimKata
                 && (effectiveJobGiver is JobGiver_ConfigurableHostilityResponse
                     || effectiveJobGiver is JobGiver_ReactToCloseMeleeThreat)
                 && newJob.targetA.HasThing
-                && RimKataEligibility.RandomAttackEnabledForPawn(___pawn))
+                && RimKataDualWeaponController
+                    .CounterattackControlEnabled(___pawn))
             {
                 MoteMaker.MakeColonistActionOverlay(
                     ___pawn,
