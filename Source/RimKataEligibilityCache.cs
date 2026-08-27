@@ -181,29 +181,6 @@ namespace KRWF.RimKata
             }
         }
 
-        public static void RegisterSpawnedUser(Pawn pawn)
-        {
-            if (pawn == null)
-            {
-                return;
-            }
-
-            Entry entry = entries.GetValue(pawn, CreateEntry);
-            bool hasAccess;
-            lock (entry)
-            {
-                hasAccess = entry.accessKnown
-                    ? entry.hasAccess
-                    : StoreAccess(entry, ResolveAccess(pawn, entry));
-            }
-
-            UpdateRegisteredUser(pawn, hasAccess);
-            if (!hasAccess)
-            {
-                entries.Remove(pawn);
-            }
-        }
-
         public static bool HasActiveDependencyGene(Pawn pawn)
         {
             if (pawn == null)
@@ -278,7 +255,8 @@ namespace KRWF.RimKata
 
         public static void InvalidateGenes(Pawn pawn)
         {
-            RemoveRegisteredUser(pawn);
+            ThingWithComps registeredSecondary =
+                BeginAccessInvalidation(pawn);
             if (TryGetEntry(pawn, out Entry entry))
             {
                 lock (entry)
@@ -290,12 +268,13 @@ namespace KRWF.RimKata
                 }
             }
 
-            RefreshRegisteredSpawnedUser(pawn);
+            FinishAccessInvalidation(pawn, registeredSecondary);
         }
 
         public static void InvalidatePsycast(Pawn pawn)
         {
-            RemoveRegisteredUser(pawn);
+            ThingWithComps registeredSecondary =
+                BeginAccessInvalidation(pawn);
             if (TryGetEntry(pawn, out Entry entry))
             {
                 lock (entry)
@@ -305,12 +284,13 @@ namespace KRWF.RimKata
                 }
             }
 
-            RefreshRegisteredSpawnedUser(pawn);
+            FinishAccessInvalidation(pawn, registeredSecondary);
         }
 
         public static void InvalidateRole(Pawn pawn)
         {
-            RemoveRegisteredUser(pawn);
+            ThingWithComps registeredSecondary =
+                BeginAccessInvalidation(pawn);
             if (TryGetEntry(pawn, out Entry entry))
             {
                 lock (entry)
@@ -320,7 +300,7 @@ namespace KRWF.RimKata
                 }
             }
 
-            RefreshRegisteredSpawnedUser(pawn);
+            FinishAccessInvalidation(pawn, registeredSecondary);
         }
 
         public static void InvalidateRelations(Pawn pawn)
@@ -341,10 +321,10 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (changedDef == RimKataDefOf.RimKata_A_Effect)
-            {
-                RemoveRegisteredUser(pawn);
-            }
+            ThingWithComps registeredSecondary =
+                changedDef == RimKataDefOf.RimKata_A_Effect
+                    ? BeginAccessInvalidation(pawn)
+                    : null;
 
             if (TryGetEntry(pawn, out Entry entry))
             {
@@ -370,15 +350,36 @@ namespace KRWF.RimKata
 
             if (changedDef == RimKataDefOf.RimKata_A_Effect)
             {
-                RefreshRegisteredSpawnedUser(pawn);
+                FinishAccessInvalidation(pawn, registeredSecondary);
             }
         }
 
-        private static void RefreshRegisteredSpawnedUser(Pawn pawn)
+        private static ThingWithComps BeginAccessInvalidation(Pawn pawn)
         {
-            if (pawn?.Spawned == true)
+            ThingWithComps registeredSecondary = pawn?.Spawned == true
+                ? RimKataSecondaryWeaponRegistry.CurrentRegistry
+                    ?.GetRegistered(pawn)
+                : null;
+            RemoveRegisteredUser(pawn);
+            return registeredSecondary;
+        }
+
+        private static void FinishAccessInvalidation(
+            Pawn pawn,
+            ThingWithComps registeredSecondary)
+        {
+            if (pawn?.Spawned != true || registeredSecondary == null)
             {
-                RegisterSpawnedUser(pawn);
+                return;
+            }
+
+            if (RimKataEligibility.HasRimKataAccess(pawn))
+            {
+                NotifySecondaryWeaponChanged(pawn, registeredSecondary);
+            }
+            else
+            {
+                RimKataWeaponSlotUtility.ValidateLoadout(pawn);
             }
         }
 
@@ -568,16 +569,6 @@ namespace KRWF.RimKata
         }
     }
 
-    [HarmonyPatch(typeof(Pawn), nameof(Pawn.SpawnSetup))]
-    public static class Patch_Pawn_RimKataEligibilityRegistration
-    {
-        [HarmonyPriority(Priority.First)]
-        public static void Postfix(Pawn __instance)
-        {
-            RimKataEligibilityCache.RegisterSpawnedUser(__instance);
-        }
-    }
-
     [HarmonyPatch(typeof(Pawn_GeneTracker), "Notify_GenesChanged")]
     public static class Patch_PawnGeneTracker_RimKataEligibilityCache
     {
@@ -669,6 +660,15 @@ namespace KRWF.RimKata
         public static void Postfix(Pawn ___pawn, Hediff __0)
         {
             RimKataEligibilityCache.InvalidateHediff(___pawn, __0?.def);
+            if (__0?.def?.defName == "MindNumbSerum")
+            {
+                Gene_MindNumbSerumDependency gene =
+                    RimKataAnomalyUtility.DependencyGene(___pawn);
+                if (gene?.Active == true)
+                {
+                    gene.ResetWithoutSerumTicks();
+                }
+            }
         }
     }
 

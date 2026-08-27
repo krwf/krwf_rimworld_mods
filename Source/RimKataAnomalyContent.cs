@@ -82,27 +82,31 @@ namespace KRWF.RimKata
 
     public sealed class Gene_MindNumbSerumDependency : Gene
     {
+        private const int MoodNeedIntervalTicks = 150;
         private int ticksWithoutSerum;
 
         public override string Label => RimKataAnomalyUtility.DependencyLabel;
 
         public int DaysWithoutSerum => Math.Max(0, ticksWithoutSerum / GenDate.TicksPerDay);
 
-        public override void TickInterval(int delta)
+        internal void AdvanceWithoutSerumInterval()
         {
-            base.TickInterval(delta);
-            if (RimKataSerumUtility.IsMindNumbed(pawn))
+            if (!Active
+                || pawn == null
+                || RimKataSerumUtility.IsMindNumbed(pawn))
             {
-                ticksWithoutSerum = 0;
                 return;
             }
 
-            if (delta > 0)
-            {
-                ticksWithoutSerum = ticksWithoutSerum > int.MaxValue - delta
-                    ? int.MaxValue
-                    : ticksWithoutSerum + delta;
-            }
+            ticksWithoutSerum = ticksWithoutSerum
+                > int.MaxValue - MoodNeedIntervalTicks
+                ? int.MaxValue
+                : ticksWithoutSerum + MoodNeedIntervalTicks;
+        }
+
+        internal void ResetWithoutSerumTicks()
+        {
+            ticksWithoutSerum = 0;
         }
 
         public override void ExposeData()
@@ -112,6 +116,31 @@ namespace KRWF.RimKata
             if (Scribe.mode == LoadSaveMode.PostLoadInit && ticksWithoutSerum < 0)
             {
                 ticksWithoutSerum = 0;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Need_Mood), nameof(Need_Mood.NeedInterval))]
+    public static class Patch_NeedMood_RimKataDependencyInterval
+    {
+        private static readonly Func<Need, bool> IsFrozen =
+            AccessTools.MethodDelegate<Func<Need, bool>>(
+                AccessTools.PropertyGetter(typeof(Need), "IsFrozen"));
+
+        public static void Postfix(Need_Mood __instance, Pawn ___pawn)
+        {
+            if (__instance == null
+                || ___pawn == null
+                || IsFrozen(__instance))
+            {
+                return;
+            }
+
+            Gene_MindNumbSerumDependency gene =
+                RimKataAnomalyUtility.DependencyGene(___pawn);
+            if (gene?.Active == true)
+            {
+                gene.AdvanceWithoutSerumInterval();
             }
         }
     }

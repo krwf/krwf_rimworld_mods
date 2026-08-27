@@ -1298,12 +1298,9 @@ namespace KRWF.RimKata
         private bool projectileEventsSubscribed;
         private bool projectileInitialRefreshPending;
         private bool projectileWakeTraversalActive;
-        private bool projectileWakeTraversalIsRepeat;
         private bool projectileWakeDirty;
-        private bool projectileWakeSawHostile;
         private bool projectileSchedulerSuspended;
         private int projectileWakeTraversalIndex;
-        private int projectileWakeRepeatTick = -1;
 
         public RimKataMapComponent(Map map) : base(map)
         {
@@ -1585,18 +1582,6 @@ namespace KRWF.RimKata
             ValidatePendingProjectiles(currentTick);
             DetectExplosiveProjectileCellChanges();
 
-            if (!projectileWakeTraversalActive
-                && projectileWakeRepeatTick >= 0
-                && currentTick >= projectileWakeRepeatTick)
-            {
-                projectileWakeRepeatTick = -1;
-                RefreshActiveExplosiveProjectiles();
-                if (activeExplosiveProjectiles.Count > 0)
-                {
-                    StartProjectileWakeTraversal(true);
-                }
-            }
-
             if (!projectileWakeTraversalActive)
             {
                 return;
@@ -1608,11 +1593,6 @@ namespace KRWF.RimKata
                     projectileWakeTraversalIndex++];
                 bool hostileProjectile = pawn?.IsPlayerControlled == true
                     && HasHostileExplosiveProjectileOnMapFor(pawn);
-                if (hostileProjectile)
-                {
-                    projectileWakeSawHostile = true;
-                }
-
                 if (hostileProjectile
                     && RimKataDualWeaponController
                         .CanAcceptIdleProjectileSearch(pawn))
@@ -1628,22 +1608,13 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool completedRepeat = projectileWakeTraversalIsRepeat;
-            bool sawHostile = projectileWakeSawHostile;
             projectileWakeTraversalActive = false;
             projectileWakeTraversal.Clear();
             projectileWakeTraversalIndex = 0;
-            projectileWakeSawHostile = false;
             if (projectileWakeDirty)
             {
                 projectileWakeDirty = false;
-                StartProjectileWakeTraversal(false);
-            }
-            else if (!completedRepeat
-                && sawHostile
-                && activeExplosiveProjectiles.Count > 0)
-            {
-                projectileWakeRepeatTick = currentTick + 16;
+                StartProjectileWakeTraversal();
             }
         }
 
@@ -1752,32 +1723,6 @@ namespace KRWF.RimKata
             }
         }
 
-        private void PruneActiveExplosiveProjectiles()
-        {
-            if (activeExplosiveProjectiles.Count == 0)
-            {
-                return;
-            }
-
-            pendingProjectileScratch.Clear();
-            foreach (Projectile projectile in activeExplosiveProjectiles)
-            {
-                if (!RimKataTargeting.IsPotentialExplosiveProjectile(
-                    projectile,
-                    map))
-                {
-                    pendingProjectileScratch.Add(projectile);
-                }
-            }
-
-            for (int i = 0; i < pendingProjectileScratch.Count; i++)
-            {
-                Projectile projectile = pendingProjectileScratch[i];
-                activeExplosiveProjectiles.Remove(projectile);
-                activeExplosiveProjectileCells.Remove(projectile);
-            }
-        }
-
         private void RequestProjectileWakeTraversal()
         {
             if (projectileWakeTraversalActive)
@@ -1786,13 +1731,11 @@ namespace KRWF.RimKata
                 return;
             }
 
-            projectileWakeRepeatTick = -1;
-            StartProjectileWakeTraversal(false);
+            StartProjectileWakeTraversal();
         }
 
-        private void StartProjectileWakeTraversal(bool repeat)
+        private void StartProjectileWakeTraversal()
         {
-            PruneActiveExplosiveProjectiles();
             projectileWakeTraversal.Clear();
             var pawns = map.mapPawns.AllPawnsSpawned;
             for (int i = 0; i < pawns.Count; i++)
@@ -1805,8 +1748,6 @@ namespace KRWF.RimKata
             }
 
             projectileWakeTraversalIndex = 0;
-            projectileWakeTraversalIsRepeat = repeat;
-            projectileWakeSawHostile = false;
             projectileWakeTraversalActive =
                 projectileWakeTraversal.Count > 0;
         }
@@ -1849,7 +1790,6 @@ namespace KRWF.RimKata
                 return;
             }
 
-            PruneActiveExplosiveProjectiles();
             foreach (Projectile projectile in activeExplosiveProjectiles)
             {
                 if (RimKataTargeting.IsValidExplosiveProjectileForVerb(
@@ -1873,11 +1813,8 @@ namespace KRWF.RimKata
             projectileWakeTraversal.Clear();
             projectileInitialRefreshPending = false;
             projectileWakeTraversalActive = false;
-            projectileWakeTraversalIsRepeat = false;
             projectileWakeDirty = false;
-            projectileWakeSawHostile = false;
             projectileWakeTraversalIndex = 0;
-            projectileWakeRepeatTick = -1;
         }
 
         public RimKataPawnCombatState GetState(Pawn pawn, bool createIfMissing)

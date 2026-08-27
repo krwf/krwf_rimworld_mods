@@ -429,6 +429,7 @@ namespace KRWF.RimKata
     {
         [ThreadStatic] private static bool drawingPair;
         [ThreadStatic] private static bool drawingSecondary;
+        [ThreadStatic] private static Vector3 currentEquipmentPivot;
         private static Mesh plane10VFlip;
         private static Mesh plane10UvFlip;
 
@@ -548,7 +549,13 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            Vector3 equipmentPivot = ResolveEquipmentPivot(
+                pawn,
+                primary,
+                originalDrawLoc,
+                originalAimAngle);
             drawingPair = true;
+            currentEquipmentPivot = equipmentPivot;
             try
             {
                 DrawWeapon(
@@ -556,6 +563,7 @@ namespace KRWF.RimKata
                     primary,
                     primary,
                     originalDrawLoc,
+                    equipmentPivot,
                     originalAimAngle,
                     false,
                     snapshotActive,
@@ -565,6 +573,7 @@ namespace KRWF.RimKata
                     primary,
                     secondary,
                     originalDrawLoc,
+                    equipmentPivot,
                     originalAimAngle,
                     true,
                     snapshotActive,
@@ -573,6 +582,7 @@ namespace KRWF.RimKata
             finally
             {
                 drawingSecondary = false;
+                currentEquipmentPivot = default(Vector3);
                 drawingPair = false;
             }
 
@@ -678,6 +688,7 @@ namespace KRWF.RimKata
             ThingWithComps primary,
             ThingWithComps weapon,
             Vector3 primaryDrawLoc,
+            Vector3 equipmentPivot,
             float fallbackAngle,
             bool secondary,
             bool snapshotActive,
@@ -709,10 +720,8 @@ namespace KRWF.RimKata
                 drawLoc = EquipmentCenter(
                     pawn,
                     weapon,
-                    aimAngle,
-                    primaryDrawLoc.y,
-                    snapshotActive,
-                    snapshot);
+                    equipmentPivot,
+                    aimAngle);
             }
             else if (!secondary
                 && RimKataDualWeaponController.TryGetNextAim(pawn, out ThingWithComps activeWeapon, out LocalTargetInfo _)
@@ -722,10 +731,8 @@ namespace KRWF.RimKata
                 drawLoc = EquipmentCenter(
                     pawn,
                     weapon,
-                    aimAngle,
-                    primaryDrawLoc.y,
-                    snapshotActive,
-                    snapshot);
+                    equipmentPivot,
+                    aimAngle);
             }
 
             bool sharedFallbackAim = false;
@@ -742,10 +749,8 @@ namespace KRWF.RimKata
                         drawLoc = EquipmentCenter(
                             pawn,
                             weapon,
-                            aimAngle,
-                            primaryDrawLoc.y,
-                            snapshotActive,
-                            snapshot);
+                            equipmentPivot,
+                            aimAngle);
                     }
                     else
                     {
@@ -1078,21 +1083,52 @@ namespace KRWF.RimKata
                 && claimed;
         }
 
+        internal static bool TryGetCurrentEquipmentPivot(
+            out Vector3 equipmentPivot)
+        {
+            equipmentPivot = currentEquipmentPivot;
+            return drawingPair;
+        }
+
+        internal static Vector3 ResolveEquipmentPivot(
+            Pawn pawn,
+            ThingWithComps primary,
+            Vector3 originalDrawLoc,
+            float originalAimAngle)
+        {
+            RimKataCarryDrawContext carryContext =
+                RimKataCarryDrawUtility.Current;
+            if (carryContext.active
+                && carryContext.pawn == pawn
+                && carryContext.primary == primary)
+            {
+                return carryContext.drawPos;
+            }
+
+            if (pawn == null || primary == null)
+            {
+                return originalDrawLoc;
+            }
+
+            float distanceFactor = pawn.ageTracker?.CurLifeStage
+                ?.equipmentDrawDistanceFactor ?? 1f;
+            return originalDrawLoc
+                - EquipmentRadial(
+                    primary,
+                    originalAimAngle,
+                    distanceFactor);
+        }
+
         private static Vector3 EquipmentCenter(
             Pawn pawn,
             ThingWithComps weapon,
-            float aimAngle,
-            float renderHeight,
-            bool snapshotActive,
-            RimKataVisualSnapshot snapshot)
+            Vector3 equipmentPivot,
+            float aimAngle)
         {
-            float distanceFactor = pawn.ageTracker?.CurLifeStage?.equipmentDrawDistanceFactor ?? 1f;
-            Vector3 drawLoc = pawn.DrawPos
-                + (snapshotActive
-                    ? RimKataVisualUtility.DrawOffset(snapshot)
-                    : Vector3.zero);
-            drawLoc.y = renderHeight;
-            return drawLoc + new Vector3(0f, 0f, 0.4f + weapon.def.equippedDistanceOffset).RotatedBy(aimAngle) * distanceFactor;
+            float distanceFactor = pawn.ageTracker?.CurLifeStage
+                ?.equipmentDrawDistanceFactor ?? 1f;
+            return equipmentPivot
+                + EquipmentRadial(weapon, aimAngle, distanceFactor);
         }
 
         private static float AngleToTarget(Pawn pawn, LocalTargetInfo target, float fallback)
@@ -1587,7 +1623,17 @@ namespace KRWF.RimKata
 
             if (owner != null && Mathf.Abs(totalOffset) > 0.001f)
             {
-                Vector3 pivot = owner.DrawPos;
+                Vector3 pivot;
+                if (!RimKataDualWeaponRenderUtility
+                    .TryGetCurrentEquipmentPivot(out pivot))
+                {
+                    pivot = RimKataDualWeaponRenderUtility
+                        .ResolveEquipmentPivot(
+                            owner,
+                            weapon,
+                            drawLoc,
+                            aimAngle);
+                }
                 float renderHeight = drawLoc.y;
                 Vector3 radial = drawLoc - pivot;
                 radial.y = 0f;
