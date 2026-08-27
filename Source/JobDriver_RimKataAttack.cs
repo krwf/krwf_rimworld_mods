@@ -471,8 +471,14 @@ namespace KRWF.RimKata
                 return true;
             }
 
+            bool forcedIncappedTarget = target.Pawn?.Downed == true
+                && RimKataDualWeaponController.CanUsePlayerWeaponCommand(
+                    pawn,
+                    __instance);
             bool fixedWeaponTarget = false;
-            if (__instance?.IsMeleeAttack == false && target.HasThing)
+            if (!forcedIncappedTarget
+                && __instance?.IsMeleeAttack == false
+                && target.HasThing)
             {
                 fixedWeaponTarget = RimKataDualWeaponController.NotifyPlayerWeaponTarget(
                     pawn,
@@ -494,7 +500,8 @@ namespace KRWF.RimKata
                     __instance,
                     target.Thing);
 
-            if (!playerCloseFire
+            if (!forcedIncappedTarget
+                && !playerCloseFire
                 && !RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
             {
                 return true;

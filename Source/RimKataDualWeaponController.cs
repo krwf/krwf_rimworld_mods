@@ -527,15 +527,9 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!state.dualEngagementActive)
+            if (!HasCombatContinuity(pawn))
             {
                 UpdateBodyAimStance(pawn, state);
-                return;
-            }
-            if (!HasEngagementContinuity(pawn, state))
-            {
-                state.dualEngagementActive = false;
-                state.ResetCandidateSaturationExpansion(true);
                 return;
             }
 
@@ -676,32 +670,16 @@ namespace KRWF.RimKata
             Thing target,
             bool fromAttackGizmo = false)
         {
-            if (pawn?.Map == null
-                || pawn.InMentalState
-                || verb == null
-                || verb.IsMeleeAttack
+            if (!CanUsePlayerWeaponCommand(pawn, verb)
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
-                || target.Map != pawn.Map
-                || !pawn.IsPlayerControlled
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+                || target.Map != pawn.Map)
             {
                 return false;
             }
 
             ThingWithComps weapon = verb.EquipmentSource as ThingWithComps;
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                : null;
-            if (weapon == null
-                || (weapon != primary && weapon != secondary)
-                || verb.CasterPawn != pawn)
-            {
-                return false;
-            }
-
             RimKataPawnCombatState state = StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
             RimKataWeaponCycleState cycle = CycleForWeapon(state, weapon);
@@ -726,6 +704,28 @@ namespace KRWF.RimKata
             }
 
             return true;
+        }
+
+        public static bool CanUsePlayerWeaponCommand(Pawn pawn, Verb verb)
+        {
+            if (pawn?.Map == null
+                || pawn.InMentalState
+                || verb == null
+                || verb.IsMeleeAttack
+                || !pawn.IsPlayerControlled
+                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+            {
+                return false;
+            }
+
+            ThingWithComps weapon = verb.EquipmentSource as ThingWithComps;
+            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+                ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
+                : null;
+            return weapon != null
+                && (weapon == primary || weapon == secondary)
+                && verb.CasterPawn == pawn;
         }
 
         public static bool HasFocusedWeaponTarget(Pawn pawn)
@@ -1035,17 +1035,8 @@ namespace KRWF.RimKata
             {
                 NormalizeInvalidInterceptionState(pawn, state);
                 RimKataSharedTargetSearch.Prune(pawn, state);
-                RefreshDualEngagementState(pawn, state);
             }
-            if (state != null
-                && (state.dualEngagementActive
-                    || state.sharedTargetSearch?.KeepsCombatAlive == true
-                    || state.DraftedMovementSearchTriggerPending
-                    || state.idleProjectileSearchTriggerPending
-                    || state.MovementFireContinuityActive
-                    || state.IncomingThreatActive
-                    || state.AutomaticAttackRequestActive
-                    || state.CloseAttackRequestActive))
+            if (HasCombatContinuity(pawn))
             {
                 return false;
             }
@@ -1920,10 +1911,8 @@ namespace KRWF.RimKata
 
         public static bool IsDedicatedFollowupActive(Pawn pawn)
         {
-            RimKataPawnCombatState state = StateFor(pawn, false);
             return pawn?.InMentalState != true
-                && state?.dualEngagementActive == true
-                && HasEngagementContinuity(pawn, state);
+                && HasCombatContinuity(pawn);
         }
 
         internal static bool IsDedicatedCloseCombatActive(Pawn pawn)
@@ -2161,40 +2150,54 @@ namespace KRWF.RimKata
             }
 
             bool wasActive = state.dualEngagementActive;
-            bool activeScanLatch = state.dualEngagementActive
-                && state.sharedTargetSearch?.scanActive == true;
-            bool liveCloseTarget = state.dualCloseCombatActive
-                && IsImmediateCloseTarget(
-                    pawn,
-                    state.dualCloseTarget,
-                    pawn?.CurJob?.playerForced == true,
-                    pawn?.CurJob?.killIncappedTarget == true);
-            state.dualEngagementActive = HasAnyCycleTargetWork(pawn, state)
-                || liveCloseTarget
-                || activeScanLatch
-                || HasDedicatedTargetContinuity(pawn, state);
+            state.dualEngagementActive = EvaluateCombatContinuity(pawn, state);
             if (wasActive && !state.dualEngagementActive)
             {
                 state.ResetCandidateSaturationExpansion(true);
             }
         }
 
-        private static bool HasEngagementContinuity(
-            Pawn pawn,
-            RimKataPawnCombatState state)
+        public static bool HasCombatContinuity(Pawn pawn)
         {
-            if (state == null)
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (pawn?.InMentalState == true || state == null)
             {
                 return false;
             }
 
-            if (HasAnyCycleTargetWork(pawn, state)
-                || state.sharedTargetSearch?.KeepsCombatAlive == true
-                || HasDedicatedTargetContinuity(pawn, state))
+            RefreshDualEngagementState(pawn, state);
+            return state.dualEngagementActive;
+        }
+
+        private static bool EvaluateCombatContinuity(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            if (pawn?.Map == null || pawn.InMentalState || state == null)
             {
-                return true;
+                return false;
             }
-            return false;
+
+            bool liveCloseTarget = state.dualCloseCombatActive
+                && IsImmediateCloseTarget(
+                    pawn,
+                    state.dualCloseTarget,
+                    pawn.CurJob?.playerForced == true,
+                    pawn.CurJob?.killIncappedTarget == true);
+            bool movementContinuation = state.dualEngagementActive
+                && state.MovementFireContinuityActive;
+            return liveCloseTarget
+                || state.sharedTargetSearch?.KeepsCombatAlive == true
+                || movementContinuation
+                || state.DodgeMovementActive
+                || state.DraftedMovementSearchTriggerPending
+                || state.idleProjectileSearchTriggerPending
+                || state.dedicatedFollowupJobPending
+                || HasDedicatedTargetContinuity(pawn, state)
+                || HasAnyCycleTargetWork(pawn, state)
+                || state.IncomingThreatActive
+                || state.AutomaticAttackRequestActive
+                || state.CloseAttackRequestActive;
         }
 
         private static bool HasDedicatedTargetContinuity(

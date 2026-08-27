@@ -65,7 +65,7 @@ namespace KRWF.RimKata
                 && RimKataDualWeaponController.NotifyDraftedMovementCell(pawn);
             state = StateFor(pawn, false);
             bool combatDemand = movementSearch
-                || HasCombatDemand(pawn, state, physicalDodge);
+                || RimKataDualWeaponController.HasCombatContinuity(pawn);
 
             if (!combatDemand)
             {
@@ -266,48 +266,10 @@ namespace KRWF.RimKata
                 && RimKataEligibility.CanBeginGunKataAttack(pawn);
         }
 
-        private static bool HasCombatDemand(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            bool physicalDodge)
-        {
-            return physicalDodge
-                || state?.IncomingThreatActive == true
-                || state?.AutomaticAttackRequestActive == true
-                || state?.CloseAttackRequestActive == true
-                || state?.primaryWeaponCycle?.CombatActive == true
-                || state?.secondaryWeaponCycle?.CombatActive == true
-                || state?.primaryWeaponCycle?.DedicatedActive == true
-                || state?.secondaryWeaponCycle?.DedicatedActive == true
-                || state?.sharedTargetSearch?.KeepsCombatAlive == true
-                || state?.DraftedMovementSearchTriggerPending == true
-                || state?.idleProjectileSearchTriggerPending == true
-                || state?.dedicatedFollowupJobPending == true;
-        }
-
         // !!! Debug HUD !!!
         public static bool DebugHasCombatDemand(Pawn pawn)
         {
-            if (pawn == null)
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            bool physicalDodge = state?.DodgeMovementActive == true;
-
-            return physicalDodge
-                || state?.DebugIncomingThreatStored == true
-                || state?.DebugAutomaticAttackRequestStored == true
-                || state?.DebugCloseAttackRequestStored == true
-                || state?.primaryWeaponCycle?.CombatActive == true
-                || state?.secondaryWeaponCycle?.CombatActive == true
-                || state?.primaryWeaponCycle?.DedicatedActive == true
-                || state?.secondaryWeaponCycle?.DedicatedActive == true
-                || state?.sharedTargetSearch?.KeepsCombatAlive == true
-                || state?.DraftedMovementSearchTriggerPending == true
-                || state?.idleProjectileSearchTriggerPending == true
-                || state?.dedicatedFollowupJobPending == true;
+            return RimKataDualWeaponController.HasCombatContinuity(pawn);
         }
 
         // !!! Debug HUD !!!
