@@ -1380,7 +1380,7 @@ namespace KRWF.RimKata
                 return attempt;
             }
 
-            if (!CounterattackControlEnabled(pawn)
+            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 && IsConfigurableCounterattackOpening(pawn, pawn.CurJob))
             {
                 return attempt;
@@ -1487,9 +1487,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            RimKataWeaponCycleState supportCycle = OtherCycle(state, openingCycle);
             ResetCycleForOpeningHandoff(openingCycle);
-            ResetCycleForOpeningHandoff(supportCycle);
             state.engagementOwnerWeapon = attempt.weapon;
 
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
@@ -2862,11 +2860,19 @@ namespace KRWF.RimKata
 
             state ??= StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
+            Verb ownerVerb =
+                RimKataWeaponSlotUtility.BestRangedCombatVerb(
+                    pawn,
+                    openingJobTarget)
+                ?? sourceJob.verbToUse;
             ThingWithComps ownerWeapon =
-                sourceJob.verbToUse?.EquipmentSource as ThingWithComps;
+                ownerVerb?.EquipmentSource as ThingWithComps;
             if (CycleForWeapon(state, ownerWeapon) == null)
             {
                 ownerWeapon = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+                ownerVerb = RimKataWeaponSlotUtility.CombatVerb(
+                    pawn,
+                    ownerWeapon);
             }
 
             state.engagementOwnerWeapon = ownerWeapon;
@@ -2897,10 +2903,7 @@ namespace KRWF.RimKata
                 openingJobTarget);
             rimKataJob.playerForced = false;
             rimKataJob.killIncappedTarget = false;
-            rimKataJob.verbToUse = sourceJob.verbToUse
-                ?? RimKataWeaponSlotUtility.CombatVerb(
-                    pawn,
-                    state.engagementOwnerWeapon)
+            rimKataJob.verbToUse = ownerVerb
                 ?? RimKataWeaponSlotUtility.CombatVerb(
                     pawn,
                     RimKataWeaponSlotUtility.PrimaryWeapon(pawn));
@@ -3553,11 +3556,6 @@ namespace KRWF.RimKata
 
             RimKataSharedTargetSearch.Prune(pawn, state);
             RefreshDualEngagementState(pawn, state);
-            if (TryRecoverNonRandomCounterattack(pawn, state))
-            {
-                return;
-            }
-
             if (state.dualEngagementActive)
             {
                 RearmOpeningOwnerIfBothWaiting(state);
@@ -3575,74 +3573,6 @@ namespace KRWF.RimKata
             state.dualEngagementActive = false;
             state.ResetCandidateSaturationExpansion(true);
             RearmOpeningOwnerIfBothWaiting(state);
-        }
-
-        private static bool TryRecoverNonRandomCounterattack(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            Job job = pawn?.CurJob;
-            Thing target = job?.targetA.Thing;
-            if (state == null
-                || RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                || !CounterattackControlEnabled(pawn)
-                || !IsConfigurableCounterattackOpening(pawn, job)
-                || !RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
-                    pawn,
-                    target))
-            {
-                return false;
-            }
-
-            ThingWithComps ownerWeapon =
-                job.verbToUse?.EquipmentSource as ThingWithComps;
-            RimKataWeaponCycleState ownerCycle = CycleForWeapon(
-                state,
-                ownerWeapon);
-            if (ownerCycle == null)
-            {
-                ownerWeapon = state.engagementOwnerWeapon;
-                ownerCycle = CycleForWeapon(state, ownerWeapon);
-            }
-            if (ownerCycle == null)
-            {
-                ownerWeapon = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-                ownerCycle = CycleForWeapon(state, ownerWeapon);
-                if (ownerCycle == null)
-                {
-                    return false;
-                }
-            }
-
-            bool interception = ownerCycle.plannedInterception
-                || ownerCycle.cachedCandidateInterception;
-            if (!interception && ownerCycle.plannedTarget != target)
-            {
-                ResetCycleForOpeningHandoff(ownerCycle);
-                bool closeContext = pawn.CanReachImmediate(
-                    target,
-                    PathEndMode.Touch);
-                SetCandidate(
-                    ownerCycle,
-                    target,
-                    false,
-                    closeContext,
-                    closeContext,
-                    true);
-            }
-
-            state.engagementOwnerWeapon = ownerWeapon;
-            RefreshDualEngagementState(pawn, state);
-            if (!state.dualEngagementActive)
-            {
-                return false;
-            }
-
-            if (!state.dedicatedFollowupJobPending)
-            {
-                QueueDedicatedFollowupJob(pawn, target);
-            }
-            return state.dedicatedFollowupJobPending;
         }
 
         public static void CancelOffenseForMentalState(Pawn pawn)
