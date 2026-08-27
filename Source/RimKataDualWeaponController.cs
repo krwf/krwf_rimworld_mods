@@ -710,18 +710,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool changedTarget = cycle.focusedTarget != target
-                || cycle.focusedTargetFromAttackGizmo != fromAttackGizmo;
             cycle.focusedTarget = target;
             cycle.focusedTargetFromAttackGizmo = fromAttackGizmo;
-            cycle.cachedCandidateTarget = null;
-            cycle.cachedCandidateInterception = false;
-            if (changedTarget)
-            {
-                cycle.ClearPlan();
-                cycle.warmupTicksRemaining = -1;
-                cycle.warmupTotalTicks = 0;
-            }
 
             cycle.visualTarget = target;
             cycle.visualAimTicksRemaining = Mathf.Max(
@@ -1055,11 +1045,7 @@ namespace KRWF.RimKata
                     || state.MovementFireContinuityActive
                     || state.IncomingThreatActive
                     || state.AutomaticAttackRequestActive
-                    || state.CloseAttackRequestActive
-                    || state.primaryWeaponCycle?.DedicatedActive == true
-                    || state.secondaryWeaponCycle?.DedicatedActive == true
-                    || state.primaryWeaponCycle?.focusedTarget != null
-                    || state.secondaryWeaponCycle?.focusedTarget != null))
+                    || state.CloseAttackRequestActive))
             {
                 return false;
             }
@@ -1669,7 +1655,6 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || state == null
                 || cycle == null
-                || cycle.focusedTarget != null
                 || cycle.HasPlan
                 || cycle.openingWarmupPending
                 || cycle.burstShotsRemaining > 0)
@@ -1683,6 +1668,15 @@ namespace KRWF.RimKata
                 pawn,
                 cycle.weapon,
                 closeContext);
+            if (FocusedTargetUsableNow(
+                pawn,
+                cycle,
+                verb,
+                closeContext))
+            {
+                return false;
+            }
+
             Thing cachedTarget = cycle.cachedCandidateTarget;
             if (cachedTarget != null)
             {
@@ -3665,26 +3659,30 @@ namespace KRWF.RimKata
             out Thing target)
         {
             target = cycle?.plannedTarget ?? cycle?.cachedCandidateTarget;
+            Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
+                pawn,
+                cycle?.weapon,
+                cycle?.plannedCloseContext == true);
             if (pawn?.Map == null
                 || cycle == null
+                || verb == null
                 || cycle.plannedInterception
                 || cycle.cachedCandidateInterception
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
                 || target.Map != pawn.Map
-                || (!playerForced
-                    && !RimKataTargeting.IsAutomaticEnemy(pawn, target)))
-            {
-                target = null;
-                return false;
-            }
-
-            if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed && !(playerForced && killIncappedTarget))))
+                || !RimKataTargeting.IsValidAutomaticAttackTarget(
+                    pawn,
+                    target)
+                || !RimKataSharedTargetSearch.IsValidForVerb(
+                    pawn,
+                    verb,
+                    target)
+                || !pawn.CanReach(
+                    target,
+                    PathEndMode.Touch,
+                    Danger.Deadly))
             {
                 target = null;
                 return false;
@@ -3739,14 +3737,17 @@ namespace KRWF.RimKata
                         state.closeAttackRequestTarget)
                     || HasNonProjectileCycleWork(
                         pawn,
+                        state,
                         state.primaryWeaponCycle)
                     || HasNonProjectileCycleWork(
                         pawn,
+                        state,
                         state.secondaryWeaponCycle));
         }
 
         private static bool HasNonProjectileCycleWork(
             Pawn pawn,
+            RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle)
         {
             if (cycle == null || cycle.HasAutomaticCandidates)
@@ -3754,7 +3755,17 @@ namespace KRWF.RimKata
                 return cycle?.HasAutomaticCandidates == true;
             }
 
-            return IsLiveNonProjectileTarget(pawn, cycle.focusedTarget)
+            bool closeContext = cycle.plannedCloseContext
+                || state?.dualCloseCombatActive == true;
+            Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
+                pawn,
+                cycle.weapon,
+                closeContext);
+            return FocusedTargetUsableNow(
+                    pawn,
+                    cycle,
+                    verb,
+                    closeContext)
                 || (!cycle.cachedCandidateInterception
                     && IsLiveNonProjectileTarget(
                         pawn,
@@ -3995,16 +4006,6 @@ namespace KRWF.RimKata
                     cycle.plannedTarget))
             {
                 cycle.ClearPlan();
-            }
-
-            if (cycle.focusedTarget != null
-                && !RimKataSharedTargetSearch.IsValidForVerb(
-                    pawn,
-                    verb,
-                    cycle.focusedTarget))
-            {
-                cycle.focusedTarget = null;
-                cycle.focusedTargetFromAttackGizmo = false;
             }
 
             if (cycle.visualTarget != null
@@ -4278,11 +4279,12 @@ namespace KRWF.RimKata
                 }
             }
 
-            if (InterruptMovingFireOutsideAutomaticRange(
-                pawn,
-                cycle,
-                verb,
-                cycle.plannedTarget))
+            if (!focusedTargetControlsCycle
+                && InterruptMovingFireOutsideAutomaticRange(
+                    pawn,
+                    cycle,
+                    verb,
+                    cycle.plannedTarget))
             {
                 return true;
             }
@@ -4374,14 +4376,6 @@ namespace KRWF.RimKata
                     closeCombatContext,
                     RimKataEligibility.RandomAttackEnabledForPawn(pawn),
                     false);
-            if (promoted
-                && !cachedInterception
-                && !closeCombatContext
-                && !verb.IsMeleeAttack
-                && pawn?.jobs?.curDriver is JobDriver_RimKataAttack driver)
-            {
-                driver.TryPromoteReachableRangedJobTarget(cachedTarget);
-            }
             if (cachedInterception && promoted)
             {
                 SetCandidate(
@@ -4508,16 +4502,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool movingOutsideAutomaticRange = pawn.pather?.MovingNow == true
-                && !TargetWithinAutomaticSearchRange(pawn, target);
-            if (movingOutsideAutomaticRange
-                || !ValidCurrentTargetForVerb(
-                    pawn,
-                    verb,
-                    target,
-                    true,
-                    false,
-                    false))
+            if (!FocusedTargetUsableNow(
+                pawn,
+                cycle,
+                verb,
+                closeCombatContext))
             {
                 if (cycle.HasPlan && cycle.plannedTarget == target)
                 {
@@ -4568,6 +4557,23 @@ namespace KRWF.RimKata
             }
 
             return true;
+        }
+
+        private static bool FocusedTargetUsableNow(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            bool closeCombatContext)
+        {
+            return !closeCombatContext
+                && cycle?.focusedTarget != null
+                && ValidCurrentTargetForVerb(
+                    pawn,
+                    verb,
+                    cycle.focusedTarget,
+                    true,
+                    false,
+                    false);
         }
 
         private static void PromoteApproachingShotToCloseContext(
@@ -4695,7 +4701,11 @@ namespace KRWF.RimKata
                 || target.Destroyed
                 || !target.Spawned
                 || target.Map != pawn.Map
-                || cycle.focusedTarget != null
+                || FocusedTargetUsableNow(
+                    pawn,
+                    cycle,
+                    verb,
+                    false)
                 || cycle.cachedCandidateTarget != null
                 || cycle.HasPlan
                 || cycle.openingWarmupPending
@@ -4958,11 +4968,16 @@ namespace KRWF.RimKata
                 return -1;
             }
 
-            if (InterruptMovingFireOutsideAutomaticRange(
-                pawn,
-                cycle,
-                verb,
-                cycle.plannedTarget))
+            if (!FocusedTargetUsableNow(
+                    pawn,
+                    cycle,
+                    verb,
+                    closeCombatContext)
+                && InterruptMovingFireOutsideAutomaticRange(
+                    pawn,
+                    cycle,
+                    verb,
+                    cycle.plannedTarget))
             {
                 return -1;
             }
@@ -5208,10 +5223,15 @@ namespace KRWF.RimKata
             }
 
             ApplyInterruptedBurstCooldown(pawn, cycle, verb);
+            bool focusedTargetUsable = FocusedTargetUsableNow(
+                pawn,
+                cycle,
+                verb,
+                false);
             if (cycle.openingWarmupPending
                 && !cycle.firedInCurrentOpening)
             {
-                if (cycle.focusedTarget != null)
+                if (focusedTargetUsable)
                 {
                     ResetUnfiredOpeningTimer(cycle);
                 }
@@ -5242,7 +5262,7 @@ namespace KRWF.RimKata
                 pawn.stances.SetStance(new Stance_Mobile());
             }
 
-            if (cycle.focusedTarget == null
+            if (!focusedTargetUsable
                 && cycle.cachedCandidateTarget == null)
             {
                 RimKataPawnCombatState state = StateFor(pawn, false);

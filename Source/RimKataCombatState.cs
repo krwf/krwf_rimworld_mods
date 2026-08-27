@@ -372,6 +372,11 @@ namespace KRWF.RimKata
             || ResponsePoseActive
             || CloseDodgeActive
             || CloseCombatActive
+            || (pawn != null
+                && !pawn.Dead
+                && !pawn.Downed
+                && pawn.Awake()
+                && pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
             || DraftedFireActive
             || DraftedMovementSearchTracking
             || DraftedMovementSearchTriggerPending

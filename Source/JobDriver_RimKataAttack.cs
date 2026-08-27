@@ -316,13 +316,9 @@ namespace KRWF.RimKata
             bool closeCombatContext,
             bool closeTargetResolved)
         {
-            Thing cycleAssignedTarget = !closeCombatContext
-                && RimKataDualWeaponController.HasFocusedWeaponTarget(pawn)
-                    ? null
-                    : assignedTarget;
             RimKataDualWeaponController.Tick(
                 pawn,
-                cycleAssignedTarget,
+                assignedTarget,
                 IsPlayerForced,
                 job.killIncappedTarget,
                 closeCombatContext,
@@ -440,35 +436,6 @@ namespace KRWF.RimKata
             }
         }
 
-        internal bool TryPromoteReachableRangedJobTarget(Thing target)
-        {
-            Thing currentTarget = AssignedTarget;
-            if (endingJob
-                || pawn?.Map == null
-                || pawn.Drafted
-                || pawn.InMentalState
-                || IsPlayerForced
-                || RimKataDodgeMovementUtility.IsActive(pawn)
-                || pawn.pather?.Moving == true
-                || job?.def != RimKataDefOf.RimKata_Attack
-                || RimKataMod.Settings?.targetRushEnabled == false
-                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                || RimKataDualWeaponController.IsDedicatedCloseCombatActive(pawn)
-                || target == null
-                || target is Projectile
-                || target == currentTarget
-                || !IsValidAssignedTarget(currentTarget)
-                || !IsValidAssignedTarget(target)
-                || pawn.CanReach(currentTarget, PathEndMode.Touch, Danger.Deadly)
-                || !pawn.CanReach(target, PathEndMode.Touch, Danger.Deadly))
-            {
-                return false;
-            }
-
-            SetAssignedTarget(target, true);
-            return true;
-        }
-
         private bool IsValidAssignedTarget(Thing target)
         {
             if (target == null || target.Destroyed || !target.Spawned || target.Map != pawn.Map)
@@ -487,7 +454,9 @@ namespace KRWF.RimKata
             }
 
             return IsPlayerForced
-                || RimKataTargeting.IsAutomaticEnemy(pawn, target);
+                || RimKataTargeting.IsValidAutomaticAttackTarget(
+                    pawn,
+                    target);
         }
     }
 

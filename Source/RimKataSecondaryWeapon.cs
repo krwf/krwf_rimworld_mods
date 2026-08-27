@@ -1857,12 +1857,7 @@ namespace KRWF.RimKata
             Pawn pawn,
             ref bool __result)
         {
-            if (RimKataMultiSelectAttackGizmoUtility
-                .ShouldUseUnifiedAttackGizmo())
-            {
-                __result = false;
-            }
-            else if (pawn?.Drafted == true)
+            if (pawn?.Drafted == true)
             {
                 __result = true;
             }
