@@ -586,6 +586,14 @@ namespace KRWF.RimKata
     {
         public static void Prefix(Pawn ___pawn, ref Job job)
         {
+            if (RimKataAttackGizmoTargetContext.Active
+                && RimKataDualWeaponController.TryConvertPlayerRushOrder(
+                    ___pawn,
+                    job))
+            {
+                return;
+            }
+
             bool orderedAttack = job != null
                 && job.def == JobDefOf.AttackStatic
                 && job.targetA.HasThing;

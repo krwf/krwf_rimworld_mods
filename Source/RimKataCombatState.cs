@@ -285,8 +285,6 @@ namespace KRWF.RimKata
         public int dualLastDrivenTick = -1;
         public bool dualCloseCombatActive;
         public bool candidateSaturationExpansionUsed;
-        public int observedPrimaryCandidateCount = -1;
-        public int observedSecondaryCandidateCount = -1;
         public Thing dualCloseTarget;
         public ThingWithComps engagementOwnerWeapon;
         public ThingWithComps responsePoseWeapon;
@@ -506,7 +504,6 @@ namespace KRWF.RimKata
                 primaryWeaponCycle ??= new RimKataWeaponCycleState();
                 secondaryWeaponCycle ??= new RimKataWeaponCycleState();
                 sharedTargetSearch ??= new RimKataSharedTargetSearchState();
-                ResetAutomaticCandidateCountTracking();
                 movementFireContinuityUntilTick = -1;
                 if (weaponSwapPending)
                 {
@@ -1051,7 +1048,6 @@ namespace KRWF.RimKata
             dedicatedContinuityUntilTick = -1;
             movementFireContinuityUntilTick = -1;
             candidateSaturationExpansionUsed = false;
-            ResetAutomaticCandidateCountTracking();
             absorbedPathBlockedGotoJobId = -1;
             absorbedPathBlockedThreat = null;
             absorbedPathBlockedRefreshTick = -1;
@@ -1075,35 +1071,6 @@ namespace KRWF.RimKata
                 secondaryWeaponCycle.pendingCandidateLimitOverride = 0;
                 secondaryWeaponCycle.activeCandidateLimitOverride = 0;
             }
-        }
-
-        public bool AutomaticCandidateCountsChanged()
-        {
-            int primaryCount = primaryWeaponCycle?.automaticCandidates?.Count ?? 0;
-            int secondaryCount = secondaryWeaponCycle?.automaticCandidates?.Count ?? 0;
-            if (observedPrimaryCandidateCount < 0
-                || observedSecondaryCandidateCount < 0)
-            {
-                CaptureAutomaticCandidateCounts();
-                return false;
-            }
-
-            return observedPrimaryCandidateCount != primaryCount
-                || observedSecondaryCandidateCount != secondaryCount;
-        }
-
-        public void CaptureAutomaticCandidateCounts()
-        {
-            observedPrimaryCandidateCount =
-                primaryWeaponCycle?.automaticCandidates?.Count ?? 0;
-            observedSecondaryCandidateCount =
-                secondaryWeaponCycle?.automaticCandidates?.Count ?? 0;
-        }
-
-        public void ResetAutomaticCandidateCountTracking()
-        {
-            observedPrimaryCandidateCount = -1;
-            observedSecondaryCandidateCount = -1;
         }
 
         public void QueueDedicatedFollowupJob(Thing target, Job sourceJob)
@@ -1161,6 +1128,23 @@ namespace KRWF.RimKata
             EnterCloseCombat(target);
         }
 
+        public void RequestPlayerRush(Thing target)
+        {
+            closeAttackRequestTarget = target;
+            closeAttackRequestFromAttackGizmo = true;
+        }
+
+        public bool IsPlayerRushRequestFor(Thing target)
+        {
+            Job job = pawn?.CurJob;
+            return pawn?.IsPlayerControlled == true
+                && closeAttackRequestFromAttackGizmo
+                && closeAttackRequestTarget == target
+                && job?.def == RimKataDefOf.RimKata_Attack
+                && job.playerForced
+                && job.targetA.Thing == target;
+        }
+
         public void ClearCloseAttackRequest()
         {
             closeAttackRequestTarget = null;
@@ -1215,12 +1199,14 @@ namespace KRWF.RimKata
         private bool IsCloseAttackRequestActive()
         {
             Thing target = closeAttackRequestTarget;
+            bool playerRushRequest = IsPlayerRushRequestFor(target);
 
             if (target is Pawn targetPawn
                 && (targetPawn.Dead
-                || targetPawn.Downed
-                || targetPawn.Crawling
-                || targetPawn.IsPsychologicallyInvisible()))
+                    || (!playerRushRequest
+                        && (targetPawn.Downed
+                            || targetPawn.Crawling
+                            || targetPawn.IsPsychologicallyInvisible()))))
             {
                 return false;
             }
@@ -1232,10 +1218,11 @@ namespace KRWF.RimKata
                 && pawn.Spawned
                 && target.Spawned
                 && pawn.Map == target.Map
-                && (RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                    || (pawn.CurJob?.playerForced == true
-                        && pawn.CurJob.targetA.Thing == target))
-                && pawn.CanReachImmediate(target, PathEndMode.Touch);
+                && (playerRushRequest
+                    || ((RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                            || (pawn.CurJob?.playerForced == true
+                                && pawn.CurJob.targetA.Thing == target))
+                        && pawn.CanReachImmediate(target, PathEndMode.Touch)));
         }
 
         private bool IsAutomaticAttackRequestActive()

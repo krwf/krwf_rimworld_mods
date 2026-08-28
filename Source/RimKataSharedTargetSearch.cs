@@ -17,7 +17,6 @@ namespace KRWF.RimKata
         public float completedOuterRadius;
         public IntVec3 origin = IntVec3.Invalid;
         public int lastAdvancedTick = -1;
-        public int lastStartedTick = -1;
 
         public bool KeepsCombatAlive => scanActive;
 
@@ -43,7 +42,6 @@ namespace KRWF.RimKata
                 effectiveMaximumRange = Mathf.Max(0f, effectiveMaximumRange);
                 completedOuterRadius = Mathf.Max(0f, completedOuterRadius);
                 lastAdvancedTick = -1;
-                lastStartedTick = -1;
                 if (scanActive)
                 {
                     sessionActive = true;
@@ -101,23 +99,15 @@ namespace KRWF.RimKata
 
             if (search.scanActive)
             {
-                return false;
+                return true;
             }
 
-            int currentTick = Find.TickManager?.TicksGame ?? -1;
-            if (currentTick >= 0 && search.lastStartedTick == currentTick)
-            {
-                return false;
-            }
-
-            bool removedCandidate = Prune(pawn, combatState);
             if (ShouldSkipSaturatedCandidateSearch(
                     pawn,
                     combatState,
-                    origin,
-                    removedCandidate))
+                    origin))
             {
-                return false;
+                return true;
             }
 
             float maximumRange = MaximumRange(pawn, combatState);
@@ -135,7 +125,6 @@ namespace KRWF.RimKata
             search.completedOuterRadius = 0f;
             search.origin = origin;
             search.lastAdvancedTick = -1;
-            search.lastStartedTick = currentTick;
             InitializeCollectionClosure(
                 pawn,
                 combatState,
@@ -145,7 +134,6 @@ namespace KRWF.RimKata
                 combatState,
                 combatState.secondaryWeaponCycle);
             RimKataDebugHUD.RecordSearchIndicator(pawn);
-            combatState.CaptureAutomaticCandidateCounts();
             return true;
         }
 
@@ -156,11 +144,6 @@ namespace KRWF.RimKata
         {
             RimKataSharedTargetSearchState search =
                 combatState?.sharedTargetSearch;
-            if (search?.scanActive == true)
-            {
-                return false;
-            }
-
             search?.Reset();
             return Begin(pawn, combatState, origin);
         }
@@ -193,7 +176,6 @@ namespace KRWF.RimKata
             }
             search.lastAdvancedTick = currentTick;
 
-            Prune(pawn, combatState);
             TryAddKnownAutomaticTarget(pawn, combatState, knownTarget);
 
             float maximumRange = MaximumRange(pawn, combatState);
@@ -261,8 +243,6 @@ namespace KRWF.RimKata
                 Finish(combatState, reachedMaximum);
             }
 
-            combatState.CaptureAutomaticCandidateCounts();
-
             return true;
         }
 
@@ -287,19 +267,13 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            PruneCycle(pawn, combatState, cycle, verb);
             bool randomAttack = RandomAttackEnabled(pawn);
             bool idleProjectilePriority = !randomAttack
                 && combatState.idleProjectileSearchTriggerPending;
             if (!randomAttack && !idleProjectilePriority)
             {
-                if (!(preferredTarget is Projectile)
-                    && IsValidForCycle(
-                        pawn,
-                        combatState,
-                        cycle,
-                        verb,
-                        preferredTarget))
+                if (preferredTarget != null
+                    && !(preferredTarget is Projectile))
                 {
                     target = preferredTarget;
                     return true;
@@ -312,31 +286,16 @@ namespace KRWF.RimKata
             if (!idleProjectilePriority)
             {
                 List<Thing> ordinary = cycle.automaticCandidates;
-                for (int i = 0; i < ordinary.Count; i++)
+                for (int i = 0;
+                    ordinary != null && i < ordinary.Count;
+                    i++)
                 {
                     Thing candidate = ordinary[i];
-                    if (IsValidForCycle(
-                        pawn,
-                        combatState,
-                        cycle,
-                        verb,
-                        candidate))
+                    if (candidate != null
+                        && !(candidate is Projectile))
                     {
                         EligibleCandidates.Add(candidate);
                     }
-                }
-
-                if (randomAttack
-                    && !(preferredTarget is Projectile)
-                    && IsValidForCycle(
-                        pawn,
-                        combatState,
-                        cycle,
-                        verb,
-                        preferredTarget)
-                    && !EligibleCandidates.Contains(preferredTarget))
-                {
-                    EligibleCandidates.Add(preferredTarget);
                 }
             }
 
@@ -378,6 +337,7 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || combatState == null
+                || !RandomAttackEnabled(pawn)
                 || target is Projectile
                 || !RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target))
             {
@@ -394,35 +354,6 @@ namespace KRWF.RimKata
                 combatState,
                 combatState.secondaryWeaponCycle,
                 target);
-        }
-
-        internal static bool Prune(
-            Pawn pawn,
-            RimKataPawnCombatState combatState)
-        {
-            if (combatState == null)
-            {
-                return false;
-            }
-
-            bool removedCandidate = PruneCycle(
-                pawn,
-                combatState,
-                combatState.primaryWeaponCycle,
-                CombatVerbForCycle(
-                    pawn,
-                    combatState,
-                    combatState.primaryWeaponCycle))
-                | PruneCycle(
-                pawn,
-                combatState,
-                combatState.secondaryWeaponCycle,
-                CombatVerbForCycle(
-                    pawn,
-                    combatState,
-                    combatState.secondaryWeaponCycle));
-
-            return removedCandidate;
         }
 
         internal static bool IsValidForVerb(
@@ -557,41 +488,6 @@ namespace KRWF.RimKata
             {
                 cycle.AddAutomaticCandidate(target);
             }
-        }
-
-        private static bool PruneCycle(
-            Pawn pawn,
-            RimKataPawnCombatState combatState,
-            RimKataWeaponCycleState cycle,
-            Verb verb)
-        {
-            if (cycle?.automaticCandidates == null)
-            {
-                return false;
-            }
-
-            bool removed = false;
-            for (int i = cycle.automaticCandidates.Count - 1; i >= 0; i--)
-            {
-                Thing candidate = cycle.automaticCandidates[i];
-                if (candidate is Projectile
-                    || !IsValidForCycle(
-                    pawn,
-                    combatState,
-                    cycle,
-                    verb,
-                    candidate))
-                {
-                    cycle.RemoveAutomaticCandidate(candidate);
-                    removed = true;
-                }
-            }
-
-            if (removed)
-            {
-                cycle.automaticCandidateCollectionClosed = false;
-            }
-            return removed;
         }
 
         private static bool IsValidForCycle(
@@ -755,10 +651,9 @@ namespace KRWF.RimKata
             }
 
             int limit = EffectiveCandidateLimitForRing(cycle, outerRing);
-            if (CountValidStoredCandidatesThroughRing(
-                    pawn,
-                    combatState,
+            if (CountStoredCandidatesThroughRing(
                     cycle,
+                    SearchCenter(pawn, combatState),
                     outerRing) >= limit)
             {
                 cycle.automaticCandidateCollectionClosed = true;
@@ -779,18 +674,11 @@ namespace KRWF.RimKata
         private static bool ShouldSkipSaturatedCandidateSearch(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            IntVec3 origin,
-            bool removedCandidate)
+            IntVec3 origin)
         {
             if (combatState?.candidateSaturationExpansionUsed != true
                 || IsCloseCombatContext(combatState))
             {
-                return false;
-            }
-
-            if (removedCandidate)
-            {
-                combatState.ResetCandidateSaturationExpansion(true);
                 return false;
             }
 
@@ -932,10 +820,9 @@ namespace KRWF.RimKata
             int maximumRing = MaximumLogicalRing(cycleRange);
             bool reachedWeaponRange = cycleRange <= 0f
                 || outerRing >= maximumRing;
-            bool saturated = CountValidStoredCandidatesThroughRing(
-                    pawn,
-                    combatState,
+            bool saturated = CountStoredCandidatesThroughRing(
                     cycle,
+                    SearchCenter(pawn, combatState),
                     outerRing) >= limit;
             hasCandidateVacancy = !saturated;
 
@@ -1027,17 +914,14 @@ namespace KRWF.RimKata
             }
         }
 
-        private static int CountValidStoredCandidatesThroughRing(
-            Pawn pawn,
-            RimKataPawnCombatState combatState,
+        private static int CountStoredCandidatesThroughRing(
             RimKataWeaponCycleState cycle,
+            IntVec3 center,
             int outerRing)
         {
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
             List<Thing> candidates = cycle?.automaticCandidates;
-            if (pawn?.Map == null
-                || verb == null
-                || candidates == null
+            if (candidates == null
+                || !center.IsValid
                 || outerRing <= 0)
             {
                 return 0;
@@ -1045,21 +929,12 @@ namespace KRWF.RimKata
 
             float outerRadius = outerRing + ApiRadiusPadding;
             float outerSquared = outerRadius * outerRadius;
-            IntVec3 center = combatState?.sharedTargetSearch != null
-                    && combatState.sharedTargetSearch.origin.IsValid
-                ? combatState.sharedTargetSearch.origin
-                : pawn.Position;
             int count = 0;
             for (int i = 0; i < candidates.Count; i++)
             {
                 Thing candidate = candidates[i];
                 if (candidate is Projectile
-                    || !IsValidForCycle(
-                        pawn,
-                        combatState,
-                        cycle,
-                        verb,
-                        candidate)
+                    || candidate == null
                     || center.DistanceToSquared(candidate.Position)
                         > outerSquared)
                 {
@@ -1069,6 +944,15 @@ namespace KRWF.RimKata
                 count++;
             }
             return count;
+        }
+
+        private static IntVec3 SearchCenter(
+            Pawn pawn,
+            RimKataPawnCombatState combatState)
+        {
+            return combatState?.sharedTargetSearch?.origin.IsValid == true
+                ? combatState.sharedTargetSearch.origin
+                : pawn?.Position ?? IntVec3.Invalid;
         }
 
         private static int CandidateLimitForRing(int ring)
@@ -1233,7 +1117,6 @@ namespace KRWF.RimKata
             ClearOrdinaryCandidateList(
                 combatState?.secondaryWeaponCycle);
             combatState?.sharedTargetSearch?.Reset();
-            combatState?.CaptureAutomaticCandidateCounts();
         }
 
         private static void ClearOrdinaryCandidateList(
@@ -1271,7 +1154,6 @@ namespace KRWF.RimKata
             {
                 combatState.secondaryWeaponCycle.activeCandidateLimitOverride = 0;
             }
-            combatState.CaptureAutomaticCandidateCounts();
         }
     }
 }

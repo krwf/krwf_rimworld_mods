@@ -1695,7 +1695,8 @@ namespace KRWF.RimKata
                 options.Add(
                     new FloatMenuOption(
                         "KRWF_RimKata_SecondaryMenuSwapCombat".Translate(),
-                        null));
+                        null,
+                        orderInPriority: 2));
             }
             else
             {
@@ -1714,7 +1715,8 @@ namespace KRWF.RimKata
                                     RimKataDualWeaponController.RequestWeaponSwap(pawn);
                                 }
                             }
-                        }));
+                        },
+                        orderInPriority: 2));
             }
 
             options.Add(
@@ -1723,7 +1725,8 @@ namespace KRWF.RimKata
                     delegate
                     {
                         ReplayAttackCommands(representative, commands);
-                    }));
+                    },
+                    orderInPriority: 1));
 
             Pawn representativePawn = representative.verb?.CasterPawn;
             ThingWithComps representativeWeapon =
@@ -1753,7 +1756,8 @@ namespace KRWF.RimKata
                             delegate
                             {
                                 BeginRushTargeting(rushPawns);
-                            }));
+                            },
+                            orderInPriority: 0));
                 }
             }
 
