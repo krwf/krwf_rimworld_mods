@@ -788,7 +788,6 @@ namespace KRWF.RimKata
                 || !target.HostileTo(pawn)
                 || target is Pawn targetPawn
                     && (targetPawn.Dead
-                        || targetPawn.Downed
                         || targetPawn.Crawling
                         || targetPawn.IsPsychologicallyInvisible())
                 || !pawn.CanReachImmediate(target, PathEndMode.Touch)
@@ -1504,6 +1503,10 @@ namespace KRWF.RimKata
             RefreshDualEngagementState(pawn, state);
             state.dualLastDrivenTick = Find.TickManager.TicksGame;
             pawn.stances.SetStance(new Stance_Mobile());
+            if (verb.IsMeleeAttack)
+            {
+                UpdateBodyAimStance(pawn, state);
+            }
             QueueDedicatedFollowupJob(pawn, target);
         }
 

@@ -500,8 +500,12 @@ namespace KRWF.RimKata
                     __instance,
                     target.Thing);
 
-            if (!forcedIncappedTarget
-                && !playerCloseFire
+            if (forcedIncappedTarget)
+            {
+                return true;
+            }
+
+            if (!playerCloseFire
                 && !RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
             {
                 return true;
@@ -571,14 +575,22 @@ namespace KRWF.RimKata
     {
         public static void Prefix(Pawn ___pawn, ref Job job)
         {
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(___pawn))
+            bool orderedAttack = job != null
+                && job.def == JobDefOf.AttackStatic
+                && job.targetA.HasThing;
+            Verb orderedVerb = job?.verbToUse;
+            bool playerRangedCloseOrder = orderedAttack
+                && job.playerForced
+                && RimKataDualWeaponController.CanOrderRangedCloseAttack(
+                    ___pawn,
+                    orderedVerb,
+                    job.targetA.Thing);
+            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(___pawn)
+                && !playerRangedCloseOrder)
             {
                 return;
             }
 
-            bool orderedAttack = job != null
-                && job.def == JobDefOf.AttackStatic
-                && job.targetA.HasThing;
             if (___pawn?.Drafted != true
                 || job == null
                 || !orderedAttack
@@ -590,9 +602,11 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Verb verb = RimKataWeaponSlotUtility.BestRangedCombatVerb(
-                ___pawn,
-                job.targetA.Thing);
+            Verb verb = playerRangedCloseOrder
+                ? orderedVerb
+                : RimKataWeaponSlotUtility.BestRangedCombatVerb(
+                    ___pawn,
+                    job.targetA.Thing);
             if (verb == null)
             {
                 return;
