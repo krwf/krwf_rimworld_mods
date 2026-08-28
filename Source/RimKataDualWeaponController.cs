@@ -201,8 +201,7 @@ namespace KRWF.RimKata
                 cooldownFromVanillaOpening = false;
             }
 
-            if (openingWarmupPending
-                && warmupTicksRemaining > 0)
+            if (warmupTicksRemaining > 0)
             {
                 warmupTicksRemaining--;
             }
@@ -1348,7 +1347,6 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || verb == null
-                || verb.IsMeleeAttack
                 || !castTarget.IsValid
                 || !castTarget.HasThing
                 || RimKataFireContext.ActiveVerb != null
@@ -1357,7 +1355,8 @@ namespace KRWF.RimKata
                 return attempt;
             }
 
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+            if (!verb.IsMeleeAttack
+                && !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 && IsConfigurableCounterattackOpening(pawn, pawn.CurJob))
             {
                 return attempt;
@@ -1415,7 +1414,6 @@ namespace KRWF.RimKata
                 || pawn?.Map == null
                 || pawn.InMentalState
                 || verb == null
-                || verb.IsMeleeAttack
                 || attempt.weapon == null
                 || attempt.target == null)
             {
@@ -1464,7 +1462,6 @@ namespace KRWF.RimKata
                 return;
             }
 
-            ResetCycleForOpeningHandoff(openingCycle);
             state.engagementOwnerWeapon = attempt.weapon;
 
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
@@ -1868,47 +1865,6 @@ namespace KRWF.RimKata
             return registered;
         }
 
-        public static bool TryBeginRandomMeleeControl(
-            Pawn pawn,
-            Thing target)
-        {
-            if (pawn?.Map == null
-                || pawn.InMentalState
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || target.Map != pawn.Map
-                || pawn.CurJobDef != JobDefOf.AttackMelee
-                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                || !RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                || !pawn.CanReachImmediate(target, PathEndMode.Touch)
-                || !HasUsableWeapon(pawn, true))
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state);
-            state.RequestCloseAttack(target);
-            HandleCloseCombatTransition(
-                pawn,
-                state,
-                true,
-                target);
-            if (!RegisterAutomaticTarget(pawn, target))
-            {
-                HandleCloseCombatTransition(
-                    pawn,
-                    state,
-                    false,
-                    null);
-                return false;
-            }
-
-            QueueDedicatedFollowupJob(pawn, target);
-            return true;
-        }
-
         public static bool IsDedicatedFollowupActive(Pawn pawn)
         {
             return pawn?.InMentalState != true
@@ -2080,19 +2036,7 @@ namespace KRWF.RimKata
                     cycle.plannedCloseContext
                         || state?.dualCloseCombatActive == true);
                 ApplyInterruptedBurstCooldown(pawn, cycle, verb);
-                if (cycle.openingWarmupPending
-                    && !cycle.firedInCurrentOpening)
-                {
-                    CancelUnfiredOpening(cycle);
-                }
-                else
-                {
-                    cycle.ClearPlan(false);
-                    cycle.warmupTicksRemaining = -1;
-                    cycle.warmupTotalTicks = 0;
-                    cycle.openingWarmupBonusTicks = 0;
-                    cycle.openingWarmupPending = false;
-                }
+                ClearTargetPreservingCycle(cycle);
 
                 changed = true;
             }
@@ -2957,58 +2901,6 @@ namespace KRWF.RimKata
                         && !targetPawn.IsPsychologicallyInvisible()));
         }
 
-        private static void ResetCycleForOpeningHandoff(
-            RimKataWeaponCycleState cycle)
-        {
-            if (cycle == null)
-            {
-                return;
-            }
-
-            ThingWithComps weapon = cycle.weapon;
-            Thing focusedTarget = cycle.focusedTarget;
-            bool focusedTargetFromAttackGizmo =
-                cycle.focusedTargetFromAttackGizmo;
-            int cooldownTicksRemaining = Mathf.Max(
-                0,
-                cycle.cooldownTicksRemaining);
-            bool cooldownFromVanillaOpening = cooldownTicksRemaining > 0
-                && cycle.cooldownFromVanillaOpening;
-            List<Thing> automaticCandidates = cycle.automaticCandidates != null
-                ? new List<Thing>(cycle.automaticCandidates)
-                : null;
-            bool automaticCandidateCollectionClosed =
-                cycle.automaticCandidateCollectionClosed;
-            int pendingCandidateLimitOverride =
-                cycle.pendingCandidateLimitOverride;
-            int activeCandidateLimitOverride =
-                cycle.activeCandidateLimitOverride;
-            bool openingSupportDelayConsumed =
-                cycle.openingSupportDelayConsumed;
-            cycle.Reset();
-            cycle.Bind(weapon);
-            cycle.cooldownTicksRemaining = cooldownTicksRemaining;
-            cycle.cooldownFromVanillaOpening = cooldownFromVanillaOpening;
-            if (automaticCandidates != null)
-            {
-                for (int i = 0; i < automaticCandidates.Count; i++)
-                {
-                    cycle.AddAutomaticCandidate(automaticCandidates[i]);
-                }
-            }
-            cycle.automaticCandidateCollectionClosed =
-                automaticCandidateCollectionClosed;
-            cycle.pendingCandidateLimitOverride =
-                pendingCandidateLimitOverride;
-            cycle.activeCandidateLimitOverride =
-                activeCandidateLimitOverride;
-            cycle.openingSupportDelayConsumed =
-                openingSupportDelayConsumed;
-            cycle.focusedTarget = focusedTarget;
-            cycle.focusedTargetFromAttackGizmo =
-                focusedTargetFromAttackGizmo;
-        }
-
         private static void ResetUnfiredOpeningTimer(
             RimKataWeaponCycleState cycle)
         {
@@ -3026,17 +2918,28 @@ namespace KRWF.RimKata
             cycle.visualAimTicksRemaining = 0;
         }
 
-        private static void CancelUnfiredOpening(
+        private static void ClearTargetPreservingCycle(
             RimKataWeaponCycleState cycle)
         {
-            ResetUnfiredOpeningTimer(cycle);
             if (cycle == null)
             {
                 return;
             }
 
-            cycle.openingWarmupBonusTicks = 0;
-            cycle.openingWarmupPending = false;
+            Thing previousTarget = cycle.plannedTarget;
+            cycle.ClearPlan(false);
+            if (cycle.openingWarmupPending
+                && !cycle.firedInCurrentOpening)
+            {
+                cycle.openingWarmupBonusTicks = 0;
+                cycle.openingWarmupPending = false;
+            }
+
+            if (cycle.visualTarget == previousTarget)
+            {
+                cycle.visualTarget = null;
+                cycle.visualAimTicksRemaining = 0;
+            }
         }
 
         private static RimKataWeaponCycleState OtherCycle(
@@ -4008,7 +3911,7 @@ namespace KRWF.RimKata
                     verb,
                     cycle.plannedTarget))
             {
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
             }
 
             if (cycle.visualTarget != null
@@ -4185,32 +4088,8 @@ namespace KRWF.RimKata
             if (!ValidPlan(pawn, cycle, verb, assignedTarget, playerForced, killIncappedTarget, closeCombatContext))
             {
                 Thing invalidTarget = cycle.plannedTarget ?? assignedTarget;
-                bool cancelOpening = cycle.openingWarmupPending
-                    && !cycle.firedInCurrentOpening
-                    && PermanentlyInvalidCycleTarget(
-                        pawn,
-                        invalidTarget,
-                        assignedTarget,
-                        playerForced,
-                        killIncappedTarget,
-                        cycle.plannedInterception);
                 ApplyInterruptedBurstCooldown(pawn, cycle, verb);
-                if (cycle.openingWarmupPending
-                    && !cycle.firedInCurrentOpening)
-                {
-                    if (cancelOpening)
-                    {
-                        CancelUnfiredOpening(cycle);
-                    }
-                    else
-                    {
-                        ResetUnfiredOpeningTimer(cycle);
-                    }
-                }
-                else
-                {
-                    cycle.ClearPlan();
-                }
+                ClearTargetPreservingCycle(cycle);
 
                 if (invalidTarget != null
                     && !(invalidTarget is Projectile))
@@ -4316,7 +4195,7 @@ namespace KRWF.RimKata
                     closeCombatContext);
                 if (cycle.plannedActionVerb == null)
                 {
-                    cycle.ClearPlan();
+                    ClearTargetPreservingCycle(cycle);
                     return false;
                 }
 
@@ -4334,13 +4213,6 @@ namespace KRWF.RimKata
                 {
                     return true;
                 }
-            }
-
-            if (cycle.HasPlan
-                && !cycle.openingWarmupPending
-                && cycle.warmupTicksRemaining > 0)
-            {
-                cycle.warmupTicksRemaining--;
             }
 
             return true;
@@ -4395,7 +4267,7 @@ namespace KRWF.RimKata
                 {
                     cycle.RemoveAutomaticCandidate(cachedTarget);
                 }
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
             }
 
             return promoted;
@@ -4513,7 +4385,7 @@ namespace KRWF.RimKata
             {
                 if (cycle.HasPlan && cycle.plannedTarget == target)
                 {
-                    cycle.ClearPlan();
+                    ClearTargetPreservingCycle(cycle);
                 }
                 return false;
             }
@@ -4523,7 +4395,7 @@ namespace KRWF.RimKata
 
             if (cycle.HasPlan && cycle.plannedTarget != target)
             {
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
             }
 
             if (!cycle.HasPlan && cycle.cooldownTicksRemaining <= 1)
@@ -4542,17 +4414,6 @@ namespace KRWF.RimKata
 
             if (!cycle.HasPlan)
             {
-                if (cycle.openingWarmupPending
-                    && !cycle.firedInCurrentOpening)
-                {
-                    ResetUnfiredOpeningTimer(cycle);
-                }
-                else
-                {
-                    cycle.warmupTicksRemaining = -1;
-                    cycle.warmupTotalTicks = 0;
-                }
-
                 cycle.visualTarget = target;
                 cycle.visualAimTicksRemaining = Mathf.Max(
                     cycle.visualAimTicksRemaining,
@@ -4621,8 +4482,6 @@ namespace KRWF.RimKata
             {
                 cycle.visualTarget = target;
             }
-            cycle.warmupTicksRemaining = -1;
-            cycle.warmupTotalTicks = 0;
         }
                 
         private static bool TrySetKnownTarget(
@@ -4918,7 +4777,7 @@ namespace KRWF.RimKata
                 closeCombatContext);
             if (verb == null)
             {
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
                 return -1;
             }
 
@@ -4953,7 +4812,7 @@ namespace KRWF.RimKata
                     closeCombatContext);
             if (actionVerb == null)
             {
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
                 return -1;
             }
             cycle.plannedActionVerb = actionVerb;
@@ -4967,7 +4826,7 @@ namespace KRWF.RimKata
             LocalTargetInfo target = TargetInfo(cycle);
             if (!target.IsValid)
             {
-                cycle.ClearPlan();
+                ClearTargetPreservingCycle(cycle);
                 return -1;
             }
 
@@ -5136,31 +4995,8 @@ namespace KRWF.RimKata
             bool closeCombatContext)
         {
             Thing invalidTarget = cycle.plannedTarget ?? assignedTarget;
-            bool permanentlyInvalid = PermanentlyInvalidCycleTarget(
-                pawn,
-                invalidTarget,
-                assignedTarget,
-                playerForced,
-                killIncappedTarget,
-                cycle.plannedInterception);
-
             ApplyInterruptedBurstCooldown(pawn, cycle, verb);
-            if (cycle.openingWarmupPending
-                && !cycle.firedInCurrentOpening)
-            {
-                if (permanentlyInvalid)
-                {
-                    CancelUnfiredOpening(cycle);
-                }
-                else
-                {
-                    ResetUnfiredOpeningTimer(cycle);
-                }
-            }
-            else
-            {
-                cycle.ClearPlan();
-            }
+            ClearTargetPreservingCycle(cycle);
 
             if (invalidTarget != null
                 && !(invalidTarget is Projectile))
@@ -5231,24 +5067,7 @@ namespace KRWF.RimKata
                 cycle,
                 verb,
                 false);
-            if (cycle.openingWarmupPending
-                && !cycle.firedInCurrentOpening)
-            {
-                if (focusedTargetUsable)
-                {
-                    ResetUnfiredOpeningTimer(cycle);
-                }
-                else
-                {
-                    CancelUnfiredOpening(cycle);
-                }
-            }
-            else
-            {
-                cycle.ClearPlan();
-                cycle.visualTarget = null;
-                cycle.visualAimTicksRemaining = 0;
-            }
+            ClearTargetPreservingCycle(cycle);
 
             if (cycle.cachedCandidateTarget != null
                 && !TargetWithinAutomaticSearchRange(

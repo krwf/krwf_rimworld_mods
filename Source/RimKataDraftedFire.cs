@@ -179,14 +179,6 @@ namespace KRWF.RimKata
                 && (pawn.CurJobDef == RimKataDefOf.RimKata_Attack
                     || (IsAutomaticFireJob(pawn.CurJobDef) && CanControllerPrerequisites(pawn)));
             if (!controllerDriven
-                && RimKataDualWeaponController.TryBeginRandomMeleeControl(
-                    pawn,
-                    target))
-            {
-                return true;
-            }
-
-            if (!controllerDriven
                 || (!RimKataTargeting.IsAutomaticEnemy(pawn, target)
                     && !(pawn.CurJob?.playerForced == true
                         && pawn.CurJob.targetA.Thing == target))
