@@ -1007,7 +1007,10 @@ namespace KRWF.RimKata
             RimKataDefenseUtility.CurrentMeleeDefender = null;
             bool rimKataCycleAttack = RimKataFireContext.ActiveVerb == __instance;
             bool physicalRangedWeaponAttack = !rimKataCycleAttack && RimKataDodgeMovementUtility.ShouldBlockPhysicalMeleeVerb(__instance);
-            if (physicalRangedWeaponAttack && RimKataDraftedFireController.ShouldReplacePhysicalMeleeAttack(__instance?.CasterPawn))
+            if (physicalRangedWeaponAttack
+                && RimKataDraftedFireController.ShouldReplacePhysicalMeleeAttack(
+                    __instance?.CasterPawn,
+                    __instance?.CurrentTarget.Thing))
             {
                 __result = false;
                 return false;

@@ -1680,16 +1680,6 @@ namespace KRWF.RimKata
                 }
             }
 
-            List<FloatMenuOption> options = new List<FloatMenuOption>
-            {
-                new FloatMenuOption(
-                    "KRWF_RimKata_SecondaryMenuAttack".Translate(),
-                    delegate
-                    {
-                        ReplayAttackCommands(representative, commands);
-                    })
-            };
-
             bool swapBlocked = pawns.Count == 0;
             for (int i = 0; i < pawns.Count && !swapBlocked; i++)
             {
@@ -1699,6 +1689,7 @@ namespace KRWF.RimKata
                     || RimKataDualWeaponController.IsWeaponSwapBlocked(pawn);
             }
 
+            List<FloatMenuOption> options = new List<FloatMenuOption>();
             if (swapBlocked)
             {
                 options.Add(
@@ -1726,7 +1717,98 @@ namespace KRWF.RimKata
                         }));
             }
 
+            options.Add(
+                new FloatMenuOption(
+                    "KRWF_RimKata_SecondaryMenuAttack".Translate(),
+                    delegate
+                    {
+                        ReplayAttackCommands(representative, commands);
+                    }));
+
+            Pawn representativePawn = representative.verb?.CasterPawn;
+            ThingWithComps representativeWeapon =
+                representative.verb?.EquipmentSource;
+            if (representativePawn?.Drafted != true
+                && representativeWeapon?.def?.IsRangedWeapon == true)
+            {
+                List<Pawn> rushPawns = new List<Pawn>();
+                for (int i = 0; i < commands.Count; i++)
+                {
+                    Command_VerbTarget command = commands[i];
+                    Pawn pawn = command.verb?.CasterPawn;
+                    if (!command.Disabled
+                        && pawn?.Drafted != true
+                        && command.verb?.EquipmentSource?.def?.IsRangedWeapon == true
+                        && !rushPawns.Contains(pawn))
+                    {
+                        rushPawns.Add(pawn);
+                    }
+                }
+
+                if (rushPawns.Count > 0)
+                {
+                    options.Add(
+                        new FloatMenuOption(
+                            "KRWF_RimKata_FeatureTargetRush".Translate(),
+                            delegate
+                            {
+                                BeginRushTargeting(rushPawns);
+                            }));
+                }
+            }
+
             Find.WindowStack.Add(new FloatMenu(options));
+        }
+
+        private static void BeginRushTargeting(List<Pawn> pawns)
+        {
+            Pawn caster = pawns.Count > 0 ? pawns[0] : null;
+            if (caster?.Spawned != true)
+            {
+                return;
+            }
+
+            Find.Targeter.BeginTargeting(
+                TargetingParameters.ForAttackAny(),
+                target =>
+                    RimKataAttackGizmoTargetContext.Invoke(
+                        selectedTarget =>
+                            ExecuteRushOrders(pawns, selectedTarget),
+                        target),
+                caster);
+        }
+
+        private static void ExecuteRushOrders(
+            List<Pawn> pawns,
+            LocalTargetInfo target)
+        {
+            for (int i = 0; i < pawns.Count; i++)
+            {
+                Pawn pawn = pawns[i];
+                if (pawn?.Spawned != true
+                    || !pawn.IsPlayerControlled)
+                {
+                    continue;
+                }
+
+                Action action = FloatMenuUtility.GetMeleeAttackAction(
+                    pawn,
+                    target,
+                    out string failStr,
+                    true);
+                if (action != null)
+                {
+                    action();
+                }
+                else if (!failStr.NullOrEmpty())
+                {
+                    Messages.Message(
+                        failStr,
+                        target.Thing,
+                        MessageTypeDefOf.RejectInput,
+                        false);
+                }
+            }
         }
 
         private static void ReplayAttackCommands(

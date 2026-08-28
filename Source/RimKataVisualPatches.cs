@@ -435,6 +435,8 @@ namespace KRWF.RimKata
 
         private const float CombatIndicatorBaseAltitude = 0.2f;
         private const float CombatIndicatorTopAltitude = 0.201f;
+        private const float FocusedTargetLineWidth = 0.2f;
+        private const float FocusedTargetLineMinimumPixels = 2f;
 
         private static readonly Material BlackCombatIndicatorMaterial = SolidColorMaterials.SimpleSolidColorMaterial(new Color( 0f, 0f, 0f, 0.3f));
         private static readonly Material BlackTargetLineMaterial =
@@ -609,12 +611,15 @@ namespace KRWF.RimKata
                         ? rawSecondary
                         : null;
 
-            DrawFocusedTargetLine(
-                pawn,
-                primary);
-            DrawFocusedTargetLine(
-                pawn,
-                secondary);
+            if (!DrawFocusedCloseTargetLine(pawn))
+            {
+                DrawFocusedTargetLine(
+                    pawn,
+                    primary);
+                DrawFocusedTargetLine(
+                    pawn,
+                    secondary);
+            }
 
             bool primaryVisible = TryGetCombatIndicatorData(pawn, primary, out RimKataWeaponVisualData primaryVisual, out Verb primaryVerb, out int primaryRemaining);
             bool secondaryVisible = TryGetCombatIndicatorData( pawn, secondary, out RimKataWeaponVisualData secondaryVisual, out Verb secondaryVerb, out int secondaryRemaining);
@@ -651,6 +656,29 @@ namespace KRWF.RimKata
             DrawCombatIndicatorForWeapon(pawn, secondaryVisual, secondaryVerb, CombatIndicatorBaseAltitude);
         }
 
+        private static bool DrawFocusedCloseTargetLine(Pawn pawn)
+        {
+            if (!RimKataDualWeaponController.TryGetAttackGizmoCloseTarget(
+                pawn,
+                out Thing target))
+            {
+                return false;
+            }
+
+            Vector3 start = pawn.Position.ToVector3Shifted();
+            Vector3 end = new LocalTargetInfo(target).CenterVector3;
+            end.y = start.y;
+            float altitude = Altitudes.AltitudeFor(
+                AltitudeLayer.MetaOverlays);
+            GenDraw.DrawLineBetween(
+                start,
+                end,
+                altitude,
+                BlackTargetLineMaterial,
+                FocusedTargetLineWidthForCamera());
+            return true;
+        }
+
         private static void DrawFocusedTargetLine(
             Pawn pawn,
             ThingWithComps weapon)
@@ -667,6 +695,7 @@ namespace KRWF.RimKata
 
             Vector3 start = pawn.Position.ToVector3Shifted();
             Vector3 end = new LocalTargetInfo(target).CenterVector3;
+            end.y = start.y;
             float altitude = Altitudes.AltitudeFor(
                 AltitudeLayer.MetaOverlays);
             if (fromAttackGizmo)
@@ -676,11 +705,29 @@ namespace KRWF.RimKata
                     end,
                     altitude,
                     BlackTargetLineMaterial,
-                    0.2f);
+                    FocusedTargetLineWidthForCamera());
                 return;
             }
 
             GenDraw.DrawLineBetween(start, end, altitude);
+        }
+
+        private static float FocusedTargetLineWidthForCamera()
+        {
+            Camera camera = Find.Camera;
+            if (camera == null
+                || !camera.orthographic
+                || camera.pixelHeight <= 0
+                || camera.orthographicSize <= 0f)
+            {
+                return FocusedTargetLineWidth;
+            }
+
+            float pixelsPerWorldUnit = camera.pixelHeight
+                / (camera.orthographicSize * 2f);
+            return Mathf.Max(
+                FocusedTargetLineWidth,
+                FocusedTargetLineMinimumPixels / pixelsPerWorldUnit);
         }
 
         private static void DrawWeapon(
@@ -1359,11 +1406,20 @@ namespace KRWF.RimKata
     {
         private static readonly Action<LocalTargetInfo> DrawSelectedDualMeleeRangesAction = DrawSelectedDualMeleeRanges;
 
-        public static void Postfix(ref Gizmo __result)
+        public static void Postfix(Pawn pawn, ref Gizmo __result)
         {
             if (!(__result is Command_Target command))
             {
                 return;
+            }
+
+            Action<LocalTargetInfo> originalAction = command.action;
+            if (originalAction != null)
+            {
+                command.action = target =>
+                    RimKataAttackGizmoTargetContext.Invoke(
+                        originalAction,
+                        target);
             }
 
             if (command.onUpdate == null)

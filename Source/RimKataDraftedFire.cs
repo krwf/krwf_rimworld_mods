@@ -145,21 +145,11 @@ namespace KRWF.RimKata
             }
         }
 
-        public static bool ShouldReplacePhysicalMeleeAttack(Pawn pawn)
+        public static bool ShouldReplacePhysicalMeleeAttack(
+            Pawn pawn,
+            Thing target)
         {
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
-            {
-                return false;
-            }
-
-            if (pawn?.CurJobDef == RimKataDefOf.RimKata_Attack)
-            {
-                return RimKataDualWeaponController.HasUsableWeapon(pawn, true);
-            }
-
-            return IsAutomaticFireJob(pawn?.CurJobDef)
-                && CanControllerPrerequisites(pawn)
-                && TryOwnAutomaticAttack(pawn, null);
+            return TryQueuePhysicalMeleeAttack(pawn, target);
         }
 
         public static bool TryQueuePhysicalMeleeAttack(Pawn pawn, Thing target)
@@ -175,9 +165,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool controllerDriven = RimKataDualWeaponController.IsDedicatedFollowupActive(pawn)
-                && (pawn.CurJobDef == RimKataDefOf.RimKata_Attack
-                    || (IsAutomaticFireJob(pawn.CurJobDef) && CanControllerPrerequisites(pawn)));
+            bool controllerDriven = pawn.CurJobDef == RimKataDefOf.RimKata_Attack
+                || CanControllerPrerequisites(pawn);
             if (!controllerDriven
                 || (!RimKataTargeting.IsAutomaticEnemy(pawn, target)
                     && !(pawn.CurJob?.playerForced == true
@@ -219,34 +208,7 @@ namespace KRWF.RimKata
             if (state != null)
             {
                 state.NotifyIncomingThreat(attacker);
-                if (target.CanReachImmediate(attacker, PathEndMode.Touch))
-                {
-                    target.Map.GetComponent<RimKataMapComponent>()?.EnterCloseCombat(target, attacker);
-                }
             }
-        }
-
-        private static bool TryOwnAutomaticAttack(Pawn pawn, Thing target)
-        {
-            bool closeCombatContext = RimKataDualWeaponController
-                .ResolveImmediateCloseTarget(
-                    pawn,
-                    target,
-                    false,
-                    false) != null;
-            bool replace = RimKataDualWeaponController.HasUsableWeapon(
-                pawn,
-                closeCombatContext);
-            if (replace)
-            {
-                RimKataPawnCombatState state = StateFor(pawn, true);
-                state.RequestAutomaticAttack(target);
-                RimKataDualWeaponController.RegisterAutomaticTarget(
-                    pawn,
-                    target);
-            }
-
-            return replace;
         }
 
         private static bool CanControllerPrerequisites(Pawn pawn)

@@ -248,8 +248,7 @@ namespace KRWF.RimKata
                     job.killIncappedTarget);
 
             if (immediateCloseTarget != null
-                && assignedTarget != immediateCloseTarget
-                && !RimKataDualWeaponController.IsDedicatedCloseCombatActive(pawn))
+                && assignedTarget != immediateCloseTarget)
             {
                 assignedTarget = immediateCloseTarget;
                 assignedTargetInTouchRange = true;
@@ -467,6 +466,18 @@ namespace KRWF.RimKata
         {
             Pawn pawn = __instance?.CasterPawn;
             if (__instance?.IsMeleeAttack == true)
+            {
+                bool closeTargetAccepted = target.HasThing
+                    && RimKataDualWeaponController
+                        .TryNotifyPlayerMeleeCloseTarget(
+                            pawn,
+                            target.Thing,
+                            true);
+                return !closeTargetAccepted
+                    || pawn?.CurJobDef != RimKataDefOf.RimKata_Attack;
+            }
+
+            if (RimKataAttackGizmoTargetContext.Active)
             {
                 return true;
             }
@@ -958,6 +969,41 @@ namespace KRWF.RimKata
         }
     }
 
+    [HarmonyPatch(
+        typeof(FloatMenuUtility),
+        nameof(FloatMenuUtility.GetMeleeAttackAction))]
+    public static class Patch_FloatMenuUtility_GetMeleeAttackAction_RimKata
+    {
+        public static void Postfix(
+            Pawn pawn,
+            LocalTargetInfo target,
+            ref Action __result)
+        {
+            if (__result == null
+                || !RimKataAttackGizmoTargetContext.Active
+                || !target.HasThing)
+            {
+                return;
+            }
+
+            Action originalAction = __result;
+            Thing targetThing = target.Thing;
+            __result = delegate
+            {
+                bool closeTargetAccepted = RimKataDualWeaponController
+                    .TryNotifyPlayerMeleeCloseTarget(
+                        pawn,
+                        targetThing,
+                        true);
+                if (!closeTargetAccepted
+                    || pawn?.CurJobDef != RimKataDefOf.RimKata_Attack)
+                {
+                    originalAction();
+                }
+            };
+        }
+    }
+
     [HarmonyPatch(typeof(FloatMenuUtility), nameof(FloatMenuUtility.GetRangedAttackAction))]
     public static class Patch_FloatMenuUtility_GetRangedAttackAction_RimKata
     {
@@ -967,6 +1013,11 @@ namespace KRWF.RimKata
             ref System.Action __result,
             ref string failStr)
         {
+            if (RimKataAttackGizmoTargetContext.Active)
+            {
+                return true;
+            }
+
             if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn)
                 || pawn?.Drafted != true
                 || pawn.IsBurning()
@@ -1041,6 +1092,31 @@ namespace KRWF.RimKata
             failStr = failStr.CapitalizeFirst();
             __result = null;
             return false;
+        }
+
+        public static void Postfix(
+            Pawn pawn,
+            LocalTargetInfo target,
+            ref System.Action __result,
+            ref string failStr)
+        {
+            if (__result != null
+                || !RimKataAttackGizmoTargetContext.Active
+                || !target.HasThing
+                || failStr != "TooClose".Translate().CapitalizeFirst()
+                || !RimKataDualWeaponController
+                    .CanNotifyPlayerMeleeCloseTarget(
+                        pawn,
+                        target.Thing))
+            {
+                return;
+            }
+
+            __result = FloatMenuUtility.GetMeleeAttackAction(
+                pawn,
+                target,
+                out failStr,
+                false);
         }
     }
 

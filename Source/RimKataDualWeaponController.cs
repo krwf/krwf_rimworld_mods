@@ -498,14 +498,6 @@ namespace KRWF.RimKata
             {
                 assignedTarget = state.automaticAttackRequestTarget;
             }
-            else if (!closeCombatContext
-                && state.IncomingThreatActive
-                && (assignedTarget == null
-                    || assignedTarget.Destroyed
-                    || !assignedTarget.Spawned))
-            {
-                assignedTarget = state.incomingThreatSource;
-            }
 
             if (state.sharedTargetSearch?.scanActive == true)
             {
@@ -752,6 +744,67 @@ namespace KRWF.RimKata
             target = cycle.focusedTarget;
             fromAttackGizmo = cycle.focusedTargetFromAttackGizmo;
             return true;
+        }
+
+        public static bool TryNotifyPlayerMeleeCloseTarget(
+            Pawn pawn,
+            Thing target,
+            bool fromAttackGizmo)
+        {
+            if (!CanNotifyPlayerMeleeCloseTarget(pawn, target))
+            {
+                return false;
+            }
+
+            RimKataPawnCombatState state = StateFor(pawn, true);
+            state.RequestCloseAttack(target, fromAttackGizmo);
+            RefreshDualEngagementState(pawn, state);
+            state.dualLastDrivenTick = -1;
+            if (pawn.Drafted)
+            {
+                state.draftedFireActive = true;
+            }
+
+            return state.CloseAttackRequestActive;
+        }
+
+        public static bool CanNotifyPlayerMeleeCloseTarget(
+            Pawn pawn,
+            Thing target)
+        {
+            return pawn?.Map != null
+                && !pawn.InMentalState
+                && pawn.IsPlayerControlled
+                && RimKataEligibility.CanBeginGunKataAttack(pawn)
+                && HasUsableWeapon(pawn, true)
+                && target != null
+                && target != pawn
+                && !target.Destroyed
+                && target.Spawned
+                && target.Map == pawn.Map
+                && RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                && target is Pawn targetPawn
+                && !targetPawn.Dead
+                && !targetPawn.Downed
+                && !targetPawn.Crawling
+                && !targetPawn.IsPsychologicallyInvisible()
+                && pawn.CanReachImmediate(target, PathEndMode.Touch);
+        }
+
+        public static bool TryGetAttackGizmoCloseTarget(
+            Pawn pawn,
+            out Thing target)
+        {
+            target = null;
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state?.closeAttackRequestFromAttackGizmo != true
+                || !state.CloseAttackRequestActive)
+            {
+                return false;
+            }
+
+            target = state.closeAttackRequestTarget;
+            return target != null;
         }
 
         private static bool IsLiveFocusedTarget(
@@ -2142,7 +2195,6 @@ namespace KRWF.RimKata
                 || state.dedicatedFollowupJobPending
                 || HasDedicatedTargetContinuity(pawn, state)
                 || HasAnyCycleTargetWork(pawn, state)
-                || state.IncomingThreatActive
                 || state.AutomaticAttackRequestActive
                 || state.CloseAttackRequestActive;
         }
@@ -3004,12 +3056,32 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (verb.IsMeleeAttack || closeContext)
+            return CanHitTargetForCombatContext(
+                pawn,
+                verb,
+                target,
+                closeContext);
+        }
+
+        private static bool CanHitTargetForCombatContext(
+            Pawn pawn,
+            Verb verb,
+            Thing target,
+            bool closeCombatContext)
+        {
+            if (verb == null || target == null)
             {
-                return pawn.CanReachImmediate(target, PathEndMode.Touch);
+                return false;
             }
 
-            return verb.CanHitTarget(target);
+            if (verb.IsMeleeAttack)
+            {
+                return verb.CanHitTarget(target);
+            }
+
+            return closeCombatContext
+                ? pawn?.CanReachImmediate(target, PathEndMode.Touch) == true
+                : verb.CanHitTarget(target);
         }
 
         public static bool TryTakeVanillaMeleeCooldown(
@@ -3635,9 +3707,6 @@ namespace KRWF.RimKata
             return state != null
                 && (state.dualCloseCombatActive
                     || IsLiveNonProjectileTarget(pawn, assignedTarget)
-                    || IsLiveNonProjectileTarget(
-                        pawn,
-                        state.incomingThreatSource)
                     || IsLiveNonProjectileTarget(
                         pawn,
                         state.automaticAttackRequestTarget)
@@ -4375,11 +4444,6 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (closeCombatContext)
-            {
-                return false;
-            }
-
             if (!FocusedTargetUsableNow(
                 pawn,
                 cycle,
@@ -4432,15 +4496,14 @@ namespace KRWF.RimKata
             Verb verb,
             bool closeCombatContext)
         {
-            return !closeCombatContext
-                && cycle?.focusedTarget != null
+            return cycle?.focusedTarget != null
                 && ValidCurrentTargetForVerb(
                     pawn,
                     verb,
                     cycle.focusedTarget,
                     true,
                     false,
-                    false);
+                    closeCombatContext);
         }
 
         private static void PromoteApproachingShotToCloseContext(
@@ -4524,7 +4587,11 @@ namespace KRWF.RimKata
 
             if (verb.IsMeleeAttack || closeCombatContext)
             {
-                if (!pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch))
+                if (!CanHitTargetForCombatContext(
+                        pawn,
+                        verb,
+                        assignedTarget,
+                        closeCombatContext))
                 {
                     return false;
                 }
@@ -4659,12 +4726,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (verb.IsMeleeAttack || cycle.plannedCloseAttack)
-            {
-                return pawn.CanReachImmediate(target, PathEndMode.Touch);
-            }
-
-            return !closeCombatContext && verb.CanHitTarget(target);
+            return CanHitTargetForCombatContext(
+                pawn,
+                verb,
+                target,
+                cycle.plannedCloseAttack);
         }
 
         private static bool PermanentlyInvalidCycleTarget(

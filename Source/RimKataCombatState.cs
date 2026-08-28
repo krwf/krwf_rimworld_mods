@@ -311,6 +311,7 @@ namespace KRWF.RimKata
         public Pawn incomingThreatSource;
         public int incomingThreatTicksRemaining;
         public Thing closeAttackRequestTarget;
+        public bool closeAttackRequestFromAttackGizmo;
         public Thing automaticAttackRequestTarget;
         public int automaticAttackRequestTicksRemaining;
         public bool mentalStateOffenseSuppressed;
@@ -494,6 +495,9 @@ namespace KRWF.RimKata
             Scribe_References.Look(ref incomingThreatSource, "incomingThreatSource");
             Scribe_Values.Look(ref incomingThreatTicksRemaining, "incomingThreatTicksRemaining");
             Scribe_References.Look(ref closeAttackRequestTarget, "closeAttackRequestTarget");
+            Scribe_Values.Look(
+                ref closeAttackRequestFromAttackGizmo,
+                "closeAttackRequestFromAttackGizmo");
             Scribe_References.Look(ref automaticAttackRequestTarget, "automaticAttackRequestTarget");
             Scribe_Values.Look(ref automaticAttackRequestTicksRemaining, "automaticAttackRequestTicksRemaining");
 
@@ -535,7 +539,7 @@ namespace KRWF.RimKata
 
             if (closeAttackRequestTarget != null && !IsCloseAttackRequestActive())
             {
-                closeAttackRequestTarget = null;
+                ClearCloseAttackRequest();
             }
 
             if (automaticAttackRequestTarget != null && !IsAutomaticAttackRequestActive())
@@ -1039,9 +1043,7 @@ namespace KRWF.RimKata
             dualCloseCombatActive = false;
             dualCloseTarget = null;
             engagementOwnerWeapon = null;
-            incomingThreatSource = null;
-            incomingThreatTicksRemaining = 0;
-            closeAttackRequestTarget = null;
+            ClearCloseAttackRequest();
             automaticAttackRequestTarget = null;
             automaticAttackRequestTicksRemaining = 0;
             ClearDedicatedFollowupJobRequest();
@@ -1146,15 +1148,23 @@ namespace KRWF.RimKata
             incomingThreatTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
         }
 
-        public void RequestCloseAttack(Thing target)
+        public void RequestCloseAttack(
+            Thing target,
+            bool fromAttackGizmo = false)
         {
+            bool preserveAttackGizmoOrigin =
+                closeAttackRequestTarget == target
+                && closeAttackRequestFromAttackGizmo;
             closeAttackRequestTarget = target;
+            closeAttackRequestFromAttackGizmo =
+                fromAttackGizmo || preserveAttackGizmoOrigin;
             EnterCloseCombat(target);
         }
 
         public void ClearCloseAttackRequest()
         {
             closeAttackRequestTarget = null;
+            closeAttackRequestFromAttackGizmo = false;
         }
 
         public void RequestAutomaticAttack(Thing target)
