@@ -5440,26 +5440,15 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (state.dualCloseCombatActive
-                && RimKataMod.Settings?.closeFireEnabled == false
-                && pawn.stances?.curStance is Stance_RimKataAim closeAim
-                && closeAim.verb?.IsMeleeAttack == false)
-            {
-                pawn.stances.SetStance(new Stance_Mobile());
-            }
-
             if (!TryGetNextAim(
                     pawn,
                     out ThingWithComps weapon,
                     out LocalTargetInfo target))
             {
-                if (pawn.stances?.curStance is Stance_RimKataAim oldAim
-                    && oldAim.focusTarg.HasThing
-                    && !IsLiveVisualTarget(pawn, oldAim.focusTarg.Thing))
-                {
-                    pawn.stances.SetStance(new Stance_Mobile());
-                }
-
+                ReconcileRimKataAim(
+                    pawn,
+                    LocalTargetInfo.Invalid,
+                    null);
                 return;
             }
 
@@ -5489,6 +5478,7 @@ namespace KRWF.RimKata
 
                 if (verb == null)
                 {
+                    ReconcileRimKataAim(pawn, target, null);
                     if (target.IsValid
                         && target.Cell.IsValid
                         && target.Cell != pawn.Position)
@@ -5502,13 +5492,12 @@ namespace KRWF.RimKata
 
             if (verb == null)
             {
+                ReconcileRimKataAim(pawn, target, null);
                 return;
             }
 
-            if (pawn.stances.curStance is Stance_RimKataAim current && current.verb == verb && current.focusTarg.Equals(target))
+            if (ReconcileRimKataAim(pawn, target, verb))
             {
-                current.ticksLeft = Mathf.Max(current.ticksLeft, 2);
-                current.RefreshLeanNow();
                 return;
             }
 
@@ -5520,6 +5509,30 @@ namespace KRWF.RimKata
             Stance_RimKataAim aim = new Stance_RimKataAim(2, target, verb);
             pawn.stances.SetStance(aim);
             aim.RefreshLeanNow();
+        }
+
+        private static bool ReconcileRimKataAim(
+            Pawn pawn,
+            LocalTargetInfo target,
+            Verb verb)
+        {
+            if (!(pawn?.stances?.curStance is Stance_RimKataAim current))
+            {
+                return false;
+            }
+
+            if (verb != null
+                && target.IsValid
+                && current.verb == verb
+                && current.focusTarg.Equals(target))
+            {
+                current.ticksLeft = Mathf.Max(current.ticksLeft, 2);
+                current.RefreshLeanNow();
+                return true;
+            }
+
+            pawn.stances.SetStance(new Stance_Mobile());
+            return false;
         }
 
         private static RimKataWeaponCycleState ChooseBodyAimCycle(
