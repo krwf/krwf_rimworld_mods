@@ -754,7 +754,8 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             int outerRing)
         {
-            if (cycle?.automaticCandidateCollectionClosed != false)
+            if (!UsesRangedCandidateLimit(cycle)
+                || cycle.automaticCandidateCollectionClosed)
             {
                 return;
             }
@@ -839,13 +840,19 @@ namespace KRWF.RimKata
             IntVec3 origin,
             out bool usable)
         {
+            usable = UsesRangedCandidateLimit(cycle);
+            if (!usable)
+            {
+                return false;
+            }
+
             Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
             float range = RangeForCycle(
                 pawn,
                 combatState,
                 cycle,
                 verb);
-            usable = cycle?.weapon != null && verb != null && range > 0f;
+            usable = verb != null && range > 0f;
             if (!usable)
             {
                 return false;
@@ -918,7 +925,8 @@ namespace KRWF.RimKata
             out bool hasCandidateVacancy)
         {
             hasCandidateVacancy = false;
-            if (cycle == null || cycle.automaticCandidateCollectionClosed)
+            if (!UsesRangedCandidateLimit(cycle)
+                || cycle.automaticCandidateCollectionClosed)
             {
                 return false;
             }
@@ -972,7 +980,7 @@ namespace KRWF.RimKata
             int saturatedRing)
         {
             if (pawn?.Map == null
-                || cycle?.weapon == null
+                || !UsesRangedCandidateLimit(cycle)
                 || cycle.pendingCandidateLimitOverride > 0
                 || cycle.activeCandidateLimitOverride > 0)
             {
@@ -1090,6 +1098,12 @@ namespace KRWF.RimKata
                 return MediumCandidateLimit;
             }
             return LongCandidateLimit;
+        }
+
+        private static bool UsesRangedCandidateLimit(
+            RimKataWeaponCycleState cycle)
+        {
+            return cycle?.weapon?.def?.IsRangedWeapon == true;
         }
 
         private static int MaximumLogicalRing(float range)

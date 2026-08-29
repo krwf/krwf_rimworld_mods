@@ -1476,6 +1476,8 @@ namespace KRWF.RimKata
             }
 
             Thing currentTarget = castTarget.Thing;
+            if (verb.IsMeleeAttack && pawn.CurJobDef == JobDefOf.AttackMelee)
+                currentTarget = pawn.CurJob.targetA.Thing ?? currentTarget;
             bool playerForced = pawn.CurJob?.playerForced == true;
             bool killIncappedTarget = pawn.CurJob?.killIncappedTarget == true;
             bool closeContext = pawn.CanReachImmediate(
@@ -2631,10 +2633,6 @@ namespace KRWF.RimKata
                 {
                     state ??= StateFor(pawn, true);
                     BindCurrentWeapons(pawn, state);
-                    RimKataSharedTargetSearch.Begin(
-                        pawn,
-                        state,
-                        pawn.Position);
                     RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                         pawn,
                         state,
@@ -2688,7 +2686,6 @@ namespace KRWF.RimKata
             }
 
             state.engagementOwnerWeapon = ownerWeapon;
-            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                 pawn,
                 state,
@@ -3731,56 +3728,7 @@ namespace KRWF.RimKata
                 return trigger;
             }
 
-            return ClosestStoredImmediateCloseTarget(pawn, state);
-        }
-
-        private static Thing ClosestStoredImmediateCloseTarget(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            Thing closest = null;
-            int closestDistance = int.MaxValue;
-            SelectClosestStoredImmediateCloseTarget(
-                pawn,
-                state?.primaryWeaponCycle,
-                ref closest,
-                ref closestDistance);
-            SelectClosestStoredImmediateCloseTarget(
-                pawn,
-                state?.secondaryWeaponCycle,
-                ref closest,
-                ref closestDistance);
-            return closest;
-        }
-
-        private static void SelectClosestStoredImmediateCloseTarget(
-            Pawn pawn,
-            RimKataWeaponCycleState cycle,
-            ref Thing closest,
-            ref int closestDistance)
-        {
-            List<Thing> candidates = cycle?.automaticCandidates;
-            if (candidates == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                Thing candidate = candidates[i];
-                if (!IsImmediateCloseTarget(pawn, candidate, false, false))
-                {
-                    continue;
-                }
-
-                int distance = pawn.Position.DistanceToSquared(
-                    candidate.Position);
-                if (distance < closestDistance)
-                {
-                    closest = candidate;
-                    closestDistance = distance;
-                }
-            }
+            return null;
         }
 
         private static bool IsImmediateCloseTarget(
@@ -4154,24 +4102,6 @@ namespace KRWF.RimKata
                     requestAutomaticRefill);
             }
 
-            bool automaticCacheAttempted = false;
-            if (!focusedTargetControlsCycle
-                && !directAssignedTarget
-                && !cycle.HasPlan
-                && cycle.cachedCandidateTarget == null)
-            {
-                automaticCacheAttempted = true;
-                TryCacheSharedCandidate(
-                    pawn,
-                    state,
-                    cycle,
-                    assignedTarget);
-            }
-            if (cycle.cooldownTicksRemaining > 1)
-            {
-                return true;
-            }
-
             PromoteApproachingShotToCloseContext(pawn, cycle, verb, closeCombatContext);
             if (cycle.HasPlan
                 && !ValidPlan(
@@ -4210,6 +4140,43 @@ namespace KRWF.RimKata
                     || cycle.visualAimTicksRemaining > 0;
             }
 
+            bool automaticPromotionAttempted = false;
+            if (!focusedTargetControlsCycle
+                && !directAssignedTarget
+                && !cycle.HasPlan)
+            {
+                if (cycle.cachedCandidateTarget == null)
+                {
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        cycle,
+                        assignedTarget);
+                }
+
+                automaticPromotionAttempted =
+                    cycle.cachedCandidateTarget != null;
+                if (automaticPromotionAttempted
+                    && TryPromoteCachedCandidate(
+                        pawn,
+                        state,
+                        cycle,
+                        verb,
+                        killIncappedTarget,
+                        closeCombatContext,
+                        requestAutomaticRefill,
+                        RimKataEligibility.RandomAttackEnabledForPawn(pawn),
+                        out Thing promotedCandidate))
+                {
+                    promotedAutomaticTarget = promotedCandidate;
+                }
+            }
+
+            if (cycle.cooldownTicksRemaining > 1)
+            {
+                return true;
+            }
+
             if (!focusedTargetControlsCycle
                 && !cycle.HasPlan
                 && cycle.cooldownTicksRemaining <= 1)
@@ -4227,53 +4194,20 @@ namespace KRWF.RimKata
                         false,
                         cycle.cooldownTicksRemaining <= 0);
                 }
-                else
+                else if (!automaticPromotionAttempted
+                    && dedicatedAssignedTarget
+                    && cycle.automaticCandidateCollectionClosed)
                 {
-                    if (cycle.cachedCandidateTarget == null
-                        && !automaticCacheAttempted)
-                    {
-                        TryCacheSharedCandidate(
-                            pawn,
-                            state,
-                            cycle,
-                            assignedTarget);
-                    }
-
-                    bool automaticPromotionAttempted =
-                        cycle.cachedCandidateTarget != null;
-                    if (automaticPromotionAttempted)
-                    {
-                        if (TryPromoteCachedCandidate(
-                            pawn,
-                            state,
-                            cycle,
-                            verb,
-                            killIncappedTarget,
-                            closeCombatContext,
-                            requestAutomaticRefill,
-                            RimKataEligibility.RandomAttackEnabledForPawn(pawn),
-                            out Thing promotedCandidate))
-                        {
-                            promotedAutomaticTarget = promotedCandidate;
-                        }
-                    }
-
-                    if (!cycle.HasPlan
-                        && !automaticPromotionAttempted
-                        && dedicatedAssignedTarget
-                        && cycle.automaticCandidateCollectionClosed)
-                    {
-                        TrySetKnownTarget(
-                            pawn,
-                            cycle,
-                            verb,
-                            assignedTarget,
-                            false,
-                            killIncappedTarget,
-                            closeCombatContext,
-                            false,
-                            cycle.cooldownTicksRemaining <= 0);
-                    }
+                    TrySetKnownTarget(
+                        pawn,
+                        cycle,
+                        verb,
+                        assignedTarget,
+                        false,
+                        killIncappedTarget,
+                        closeCombatContext,
+                        false,
+                        cycle.cooldownTicksRemaining <= 0);
                 }
             }
 
@@ -4354,7 +4288,12 @@ namespace KRWF.RimKata
                 || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 || pawn.CurJobDef != RimKataDefOf.RimKata_Attack
                 || pawn.CurJob.targetA.Thing != assignedTarget
-                || TargetWithinAutomaticSearchRange(pawn, assignedTarget)
+                || (RimKataTargeting.IsValidAutomaticAttackTarget(
+                        pawn,
+                        assignedTarget)
+                    && TargetWithinAutomaticSearchRange(
+                        pawn,
+                        assignedTarget))
                 || (primaryCandidate == null && secondaryCandidate == null)
                 || !(pawn.jobs?.curDriver is JobDriver_RimKataAttack driver))
             {
@@ -5201,6 +5140,63 @@ namespace KRWF.RimKata
                     pawn,
                     state,
                     pawn.Position);
+
+                bool allowAutomaticReselection = !playerForced
+                    && (allowAutomaticRangedFire
+                        || closeCombatContext
+                        || verb.IsMeleeAttack);
+                if (allowAutomaticReselection)
+                {
+                    bool requestAutomaticRefill =
+                        allowAutomaticRangedFire
+                        && !closeCombatContext
+                        && RimKataEligibility.RandomAttackEnabledForPawn(
+                            pawn);
+                    if (!(firedTarget is Projectile)
+                        && !RimKataTargeting.IsValidAutomaticAttackTarget(
+                            pawn,
+                            firedTarget))
+                    {
+                        EvictAutomaticCandidate(
+                            pawn,
+                            state,
+                            cycle,
+                            firedTarget,
+                            requestAutomaticRefill);
+                    }
+
+                    TryCacheSharedCandidate(
+                        pawn,
+                        state,
+                        cycle,
+                        assignedTarget);
+                    if (cycle.cachedCandidateTarget != null
+                        && TryPromoteCachedCandidate(
+                            pawn,
+                            state,
+                            cycle,
+                            verb,
+                            killIncappedTarget,
+                            closeCombatContext,
+                            requestAutomaticRefill,
+                            RimKataEligibility.RandomAttackEnabledForPawn(
+                                pawn),
+                            out Thing nextAutomaticTarget))
+                    {
+                        TryPromoteAutomaticJobTarget(
+                            pawn,
+                            state,
+                            assignedTarget,
+                            false,
+                            cycle == state.primaryWeaponCycle
+                                ? nextAutomaticTarget
+                                : null,
+                            cycle == state.secondaryWeaponCycle
+                                ? nextAutomaticTarget
+                                : null,
+                            out Thing _);
+                    }
+                }
             }
 
             return cooldown;

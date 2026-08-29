@@ -181,19 +181,7 @@ namespace KRWF.RimKata
             {
                 RimKataDualWeaponController.EnsureContinuationSearchBeforeExit(
                     pawn);
-                Thing replacementCloseTarget =
-                    RimKataDualWeaponController.ResolveImmediateCloseTarget(
-                        pawn,
-                        null,
-                        IsPlayerForced,
-                        job.killIncappedTarget);
-                if (replacementCloseTarget != null)
-                {
-                    assignedTarget = replacementCloseTarget;
-                    SetAssignedTarget(replacementCloseTarget);
-                    assignedTargetValid = true;
-                }
-                else if (TryAdoptContinuationTarget(out assignedTarget))
+                if (TryAdoptContinuationTarget(out assignedTarget))
                 {
                     assignedTargetValid = true;
                 }
@@ -246,14 +234,6 @@ namespace KRWF.RimKata
                     assignedTarget,
                     IsPlayerForced,
                     job.killIncappedTarget);
-
-            if (immediateCloseTarget != null
-                && assignedTarget != immediateCloseTarget)
-            {
-                assignedTarget = immediateCloseTarget;
-                assignedTargetInTouchRange = true;
-                SetAssignedTarget(immediateCloseTarget);
-            }
 
             if (RimKataDodgeMovementUtility.IsActive(pawn))
             {
@@ -447,7 +427,6 @@ namespace KRWF.RimKata
                 || target == null
                 || target is Projectile
                 || target == currentTarget
-                || !IsValidAssignedTarget(currentTarget)
                 || !IsValidAssignedTarget(target)
                 || !pawn.CanReach(
                     target,
