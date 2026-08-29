@@ -2667,63 +2667,6 @@ namespace KRWF.RimKata
             return true;
         }
 
-        public static bool TryAbsorbPathBlockedMeleeJob(
-            Pawn pawn,
-            Job sourceJob,
-            JobCondition lastJobEndCondition,
-            ThinkNode jobGiver,
-            bool fromQueue)
-        {
-            Job currentJob = pawn?.CurJob;
-            if (jobGiver != null
-                || fromQueue
-                || lastJobEndCondition != JobCondition.Incompletable
-                || currentJob?.playerForced != true
-                || currentJob.def != JobDefOf.Goto
-                || sourceJob?.playerForced == true
-                || sourceJob.def != JobDefOf.AttackMelee
-                || sourceJob.maxNumMeleeAttacks != 1
-                || sourceJob.expiryInterval != 300
-                || !IsAutomaticThreatResponseJob(pawn, sourceJob))
-            {
-                return false;
-            }
-
-            Thing target = sourceJob.targetA.Thing;
-            if (!(target is Pawn)
-                || !pawn.Position.AdjacentTo8WayOrInside(target.Position))
-            {
-                return false;
-            }
-
-            if (pawn.pather != null
-                && pawn.pather.nextCell == target.Position)
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            int currentTick = Find.TickManager?.TicksGame ?? -1;
-            if (state.absorbedPathBlockedGotoJobId == currentJob.loadID
-                && state.absorbedPathBlockedThreat == target
-                && currentTick >= 0
-                && state.absorbedPathBlockedRefreshTick >= 0
-                && currentTick - state.absorbedPathBlockedRefreshTick < 15)
-            {
-                return true;
-            }
-
-            bool absorbed = AbsorbAutomaticThreatIntoProtectedJob(pawn, target);
-            if (absorbed)
-            {
-                state.absorbedPathBlockedGotoJobId = currentJob.loadID;
-                state.absorbedPathBlockedThreat = target;
-                state.absorbedPathBlockedRefreshTick = currentTick;
-            }
-
-            return absorbed;
-        }
-
         private static bool AbsorbAutomaticThreatIntoProtectedJob(
             Pawn pawn,
             Thing threat)
@@ -3605,9 +3548,6 @@ namespace KRWF.RimKata
             state.automaticAttackRequestTicksRemaining = 0;
             state.dedicatedContinuityTarget = null;
             state.dedicatedContinuityUntilTick = -1;
-            state.absorbedPathBlockedGotoJobId = -1;
-            state.absorbedPathBlockedThreat = null;
-            state.absorbedPathBlockedRefreshTick = -1;
             state.loadoutInvalidatedCombatJob = null;
             state.weaponSwapPending = false;
             Reset(pawn, false);

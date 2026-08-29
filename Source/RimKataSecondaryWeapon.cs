@@ -1696,7 +1696,7 @@ namespace KRWF.RimKata
                     new FloatMenuOption(
                         "KRWF_RimKata_SecondaryMenuSwapCombat".Translate(),
                         null,
-                        orderInPriority: 0));
+                        orderInPriority: 2));
             }
             else
             {
@@ -1716,7 +1716,7 @@ namespace KRWF.RimKata
                                 }
                             }
                         },
-                        orderInPriority: 0));
+                        orderInPriority: 2));
             }
 
             options.Add(
@@ -1757,7 +1757,7 @@ namespace KRWF.RimKata
                             {
                                 BeginRushTargeting(rushPawns);
                             },
-                            orderInPriority: 2));
+                            orderInPriority: 0));
                 }
             }
 

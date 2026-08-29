@@ -690,23 +690,6 @@ namespace KRWF.RimKata
             }
 
             if (RimKataDualWeaponController
-                .TryAbsorbPathBlockedMeleeJob(
-                    ___pawn,
-                    newJob,
-                    lastJobEndCondition,
-                    jobGiver,
-                    fromQueue))
-            {
-                if (newJob != null)
-                {
-                    JobMaker.ReturnToPool(newJob);
-                    newJob = null;
-                }
-
-                return false;
-            }
-
-            if (RimKataDualWeaponController
                 .TryAbsorbCounterattackOpening(
                     ___pawn,
                     newJob,

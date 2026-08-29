@@ -295,9 +295,6 @@ namespace KRWF.RimKata
         public Job dedicatedFollowupJobSourceJob;
         public Job projectileWakeResumeJob;
         public bool dedicatedFollowupJobPlayerForced;
-        public int absorbedPathBlockedGotoJobId = -1;
-        public Thing absorbedPathBlockedThreat;
-        public int absorbedPathBlockedRefreshTick = -1;
         public bool dedicatedFollowupJobKillIncappedTarget;
         public int dedicatedFollowupJobRequestedTick = -1;
         public bool dedicatedFollowupJobStartInProgress;
@@ -1048,9 +1045,6 @@ namespace KRWF.RimKata
             dedicatedContinuityUntilTick = -1;
             movementFireContinuityUntilTick = -1;
             candidateSaturationExpansionUsed = false;
-            absorbedPathBlockedGotoJobId = -1;
-            absorbedPathBlockedThreat = null;
-            absorbedPathBlockedRefreshTick = -1;
         }
 
         public void ResetCandidateSaturationExpansion(bool clearOverrides)
