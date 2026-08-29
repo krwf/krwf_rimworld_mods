@@ -285,11 +285,9 @@ namespace KRWF.RimKata
         public const int TumbleDurationTicks = 48;
         public const int AdditionalDodgeWatchdogTicks = 180;
         public const int AdditionalDodgeLandingTicks = 2;
-        public const int CloseCombatMemoryTicks = 600;
         public const int CombatRequestGraceTicks = 20;
         public const int MovingFireContinuityTicks = 2;
         public const float TumbleDegreesPerTick = 15f;
-        public const int PostShotAimTicks = 18;
     }
 
     public static class RimKataSerumUtility

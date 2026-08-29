@@ -279,8 +279,7 @@ namespace KRWF.RimKata
                     i++)
                 {
                     Thing candidate = ordinary[i];
-                    if (candidate != null
-                        && !(candidate is Projectile))
+                    if (!(candidate is Projectile))
                     {
                         EligibleCandidates.Add(candidate);
                     }
@@ -309,9 +308,62 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            target = randomAttack
-                ? EligibleCandidates.RandomElement()
-                : EligibleCandidates[0];
+            bool removedCandidate = false;
+            while (EligibleCandidates.Count > 0)
+            {
+                int candidateIndex = randomAttack
+                    ? Rand.Range(0, EligibleCandidates.Count)
+                    : 0;
+                Thing candidate = EligibleCandidates[candidateIndex];
+                if (candidate is Projectile)
+                {
+                    target = candidate;
+                    break;
+                }
+
+                bool globallyValid = candidate != null
+                    && RimKataTargeting.IsValidAutomaticAttackTarget(
+                        pawn,
+                        candidate);
+                if (!globallyValid)
+                {
+                    removedCandidate |= RemoveAutomaticCandidate(
+                        combatState,
+                        cycle,
+                        candidate,
+                        true);
+                    EligibleCandidates.RemoveAt(candidateIndex);
+                    continue;
+                }
+
+                if (!IsValidAutomaticTargetForCycle(
+                    pawn,
+                    combatState,
+                    cycle,
+                    verb,
+                    candidate))
+                {
+                    removedCandidate |= RemoveAutomaticCandidate(
+                        combatState,
+                        cycle,
+                        candidate,
+                        false);
+                    EligibleCandidates.RemoveAt(candidateIndex);
+                    continue;
+                }
+
+                target = candidate;
+                break;
+            }
+
+            if (removedCandidate)
+            {
+                combatState.ResetCandidateSaturationExpansion(true);
+                if (!IsCloseCombatContext(combatState))
+                {
+                    Restart(pawn, combatState, pawn.Position);
+                }
+            }
 
             interception = target is Projectile;
             return target != null;
@@ -332,12 +384,12 @@ namespace KRWF.RimKata
                 return;
             }
 
-            TryAddToCycle(
+            TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.primaryWeaponCycle,
                 target);
-            TryAddToCycle(
+            TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.secondaryWeaponCycle,
@@ -358,8 +410,27 @@ namespace KRWF.RimKata
                 .GetComponent<RimKataMapComponent>()?
                 .GetState(pawn, false);
             RimKataWeaponCycleState cycle = CycleForVerb(state, verb);
-            return cycle != null
-                && IsValidForCycle(pawn, state, cycle, verb, target);
+            if (cycle == null)
+            {
+                return false;
+            }
+
+            if (target is Projectile projectile)
+            {
+                return IsValidProjectileForCycle(
+                    pawn,
+                    cycle,
+                    verb,
+                    projectile);
+            }
+
+            return RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target)
+                && IsValidAutomaticTargetForCycle(
+                    pawn,
+                    state,
+                    cycle,
+                    verb,
+                    target);
         }
 
         private static void CollectAutomaticTargetsInRing(
@@ -434,7 +505,6 @@ namespace KRWF.RimKata
             {
                 Thing candidate = things[i];
                 if (candidate is Projectile
-                    || !(candidate is IAttackTarget)
                     || !RimKataTargeting.IsValidAutomaticAttackTarget(
                         pawn,
                         candidate))
@@ -442,12 +512,12 @@ namespace KRWF.RimKata
                     continue;
                 }
 
-                TryAddToCycle(
+                TryAddValidatedAutomaticTargetToCycle(
                     pawn,
                     combatState,
                     combatState.primaryWeaponCycle,
                     candidate);
-                TryAddToCycle(
+                TryAddValidatedAutomaticTargetToCycle(
                     pawn,
                     combatState,
                     combatState.secondaryWeaponCycle,
@@ -455,7 +525,7 @@ namespace KRWF.RimKata
             }
         }
 
-        private static void TryAddToCycle(
+        private static void TryAddValidatedAutomaticTargetToCycle(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
@@ -467,7 +537,7 @@ namespace KRWF.RimKata
             }
 
             Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
-            if (IsValidForCycle(
+            if (IsValidAutomaticTargetForCycle(
                 pawn,
                 combatState,
                 cycle,
@@ -478,36 +548,23 @@ namespace KRWF.RimKata
             }
         }
 
-        private static bool IsValidForCycle(
+        private static bool IsValidAutomaticTargetForCycle(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
             Verb verb,
-            Thing target,
-            bool useFullRange = false)
+            Thing target)
         {
-            bool physicalMeleeWithRangedWeapon =
-                IsCloseCombatContext(combatState)
-                && RimKataMod.Settings?.closeFireEnabled == false
-                && verb?.IsMeleeAttack == false;
-            if (pawn?.Map == null
-                || cycle?.weapon == null
-                || verb == null
-                || (verb.ApparelPreventsShooting()
-                    && !physicalMeleeWithRangedWeapon)
-                || target == null
-                || target.Destroyed
-                || !target.Spawned
-                || target.Map != pawn.Map)
+            if (target == null)
             {
                 return false;
             }
 
-            float range = target is Projectile
-                ? ProjectileRangeForCycle(pawn, cycle, verb)
-                : useFullRange
-                    ? FullRangeForCycle(pawn, cycle, verb)
-                    : RangeForCycle(pawn, combatState, cycle, verb);
+            float range = RangeForCycle(
+                pawn,
+                combatState,
+                cycle,
+                verb);
             if (range <= 0f
                 || pawn.Position.DistanceToSquared(target.Position)
                     > range * range)
@@ -515,36 +572,98 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (target is Projectile projectile)
+            if (!verb.IsMeleeAttack && IsCloseCombatContext(combatState))
             {
-                return !verb.IsMeleeAttack
-                    && RimKataTargeting.IsValidExplosiveProjectileForVerb(
-                        pawn,
-                        verb,
-                        projectile,
-                        range * range);
+                return pawn.CanReachImmediate(target, PathEndMode.Touch);
             }
 
-            if (!(target is IAttackTarget)
-                || !RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target)
-                || target.Position.Fogged(pawn.Map))
+            return verb.CanHitTarget(target);
+        }
+
+        private static bool IsValidProjectileForCycle(
+            Pawn pawn,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            Projectile projectile)
+        {
+            float range = ProjectileRangeForCycle(pawn, cycle, verb);
+            return range > 0f
+                && RimKataTargeting.IsValidExplosiveProjectileForVerb(
+                    pawn,
+                    verb,
+                    projectile,
+                    range * range);
+        }
+
+        internal static bool EvictAutomaticCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Thing target,
+            bool requestRefill)
+        {
+            if (target == null || target is Projectile)
             {
                 return false;
             }
 
-            if (!verb.IsMeleeAttack && IsCloseCombatContext(combatState))
+            bool removed = RemoveAutomaticCandidate(
+                combatState,
+                cycle,
+                target,
+                !RimKataTargeting.IsValidAutomaticAttackTarget(
+                    pawn,
+                    target));
+            if (removed)
             {
-                if (!pawn.CanReachImmediate(target, PathEndMode.Touch))
+                combatState?.ResetCandidateSaturationExpansion(true);
+                if (requestRefill
+                    && pawn?.Map != null
+                    && combatState != null
+                    && RandomAttackEnabled(pawn)
+                    && !IsCloseCombatContext(combatState))
                 {
-                    return false;
+                    Restart(pawn, combatState, pawn.Position);
                 }
-
-                return RimKataMod.Settings?.closeFireEnabled == false
-                    || RimKataEligibility
-                        .IsRangedVerbAvailableInCloseCombat(pawn, verb);
             }
 
-            return verb.CanHitTarget(target);
+            return removed;
+        }
+
+        private static bool RemoveAutomaticCandidate(
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Thing target,
+            bool globallyInvalid)
+        {
+            if (!globallyInvalid)
+            {
+                return RemoveAutomaticCandidateFromCycle(cycle, target);
+            }
+
+            bool removed = RemoveAutomaticCandidateFromCycle(
+                combatState?.primaryWeaponCycle,
+                target);
+            if (RemoveAutomaticCandidateFromCycle(
+                combatState?.secondaryWeaponCycle,
+                target))
+            {
+                removed = true;
+            }
+            return removed;
+        }
+
+        private static bool RemoveAutomaticCandidateFromCycle(
+            RimKataWeaponCycleState cycle,
+            Thing target)
+        {
+            if (cycle?.RemoveAutomaticCandidate(target) != true)
+            {
+                return false;
+            }
+
+            cycle.automaticCandidateCollectionClosed = false;
+            return true;
         }
 
         private static void UpdateCollectionClosure(
@@ -581,6 +700,7 @@ namespace KRWF.RimKata
                     {
                         TryScheduleNextCandidateLimit(
                             pawn,
+                            combatState,
                             combatState.primaryWeaponCycle,
                             outerRing);
                     }
@@ -588,6 +708,7 @@ namespace KRWF.RimKata
                     {
                         TryScheduleNextCandidateLimit(
                             pawn,
+                            combatState,
                             combatState.secondaryWeaponCycle,
                             outerRing);
                     }
@@ -770,7 +891,11 @@ namespace KRWF.RimKata
             }
 
             Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
-            float fullRange = FullRangeForCycle(pawn, cycle, verb);
+            float fullRange = RangeForCycle(
+                pawn,
+                combatState,
+                cycle,
+                verb);
             if (IsCloseCombatContext(combatState))
             {
                 cycle.activeCandidateLimitOverride = 0;
@@ -842,6 +967,7 @@ namespace KRWF.RimKata
 
         private static bool TryScheduleNextCandidateLimit(
             Pawn pawn,
+            RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
             int saturatedRing)
         {
@@ -856,7 +982,11 @@ namespace KRWF.RimKata
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
                 cycle.weapon);
-            float fullRange = FullRangeForCycle(pawn, cycle, verb);
+            float fullRange = RangeForCycle(
+                pawn,
+                combatState,
+                cycle,
+                verb);
             int maximumRing = MaximumLogicalRing(fullRange);
             int currentLimit = CandidateLimitForRing(saturatedRing);
             int nextLimit = 0;
@@ -997,6 +1127,19 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             Verb verb)
         {
+            bool closeCombatContext = IsCloseCombatContext(combatState);
+            if (pawn?.Map == null
+                || cycle?.weapon == null
+                || !RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def)
+                || verb == null
+                || !RimKataDualWeaponController.VerbUsable(
+                    pawn,
+                    verb,
+                    closeCombatContext))
+            {
+                return 0f;
+            }
+
             return FullRangeForCycle(pawn, cycle, verb);
         }
 
@@ -1010,10 +1153,14 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
-            float apiRange = Mathf.Max(
-                0f,
-                RimKataRangeUtility.ResolveCandidateApiRange(verb));
-            return apiRange;
+            if (!verb.IsMeleeAttack)
+            {
+                return Mathf.Max(
+                    0f,
+                    RimKataRangeUtility.ResolveCandidateApiRange(verb));
+            }
+
+            return Mathf.Max(0f, verb.EffectiveRange);
         }
 
         private static float ProjectileRangeForCycle(
@@ -1023,8 +1170,13 @@ namespace KRWF.RimKata
         {
             if (pawn?.Map == null
                 || cycle?.weapon == null
+                || !RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def)
                 || verb == null
-                || verb.IsMeleeAttack)
+                || verb.IsMeleeAttack
+                || !RimKataDualWeaponController.VerbUsable(
+                    pawn,
+                    verb,
+                    false))
             {
                 return 0f;
             }

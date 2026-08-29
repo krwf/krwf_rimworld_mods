@@ -444,8 +444,6 @@ namespace KRWF.RimKata
                 || IsPlayerForced
                 || job?.def != RimKataDefOf.RimKata_Attack
                 || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                || RimKataDualWeaponController
-                    .IsDedicatedCloseCombatActive(pawn)
                 || target == null
                 || target is Projectile
                 || target == currentTarget

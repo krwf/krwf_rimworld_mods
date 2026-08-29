@@ -262,7 +262,6 @@ namespace KRWF.RimKata
         public int closeDodgeTicksRemaining;
         public int closeDodgeTotalTicks;
         public float closeDodgeStartAngle;
-        public int closeCombatTicksRemaining;
         public Thing closeCombatTrigger;
         public bool draftedFireActive;
         public IntVec3 draftedMovementSearchCell = IntVec3.Invalid;
@@ -333,7 +332,8 @@ namespace KRWF.RimKata
         public bool DeflectionActive => pawn != null && deflectionTicksRemaining > 0;
         public bool ResponsePoseActive => pawn != null && responsePoseTicksRemaining > 0;
         public bool CloseDodgeActive => pawn != null && closeDodgeTicksRemaining > 0;
-        public bool CloseCombatActive => pawn != null && closeCombatTicksRemaining > 0;
+        // Close combat is live state, not timed memory.
+        public bool CloseCombatActive => TryGetLiveCloseCombatTrigger(out Thing _);
         public bool DraftedFireActive => pawn != null && draftedFireActive;
         public bool DraftedMovementSearchTracking => pawn?.Drafted == true
             && draftedMovementSearchCell.IsValid;
@@ -453,7 +453,6 @@ namespace KRWF.RimKata
             Scribe_Values.Look(ref closeDodgeTicksRemaining, "closeDodgeTicksRemaining");
             Scribe_Values.Look(ref closeDodgeTotalTicks, "closeDodgeTotalTicks");
             Scribe_Values.Look(ref closeDodgeStartAngle, "closeDodgeStartAngle");
-            Scribe_Values.Look(ref closeCombatTicksRemaining, "closeCombatTicksRemaining");
             Scribe_References.Look(ref closeCombatTrigger, "closeCombatTrigger");
             Scribe_Values.Look(ref draftedFireActive, "draftedFireActive");
             Scribe_Values.Look(
@@ -611,20 +610,10 @@ namespace KRWF.RimKata
                 }
             }
 
-            if (closeCombatTicksRemaining > 0)
+            if (closeCombatTrigger != null
+                && !TryGetLiveCloseCombatTrigger(out Thing _))
             {
-                if (!TryGetLiveCloseCombatTrigger(out Thing _))
-                {
-                    CancelCloseCombat();
-                }
-                else
-                {
-                    closeCombatTicksRemaining--;
-                    if (closeCombatTicksRemaining <= 0)
-                    {
-                        CancelCloseCombat();
-                    }
-                }
+                CancelCloseCombat();
             }
 
             if (!DodgeMovementActive && ticksRemaining <= 0)
@@ -839,19 +828,18 @@ namespace KRWF.RimKata
 
         public void EnterCloseCombat(Thing trigger)
         {
-            closeCombatTicksRemaining = RimKataCombatTuning.CloseCombatMemoryTicks;
             closeCombatTrigger = trigger;
         }
 
         public bool TryGetLiveCloseCombatTrigger(out Thing trigger)
         {
             trigger = closeCombatTrigger;
-            if (!CloseCombatActive
-                || pawn?.Map == null
+            if (pawn?.Map == null
                 || trigger == null
                 || trigger.Destroyed
                 || !trigger.Spawned
-                || trigger.Map != pawn.Map)
+                || trigger.Map != pawn.Map
+                || !pawn.CanReachImmediate(trigger, PathEndMode.Touch))
             {
                 return false;
             }
@@ -881,7 +869,6 @@ namespace KRWF.RimKata
 
         public void CancelCloseCombat()
         {
-            closeCombatTicksRemaining = 0;
             closeCombatTrigger = null;
         }
 

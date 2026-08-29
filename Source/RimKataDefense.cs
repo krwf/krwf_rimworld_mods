@@ -736,7 +736,7 @@ namespace KRWF.RimKata
             Verb verb = attackingVerb ?? (attacker?.stances?.curStance as Stance_Busy)?.verb ?? RimKataWeaponSlotUtility.CombatVerb(attacker, attacker?.equipment?.Primary);
             if (verb?.verbProps == null || attacker == null)
             {
-                return RimKataCombatTuning.PostShotAimTicks;
+                return 0;
             }
 
             int ticks = verb.IsMeleeAttack

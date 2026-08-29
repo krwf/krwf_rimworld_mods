@@ -5,6 +5,7 @@ using HarmonyLib;
 using RimWorld;
 using UnityEngine;
 using Verse;
+using Verse.AI;
 
 namespace KRWF.RimKata
 {
@@ -72,11 +73,9 @@ namespace KRWF.RimKata
 
         private static bool IsValidAttackTarget(Pawn shooter, Thing target)
         {
-            if (target == null
-                || target == shooter
-                || target.Destroyed
-                || !target.Spawned
-                || !IsAutomaticEnemy(shooter, target))
+            if (!(target is IAttackTarget)
+                || !IsAutomaticEnemy(shooter, target)
+                || target.Position.Fogged(shooter.Map))
             {
                 return false;
             }

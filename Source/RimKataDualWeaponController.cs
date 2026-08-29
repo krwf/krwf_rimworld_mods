@@ -571,7 +571,6 @@ namespace KRWF.RimKata
                 state,
                 assignedTarget,
                 playerForced,
-                closeCombatContext,
                 primaryPromotionTarget,
                 secondaryPromotionTarget,
                 out Thing promotedJobTarget))
@@ -1589,9 +1588,7 @@ namespace KRWF.RimKata
                 openingCycle.firedInCurrentOpening = true;
                 openingCycle.lastFiredTarget = target;
                 openingCycle.visualTarget = target;
-                openingCycle.visualAimTicksRemaining = Mathf.Max(
-                    RimKataCombatTuning.PostShotAimTicks,
-                    cooldownTicks + 2);
+                openingCycle.visualAimTicksRemaining = cooldownTicks;
                 RecordFirstFiredWeapon(state, attempt.weapon);
             }
 
@@ -1929,11 +1926,6 @@ namespace KRWF.RimKata
         {
             return pawn?.InMentalState != true
                 && HasCombatContinuity(pawn);
-        }
-
-        internal static bool IsDedicatedCloseCombatActive(Pawn pawn)
-        {
-            return StateFor(pawn, false)?.dualCloseCombatActive == true;
         }
 
         public static void ReconcileCloseCombatBeforeContinuityCheck(
@@ -3002,7 +2994,7 @@ namespace KRWF.RimKata
             cycle.cooldownFromVanillaOpening = false;
             cycle.lastFiredTarget = focus.HasThing ? focus.Thing : null;
             cycle.visualTarget = cycle.lastFiredTarget;
-            cycle.visualAimTicksRemaining = Mathf.Max(2, cooldown + 2);
+            cycle.visualAimTicksRemaining = cooldown;
             RimKataSharedTargetSearch.Begin(
                 pawn,
                 state,
@@ -3550,10 +3542,7 @@ namespace KRWF.RimKata
 
             bool validForCurrentMode =
                 RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                    ? RimKataTargeting.IsValidAutomaticAttackTarget(
-                            pawn,
-                            target)
-                        && RimKataSharedTargetSearch.IsValidForVerb(
+                    ? RimKataSharedTargetSearch.IsValidForVerb(
                             pawn,
                             verb,
                             target)
@@ -4136,9 +4125,11 @@ namespace KRWF.RimKata
             bool dedicatedAssignedTarget = assignedTarget != null
                 && pawn?.CurJobDef == RimKataDefOf.RimKata_Attack
                 && pawn.CurJob.targetA.Thing == assignedTarget;
-            bool directAssignedTarget = assignedTarget != null
-                && (playerForced
-                    || closeCombatContext);
+            // Target ownership invariant: weapon cycles may change targets independently,
+            // including in close combat. Keep job.targetA while it remains alive and within
+            // the unified attack range; only the invalid-target or range-exit paths may
+            // replace it. closeCombatContext must never force the Job target back into a cycle.
+            bool directAssignedTarget = assignedTarget != null && playerForced;
             if (focusedTargetControlsCycle && !cycle.HasPlan)
             {
                 return true;
@@ -4350,17 +4341,16 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state,
             Thing assignedTarget,
             bool playerForced,
-            bool closeCombatContext,
             Thing primaryCandidate,
             Thing secondaryCandidate,
             out Thing promotedTarget)
         {
             promotedTarget = null;
+            // Do not add close-combat exceptions here; the common validity and range
+            // transitions own Job-target replacement for every combat context.
             if (pawn?.Map == null
                 || state == null
                 || playerForced
-                || closeCombatContext
-                || state.dualCloseCombatActive
                 || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 || pawn.CurJobDef != RimKataDefOf.RimKata_Attack
                 || pawn.CurJob.targetA.Thing != assignedTarget
@@ -4493,27 +4483,12 @@ namespace KRWF.RimKata
             Thing target,
             bool requestRefill)
         {
-            if (target == null
-                || target is Projectile
-                || cycle?.RemoveAutomaticCandidate(target) != true)
-            {
-                return false;
-            }
-
-            cycle.automaticCandidateCollectionClosed = false;
-            state?.ResetCandidateSaturationExpansion(true);
-            if (requestRefill
-                && pawn?.Map != null
-                && state != null
-                && RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && !state.dualCloseCombatActive)
-            {
-                RimKataSharedTargetSearch.Restart(
-                    pawn,
-                    state,
-                    pawn.Position);
-            }
-            return true;
+            return RimKataSharedTargetSearch.EvictAutomaticCandidate(
+                pawn,
+                state,
+                cycle,
+                target,
+                requestRefill);
         }
 
         private static int ResolveOpeningSupportBonus(
@@ -4943,7 +4918,7 @@ namespace KRWF.RimKata
                         && !(forcedAssignedTarget && killIncappedTarget)));
         }
 
-        private static bool VerbUsable(Pawn pawn, Verb verb, bool closeCombatContext)
+        internal static bool VerbUsable(Pawn pawn, Verb verb, bool closeCombatContext)
         {
             if (verb.IsMeleeAttack)
             {
@@ -5201,7 +5176,7 @@ namespace KRWF.RimKata
             {
                 cycle.burstTicksUntilNextShot = Mathf.Max(1, actionVerb.TicksBetweenBurstShots);
                 cycle.visualTarget = cycle.plannedTarget;
-                cycle.visualAimTicksRemaining = Mathf.Max(cycle.visualAimTicksRemaining, cycle.burstTicksUntilNextShot + 2);
+                cycle.visualAimTicksRemaining = Mathf.Max(cycle.visualAimTicksRemaining, cycle.burstTicksUntilNextShot);
                 return -2;
             }
 
@@ -5210,7 +5185,7 @@ namespace KRWF.RimKata
             cycle.cooldownTicksRemaining = cooldown;
             cycle.lastFiredTarget = firedTarget;
             cycle.visualTarget = firedTarget;
-            cycle.visualAimTicksRemaining = Mathf.Max(RimKataCombatTuning.PostShotAimTicks, cooldown + 2);
+            cycle.visualAimTicksRemaining = cooldown;
             cycle.ClearPlan();
 
             if (!allowAutomaticContinuation)
