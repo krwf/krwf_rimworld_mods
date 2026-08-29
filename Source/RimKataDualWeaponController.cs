@@ -537,8 +537,40 @@ namespace KRWF.RimKata
             }
 
             bool blockedByStance = StanceBlocksRimKata(pawn);
-            PrepareCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
-            PrepareCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, blockedByStance, allowAutomaticRangedFire);
+            PrepareCycle(
+                pawn,
+                state,
+                state.primaryWeaponCycle,
+                assignedTarget,
+                playerForced,
+                killIncappedTarget,
+                closeCombatContext,
+                blockedByStance,
+                out Thing primaryPromotionTarget,
+                allowAutomaticRangedFire);
+            PrepareCycle(
+                pawn,
+                state,
+                state.secondaryWeaponCycle,
+                assignedTarget,
+                playerForced,
+                killIncappedTarget,
+                closeCombatContext,
+                blockedByStance,
+                out Thing secondaryPromotionTarget,
+                allowAutomaticRangedFire);
+            if (TryPromoteAutomaticJobTarget(
+                pawn,
+                state,
+                assignedTarget,
+                playerForced,
+                closeCombatContext,
+                primaryPromotionTarget,
+                secondaryPromotionTarget,
+                out Thing promotedJobTarget))
+            {
+                assignedTarget = promotedJobTarget;
+            }
             RefreshDualEngagementState(pawn, state);
 
             if (!blockedByStance && ReadyToAct(state.primaryWeaponCycle))
@@ -1814,6 +1846,7 @@ namespace KRWF.RimKata
             {
                 state.RequestAutomaticAttack(attacker);
             }
+            state.dualLastDrivenTick = -1;
             bool closeContext = pawn.CanReachImmediate(attacker, PathEndMode.Touch);
             if (closeContext)
             {
@@ -1846,6 +1879,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            state.dualLastDrivenTick = Find.TickManager.TicksGame;
             if (pawn.Drafted
                 || RimKataEligibility.RandomAttackEnabledForPawn(pawn))
             {
@@ -4196,8 +4230,10 @@ namespace KRWF.RimKata
             bool killIncappedTarget,
             bool closeCombatContext,
             bool blockedByStance,
+            out Thing promotedAutomaticTarget,
             bool allowAutomaticRangedFire = true)
         {
+            promotedAutomaticTarget = null;
             Verb verb = RimKataWeaponSlotUtility.CombatVerbForContext(
                 pawn,
                 cycle.weapon,
@@ -4365,7 +4401,7 @@ namespace KRWF.RimKata
                         cycle.cachedCandidateTarget != null;
                     if (automaticPromotionAttempted)
                     {
-                        TryPromoteCachedCandidate(
+                        if (TryPromoteCachedCandidate(
                             pawn,
                             state,
                             cycle,
@@ -4373,7 +4409,11 @@ namespace KRWF.RimKata
                             killIncappedTarget,
                             closeCombatContext,
                             requestAutomaticRefill,
-                            RimKataEligibility.RandomAttackEnabledForPawn(pawn));
+                            RimKataEligibility.RandomAttackEnabledForPawn(pawn),
+                            out Thing promotedCandidate))
+                        {
+                            promotedAutomaticTarget = promotedCandidate;
+                        }
                     }
 
                     if (!cycle.HasPlan
@@ -4454,6 +4494,75 @@ namespace KRWF.RimKata
             return true;
         }
 
+        private static bool TryPromoteAutomaticJobTarget(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool closeCombatContext,
+            Thing primaryCandidate,
+            Thing secondaryCandidate,
+            out Thing promotedTarget)
+        {
+            promotedTarget = null;
+            if (pawn?.Map == null
+                || state == null
+                || playerForced
+                || closeCombatContext
+                || state.dualCloseCombatActive
+                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+                || pawn.CurJobDef != RimKataDefOf.RimKata_Attack
+                || pawn.CurJob.targetA.Thing != assignedTarget
+                || TargetWithinAutomaticSearchRange(pawn, assignedTarget)
+                || (primaryCandidate == null && secondaryCandidate == null)
+                || !(pawn.jobs?.curDriver is JobDriver_RimKataAttack driver))
+            {
+                return false;
+            }
+
+            bool secondaryOwnsEngagement =
+                state.engagementOwnerWeapon != null
+                && state.engagementOwnerWeapon
+                    == state.secondaryWeaponCycle?.weapon;
+            Thing preferredCandidate = secondaryOwnsEngagement
+                ? secondaryCandidate
+                : primaryCandidate;
+            Thing alternateCandidate = secondaryOwnsEngagement
+                ? primaryCandidate
+                : secondaryCandidate;
+
+            if (TryPromoteAutomaticJobCandidate(
+                    pawn,
+                    driver,
+                    preferredCandidate))
+            {
+                promotedTarget = preferredCandidate;
+                return true;
+            }
+
+            if (alternateCandidate != preferredCandidate
+                && TryPromoteAutomaticJobCandidate(
+                    pawn,
+                    driver,
+                    alternateCandidate))
+            {
+                promotedTarget = alternateCandidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryPromoteAutomaticJobCandidate(
+            Pawn pawn,
+            JobDriver_RimKataAttack driver,
+            Thing candidate)
+        {
+            return candidate != null
+                && TargetWithinAutomaticSearchRange(pawn, candidate)
+                && driver.TryPromoteAutomaticJobTarget(candidate);
+        }
+
         private static bool TryPromoteCachedCandidate(
             Pawn pawn,
             RimKataPawnCombatState state,
@@ -4462,8 +4571,10 @@ namespace KRWF.RimKata
             bool killIncappedTarget,
             bool closeCombatContext,
             bool requestRefill,
-            bool automaticRangeRequired)
+            bool automaticRangeRequired,
+            out Thing promotedAutomaticTarget)
         {
+            promotedAutomaticTarget = null;
             Thing cachedTarget = cycle?.cachedCandidateTarget;
             bool cachedInterception =
                 cycle?.cachedCandidateInterception == true;
@@ -4490,6 +4601,13 @@ namespace KRWF.RimKata
                     closeCombatContext,
                     automaticRangeRequired,
                     false);
+            if (promoted
+                && !cachedInterception
+                && automaticRangeRequired
+                && cycle.automaticCandidates?.Contains(cachedTarget) == true)
+            {
+                promotedAutomaticTarget = cachedTarget;
+            }
             if (cachedInterception && promoted)
             {
                 SetCandidate(

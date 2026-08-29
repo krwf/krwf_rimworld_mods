@@ -10,11 +10,9 @@ namespace KRWF.RimKata
     {
         public bool sessionActive;
         public bool scanActive;
-        public bool reachedMaximum;
         public int maximumRing;
         public int completedRing;
         public float effectiveMaximumRange;
-        public float completedOuterRadius;
         public IntVec3 origin = IntVec3.Invalid;
         public int lastAdvancedTick = -1;
 
@@ -24,15 +22,11 @@ namespace KRWF.RimKata
         {
             Scribe_Values.Look(ref sessionActive, "sessionActive");
             Scribe_Values.Look(ref scanActive, "scanActive");
-            Scribe_Values.Look(ref reachedMaximum, "reachedMaximum");
             Scribe_Values.Look(ref maximumRing, "maximumRing");
             Scribe_Values.Look(ref completedRing, "completedRing");
             Scribe_Values.Look(
                 ref effectiveMaximumRange,
                 "effectiveMaximumRange");
-            Scribe_Values.Look(
-                ref completedOuterRadius,
-                "completedOuterRadius");
             Scribe_Values.Look(ref origin, "origin", IntVec3.Invalid);
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -40,7 +34,6 @@ namespace KRWF.RimKata
                 maximumRing = Mathf.Max(0, maximumRing);
                 completedRing = Mathf.Max(0, completedRing);
                 effectiveMaximumRange = Mathf.Max(0f, effectiveMaximumRange);
-                completedOuterRadius = Mathf.Max(0f, completedOuterRadius);
                 lastAdvancedTick = -1;
                 if (scanActive)
                 {
@@ -53,11 +46,9 @@ namespace KRWF.RimKata
         {
             sessionActive = false;
             scanActive = false;
-            reachedMaximum = false;
             maximumRing = 0;
             completedRing = 0;
             effectiveMaximumRange = 0f;
-            completedOuterRadius = 0f;
             origin = IntVec3.Invalid;
             lastAdvancedTick = -1;
         }
@@ -118,11 +109,9 @@ namespace KRWF.RimKata
 
             search.sessionActive = true;
             search.scanActive = true;
-            search.reachedMaximum = false;
             search.effectiveMaximumRange = maximumRange;
             search.maximumRing = MaximumLogicalRing(maximumRange);
             search.completedRing = 0;
-            search.completedOuterRadius = 0f;
             search.origin = origin;
             search.lastAdvancedTick = -1;
             InitializeCollectionClosure(
@@ -181,7 +170,7 @@ namespace KRWF.RimKata
             float maximumRange = MaximumRange(pawn, combatState);
             if (maximumRange <= 0f)
             {
-                Finish(combatState, true);
+                Finish(combatState);
                 return false;
             }
 
@@ -203,7 +192,7 @@ namespace KRWF.RimKata
                 outerRing);
             if (BothCandidateCollectionsClosed(combatState))
             {
-                Finish(combatState, false);
+                Finish(combatState);
                 return true;
             }
 
@@ -221,7 +210,6 @@ namespace KRWF.RimKata
                 outerRadius);
 
             search.completedRing = outerRing;
-            search.completedOuterRadius = outerRadius;
             UpdateCollectionClosure(
                 pawn,
                 combatState,
@@ -240,7 +228,7 @@ namespace KRWF.RimKata
             bool reachedMaximum = outerRing >= search.maximumRing;
             if (bothClosed || reachedMaximum)
             {
-                Finish(combatState, reachedMaximum);
+                Finish(combatState);
             }
 
             return true;
@@ -323,7 +311,7 @@ namespace KRWF.RimKata
 
             target = randomAttack
                 ? EligibleCandidates.RandomElement()
-                : ClosestProjectile(pawn, EligibleCandidates);
+                : EligibleCandidates[0];
 
             interception = target is Projectile;
             return target != null;
@@ -1080,30 +1068,6 @@ namespace KRWF.RimKata
                 : null;
         }
 
-        private static Thing ClosestProjectile(
-            Pawn pawn,
-            List<Thing> candidates)
-        {
-            Thing selected = null;
-            int bestDistance = int.MaxValue;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                Thing candidate = candidates[i];
-                if (!(candidate is Projectile))
-                {
-                    continue;
-                }
-
-                int distance = pawn.Position.DistanceToSquared(candidate.Position);
-                if (distance < bestDistance)
-                {
-                    selected = candidate;
-                    bestDistance = distance;
-                }
-            }
-            return selected;
-        }
-
         private static bool RandomAttackEnabled(Pawn pawn)
         {
             return RimKataEligibility.RandomAttackEnabledForPawn(pawn);
@@ -1133,9 +1097,7 @@ namespace KRWF.RimKata
             cycle.activeCandidateLimitOverride = 0;
         }
 
-        private static void Finish(
-            RimKataPawnCombatState combatState,
-            bool reachedMaximum)
+        private static void Finish(RimKataPawnCombatState combatState)
         {
             RimKataSharedTargetSearchState search =
                 combatState?.sharedTargetSearch;
@@ -1145,7 +1107,6 @@ namespace KRWF.RimKata
             }
 
             search.scanActive = false;
-            search.reachedMaximum = reachedMaximum;
             if (combatState.primaryWeaponCycle != null)
             {
                 combatState.primaryWeaponCycle.activeCandidateLimitOverride = 0;

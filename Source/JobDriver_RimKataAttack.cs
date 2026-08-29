@@ -435,6 +435,34 @@ namespace KRWF.RimKata
             }
         }
 
+        internal bool TryPromoteAutomaticJobTarget(Thing target)
+        {
+            Thing currentTarget = AssignedTarget;
+            if (endingJob
+                || pawn?.Map == null
+                || pawn.InMentalState
+                || IsPlayerForced
+                || job?.def != RimKataDefOf.RimKata_Attack
+                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+                || RimKataDualWeaponController
+                    .IsDedicatedCloseCombatActive(pawn)
+                || target == null
+                || target is Projectile
+                || target == currentTarget
+                || !IsValidAssignedTarget(currentTarget)
+                || !IsValidAssignedTarget(target)
+                || !pawn.CanReach(
+                    target,
+                    PathEndMode.Touch,
+                    Danger.Deadly))
+            {
+                return false;
+            }
+
+            SetAssignedTarget(target, true);
+            return true;
+        }
+
         private bool IsValidAssignedTarget(Thing target)
         {
             if (target == null || target.Destroyed || !target.Spawned || target.Map != pawn.Map)
