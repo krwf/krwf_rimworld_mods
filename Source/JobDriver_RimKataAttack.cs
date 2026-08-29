@@ -671,7 +671,6 @@ namespace KRWF.RimKata
         public static bool Prefix(
             Pawn ___pawn,
             ref Job newJob,
-            JobCondition lastJobEndCondition,
             ThinkNode jobGiver,
             bool fromQueue)
         {
@@ -689,28 +688,27 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (RimKataDualWeaponController
-                .TryAbsorbCounterattackOpening(
+            Job counterattackOpeningJob = newJob;
+            RimKataCounterattackOpeningResult counterattackOpeningResult =
+                RimKataDualWeaponController.HandleCounterattackOpening(
                     ___pawn,
                     newJob,
-                    jobGiver))
+                    jobGiver,
+                    out Job convertedCounterattackJob);
+            if (counterattackOpeningResult
+                == RimKataCounterattackOpeningResult.Absorbed)
             {
-                if (newJob != null)
+                if (counterattackOpeningJob != null)
                 {
-                    JobMaker.ReturnToPool(newJob);
+                    JobMaker.ReturnToPool(counterattackOpeningJob);
                     newJob = null;
                 }
 
                 return false;
             }
 
-            Job counterattackOpeningJob = newJob;
-            if (RimKataDualWeaponController
-                .TryConvertCounterattackOpening(
-                    ___pawn,
-                    newJob,
-                    jobGiver,
-                    out Job convertedCounterattackJob))
+            if (counterattackOpeningResult
+                == RimKataCounterattackOpeningResult.Converted)
             {
                 if (counterattackOpeningJob != null
                     && counterattackOpeningJob != convertedCounterattackJob)

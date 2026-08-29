@@ -14,6 +14,13 @@ namespace KRWF.RimKata
         Secondary
     }
 
+    public enum RimKataCounterattackOpeningResult
+    {
+        NotHandled,
+        Absorbed,
+        Converted
+    }
+
     public sealed class RimKataWeaponCycleState : IExposable
     {
         public ThingWithComps weapon;
@@ -2600,134 +2607,8 @@ namespace KRWF.RimKata
             return job?.playerForced == true;
         }
 
-        public static bool TryAbsorbCounterattackOpening(
-            Pawn pawn,
-            Job sourceJob,
-            ThinkNode jobGiver)
-        {
-            if (pawn?.InMentalState == true
-                || (!(jobGiver is JobGiver_ConfigurableHostilityResponse)
-                    && !(jobGiver is JobGiver_ReactToCloseMeleeThreat)))
-            {
-                return false;
-            }
-
-            Job currentJob = pawn?.CurJob;
-            if (IsProtectedPlayerForcedJob(currentJob)
-                && IsAutomaticThreatResponseJob(pawn, sourceJob))
-            {
-                return AbsorbAutomaticThreatIntoProtectedJob(
-                    pawn,
-                    sourceJob.targetA.Thing);
-            }
-
-            if (pawn.Drafted == true
-                && sourceJob?.def == JobDefOf.AttackMelee
-                && IsAutomaticThreatResponseJob(pawn, sourceJob))
-            {
-                return AbsorbAutomaticThreatIntoProtectedJob(
-                    pawn,
-                    sourceJob.targetA.Thing);
-            }
-
-            if (!CounterattackControlEnabled(pawn)
-                || !IsConfigurableCounterattackOpening(pawn, sourceJob))
-            {
-                return false;
-            }
-
-            if (currentJob?.def != RimKataDefOf.RimKata_Attack
-                || currentJob.playerForced
-                || !(pawn.jobs?.curDriver is JobDriver_RimKataAttack driver)
-                || !driver.CanAbsorbAutomaticAttackJob)
-            {
-                return false;
-            }
-
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn))
-            {
-                return true;
-            }
-
-            Thing target = sourceJob.targetA.Thing;
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state);
-            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                target);
-            if (sourceJob.def == JobDefOf.AttackMelee
-                && pawn.CanReachImmediate(target, PathEndMode.Touch))
-            {
-                state.RequestCloseAttack(target);
-            }
-
-            RefreshDualEngagementState(pawn, state);
-            return true;
-        }
-
-        private static bool AbsorbAutomaticThreatIntoProtectedJob(
-            Pawn pawn,
-            Thing threat)
-        {
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn))
-            {
-                return true;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state);
-            state.RequestAutomaticAttack(threat);
-            if (threat is Pawn incomingPawn)
-            {
-                state.NotifyIncomingThreat(incomingPawn);
-            }
-
-            if (pawn.CanReachImmediate(threat, PathEndMode.Touch))
-            {
-                pawn.Map.GetComponent<RimKataMapComponent>()
-                    ?.EnterCloseCombat(pawn, threat);
-                state.RequestCloseAttack(threat);
-            }
-
-            RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
-            RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
-                pawn,
-                state,
-                threat);
-            RefreshDualEngagementState(pawn, state);
-            state.dualLastDrivenTick = -1;
-            if (pawn.Drafted)
-            {
-                state.draftedFireActive = true;
-            }
-
-            return true;
-        }
-
-        private static bool IsAutomaticThreatResponseJob(Pawn pawn, Job job)
-        {
-            Thing target = job?.targetA.Thing;
-            return pawn?.Map != null
-                && !pawn.InMentalState
-                && job?.playerForced != true
-                && (job.def == JobDefOf.AttackStatic
-                    || job.def == JobDefOf.AttackMelee)
-                && target != null
-                && target.Spawned
-                && !target.Destroyed
-                && target.Map == pawn.Map
-                && RimKataEligibility.CanBeginGunKataAttack(pawn)
-                && RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                && (!(target is Pawn targetPawn)
-                    || (!targetPawn.Dead
-                        && !targetPawn.Downed
-                        && !targetPawn.Crawling
-                        && !targetPawn.IsPsychologicallyInvisible()));
-        }
-
-        public static bool TryConvertCounterattackOpening(
+        public static RimKataCounterattackOpeningResult
+        HandleCounterattackOpening(
             Pawn pawn,
             Job sourceJob,
             ThinkNode jobGiver,
@@ -2738,16 +2619,48 @@ namespace KRWF.RimKata
                     && !(jobGiver is JobGiver_ReactToCloseMeleeThreat))
                 || !CounterattackControlEnabled(pawn))
             {
-                return false;
+                return RimKataCounterattackOpeningResult.NotHandled;
             }
 
             if (!IsConfigurableCounterattackOpening(pawn, sourceJob))
             {
-                return false;
+                return RimKataCounterattackOpeningResult.NotHandled;
             }
 
             Thing target = sourceJob.targetA.Thing;
             RimKataPawnCombatState state = StateFor(pawn, false);
+            Job currentJob = pawn?.CurJob;
+            if (currentJob?.def == RimKataDefOf.RimKata_Attack
+                && !currentJob.playerForced
+                && pawn.jobs?.curDriver is JobDriver_RimKataAttack driver
+                && driver.CanAbsorbAutomaticAttackJob)
+            {
+                if (RimKataEligibility.RandomAttackEnabledForPawn(pawn))
+                {
+                    state ??= StateFor(pawn, true);
+                    BindCurrentWeapons(pawn, state);
+                    RimKataSharedTargetSearch.Begin(
+                        pawn,
+                        state,
+                        pawn.Position);
+                    RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
+                        pawn,
+                        state,
+                        target);
+                    if (sourceJob.def == JobDefOf.AttackMelee
+                        && pawn.CanReachImmediate(
+                            target,
+                            PathEndMode.Touch))
+                    {
+                        state.RequestCloseAttack(target);
+                    }
+
+                    RefreshDualEngagementState(pawn, state);
+                }
+
+                return RimKataCounterattackOpeningResult.Absorbed;
+            }
+
             Thing openingJobTarget = ResolveCloseTarget(
                     pawn,
                     state,
@@ -2762,7 +2675,7 @@ namespace KRWF.RimKata
                     pawn,
                     openingJobTarget))
             {
-                return false;
+                return RimKataCounterattackOpeningResult.NotHandled;
             }
 
             state ??= StateFor(pawn, true);
@@ -2815,7 +2728,7 @@ namespace KRWF.RimKata
                     pawn,
                     RimKataWeaponSlotUtility.PrimaryWeapon(pawn));
             convertedJob = rimKataJob;
-            return true;
+            return RimKataCounterattackOpeningResult.Converted;
         }
 
         private static bool IsConfigurableCounterattackOpening(
