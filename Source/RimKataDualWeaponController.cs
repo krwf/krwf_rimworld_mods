@@ -1846,7 +1846,6 @@ namespace KRWF.RimKata
             {
                 state.RequestAutomaticAttack(attacker);
             }
-            state.dualLastDrivenTick = -1;
             bool closeContext = pawn.CanReachImmediate(attacker, PathEndMode.Touch);
             if (closeContext)
             {
@@ -1879,7 +1878,6 @@ namespace KRWF.RimKata
                 return;
             }
 
-            state.dualLastDrivenTick = Find.TickManager.TicksGame;
             if (pawn.Drafted
                 || RimKataEligibility.RandomAttackEnabledForPawn(pawn))
             {
