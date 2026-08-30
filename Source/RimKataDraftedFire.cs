@@ -1,18 +1,107 @@
 using HarmonyLib;
 using RimWorld;
+using System.Runtime.CompilerServices;
 using Verse;
 using Verse.AI;
 
 namespace KRWF.RimKata
 {
+    internal static class RimKataPendingFollowupTickCache
+    {
+        private sealed class PendingMarker
+        {
+        }
+
+        private static readonly ConditionalWeakTable<Pawn, PendingMarker>
+            PendingPawns = new ConditionalWeakTable<Pawn, PendingMarker>();
+        private static readonly ConditionalWeakTable<Pawn, PendingMarker>
+            .CreateValueCallback CreateMarker = delegate { return new PendingMarker(); };
+
+        public static bool Contains(Pawn pawn)
+        {
+            return pawn != null
+                && PendingPawns.TryGetValue(pawn, out PendingMarker _);
+        }
+
+        public static void Mark(Pawn pawn)
+        {
+            if (pawn != null)
+            {
+                PendingPawns.GetValue(pawn, CreateMarker);
+            }
+        }
+
+        public static void Clear(Pawn pawn)
+        {
+            if (pawn != null)
+            {
+                PendingPawns.Remove(pawn);
+            }
+        }
+
+        public static void Synchronize(Pawn pawn, bool pending)
+        {
+            if (pending)
+            {
+                Mark(pawn);
+            }
+            else
+            {
+                Clear(pawn);
+            }
+        }
+    }
+
     public static class RimKataDraftedFireController
     {
         public static void Tick(Pawn pawn)
         {
-            TickDualWeaponController(pawn);
+            if (pawn?.Drafted == true)
+            {
+                TickDualWeaponController(pawn, null, false);
+                return;
+            }
+
+            StateFor(pawn, false)?.ClearDraftedMovementSearchTracking();
         }
 
-        private static void TickDualWeaponController(Pawn pawn)
+        public static void ProcessJobTrackerTick(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
+
+            if (pawn.InMentalState)
+            {
+                RimKataDualWeaponController.CancelOffenseForMentalState(pawn);
+                return;
+            }
+
+            if (pawn.Drafted)
+            {
+                RimKataPawnCombatState state = StateFor(pawn, false);
+                if (state?.dedicatedFollowupJobPending == true)
+                {
+                    RimKataDualWeaponController
+                        .TryConsumePendingDedicatedFollowupJob(pawn, state);
+                }
+
+                TickDualWeaponController(pawn, state, true);
+                return;
+            }
+
+            if (RimKataPendingFollowupTickCache.Contains(pawn))
+            {
+                RimKataDualWeaponController.TryConsumePendingDedicatedFollowupJob(
+                    pawn);
+            }
+        }
+
+        private static void TickDualWeaponController(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool existingStateKnown)
         {
             if (pawn == null
                 || pawn.InMentalState
@@ -21,17 +110,20 @@ namespace KRWF.RimKata
                 return;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, false);
-
             if (!pawn.Drafted)
             {
-                RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
                 return;
             }
 
-            if (!IsAutomaticFireJob(pawn.CurJobDef))
+            JobDef currentJobDef = pawn.CurJobDef;
+            if (!IsAutomaticFireJob(currentJobDef))
             {
-                RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
+                if (!existingStateKnown)
+                {
+                    state = StateFor(pawn, false);
+                    existingStateKnown = true;
+                }
+                state?.ClearDraftedMovementSearchTracking();
                 if (state?.dedicatedFollowupJobPending == true
                     && state.dedicatedFollowupJobPlayerForced)
                 {
@@ -45,27 +137,63 @@ namespace KRWF.RimKata
             bool automaticRangedFireAllowed = pawn.drafter?.FireAtWill == true;
             if (!automaticRangedFireAllowed)
             {
-                RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
+                if (!existingStateKnown)
+                {
+                    state = StateFor(pawn, false);
+                    existingStateKnown = true;
+                }
+                state?.ClearDraftedMovementSearchTracking();
+                if (state == null)
+                {
+                    return;
+                }
             }
 
             if (pawn.IsBurning())
             {
-                RimKataDualWeaponController.ClearDraftedMovementTracking(pawn);
-                CancelForFire(pawn);
+                if (!existingStateKnown)
+                {
+                    state = StateFor(pawn, false);
+                    existingStateKnown = true;
+                }
+                state?.ClearDraftedMovementSearchTracking();
+                CancelForFire(pawn, state);
                 return;
             }
 
-            bool physicalDodge = state?.DodgeMovementActive == true;
-            if (state?.DodgeMotionBlocksJob == true && !physicalDodge)
+            if (!RimKataEligibility.CanBeginGunKataAttack(pawn))
+            {
+                if (!existingStateKnown)
+                {
+                    state = StateFor(pawn, false);
+                }
+                ResetIfActive(pawn, state);
+                return;
+            }
+
+            bool randomAttackEnabled =
+                RimKataMod.Settings?.randomAttackEnabled != false;
+
+            bool movementSearch = false;
+            if (automaticRangedFireAllowed)
+            {
+                state ??= StateFor(pawn, true);
+                movementSearch = RimKataDualWeaponController
+                    .NotifyDraftedMovementCell(
+                        pawn,
+                        state,
+                        true);
+            }
+            else if (state == null)
             {
                 return;
             }
 
-            bool movementSearch = automaticRangedFireAllowed
-                && RimKataDualWeaponController.NotifyDraftedMovementCell(pawn);
-            state = StateFor(pawn, false);
             bool combatDemand = movementSearch
-                || RimKataDualWeaponController.HasCombatContinuity(pawn);
+                || RimKataDualWeaponController.HasCombatContinuity(
+                    pawn,
+                    state,
+                    randomAttackEnabled);
 
             if (!combatDemand)
             {
@@ -73,14 +201,6 @@ namespace KRWF.RimKata
 
                 return;
             }
-
-            if (!CanControllerPrerequisites(pawn))
-            {
-                ResetIfActive(pawn, state);
-                return;
-            }
-
-            state ??= StateFor(pawn, true);
 
             Thing requestedCloseTarget =
                 state.CloseAttackRequestActive
@@ -90,12 +210,16 @@ namespace KRWF.RimKata
             Thing immediateCloseTarget =
                 RimKataDualWeaponController.ResolveImmediateCloseTarget(
                     pawn,
+                    state,
                     requestedCloseTarget,
                     false,
                     false);
             bool closeContext = immediateCloseTarget != null;
 
-            if (!RimKataDualWeaponController.HasUsableWeapon(pawn, closeContext))
+            if (!RimKataDualWeaponController.HasUsableWeapon(
+                    pawn,
+                    closeContext,
+                    true))
             {
                 ResetIfActive(pawn, state);
 
@@ -104,8 +228,9 @@ namespace KRWF.RimKata
 
             state.draftedFireActive = true;
 
-            RimKataDualWeaponController.Tick(
+            RimKataDualWeaponController.TickWithKnownState(
                 pawn,
+                state,
                 immediateCloseTarget,
                 false,
                 false,
@@ -126,7 +251,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!CanControllerPrerequisites(pawn))
+            if (!CanControllerPrerequisites(pawn, true))
             {
                 return false;
             }
@@ -138,7 +263,14 @@ namespace KRWF.RimKata
 
         public static void CancelForFire(Pawn pawn)
         {
-            StateFor(pawn, false)?.CancelOffenseForFire();
+            CancelForFire(pawn, StateFor(pawn, false));
+        }
+
+        private static void CancelForFire(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            state?.CancelOffenseForFire();
             if (pawn?.stances?.curStance is Stance_RimKataAim)
             {
                 pawn.stances.SetStance(new Stance_Mobile());
@@ -159,19 +291,23 @@ namespace KRWF.RimKata
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
-                || target.Map != pawn.Map
-                || !pawn.CanReachImmediate(target, PathEndMode.Touch))
+                || target.Map != pawn.Map)
             {
                 return false;
             }
 
-            bool controllerDriven = pawn.CurJobDef == RimKataDefOf.RimKata_Attack
+            bool dedicatedJob = pawn.CurJobDef == RimKataDefOf.RimKata_Attack;
+            bool controllerDriven = dedicatedJob
                 || CanControllerPrerequisites(pawn);
             if (!controllerDriven
                 || (!RimKataTargeting.IsAutomaticEnemy(pawn, target)
                     && !(pawn.CurJob?.playerForced == true
                         && pawn.CurJob.targetA.Thing == target))
-                || !RimKataDualWeaponController.HasUsableWeapon(pawn, true))
+                || !pawn.CanReachImmediate(target, PathEndMode.Touch)
+                || !RimKataDualWeaponController.HasUsableWeapon(
+                    pawn,
+                    true,
+                    !dedicatedJob))
             {
                 return false;
             }
@@ -194,6 +330,7 @@ namespace KRWF.RimKata
                 || !target.Spawned
                 || !attacker.Spawned
                 || target.Map != attacker.Map
+                || target.Drafted != true
                 || !RimKataTargeting.IsAutomaticEnemy(target, attacker)
                 || attacker.Dead
                 || attacker.Downed
@@ -211,12 +348,14 @@ namespace KRWF.RimKata
             }
         }
 
-        private static bool CanControllerPrerequisites(Pawn pawn)
+        private static bool CanControllerPrerequisites(
+            Pawn pawn,
+            bool burningKnownFalse = false)
         {
             return pawn?.Drafted == true
                 && !pawn.InMentalState
-                && !pawn.IsBurning()
                 && IsAutomaticFireJob(pawn.CurJobDef)
+                && (burningKnownFalse || !pawn.IsBurning())
                 && RimKataEligibility.CanBeginGunKataAttack(pawn);
         }
 
@@ -316,8 +455,7 @@ namespace KRWF.RimKata
     {
         public static void Postfix(Pawn ___pawn)
         {
-            RimKataDualWeaponController.TryConsumePendingDedicatedFollowupJob(___pawn);
-            RimKataDraftedFireController.Tick(___pawn);
+            RimKataDraftedFireController.ProcessJobTrackerTick(___pawn);
         }
     }
 

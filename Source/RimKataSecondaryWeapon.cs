@@ -679,9 +679,27 @@ namespace KRWF.RimKata
 
         public static bool CanUseSecondarySlot(Pawn pawn)
         {
-            ThingWithComps primary = PrimaryWeapon(pawn);
+            return CanUseSecondarySlot(pawn, PrimaryWeapon(pawn), false);
+        }
+
+        internal static bool CanUseSecondarySlot(
+            Pawn pawn,
+            bool accessVerified)
+        {
+            return CanUseSecondarySlot(
+                pawn,
+                PrimaryWeapon(pawn),
+                accessVerified);
+        }
+
+        internal static bool CanUseSecondarySlot(
+            Pawn pawn,
+            ThingWithComps primary,
+            bool accessVerified)
+        {
             return RimKataMod.Settings?.secondaryWeaponEnabled != false
-                && RimKataEligibility.HasRimKataAccess(pawn)
+                && (accessVerified
+                    || RimKataEligibility.HasRimKataAccess(pawn))
                 && RimKataEquipmentUtility.IsWeaponEnabled(primary?.def)
                 && RimKataGripUtility.GripTypeFor(primary?.def) == RimKataGripType.OneHand;
         }

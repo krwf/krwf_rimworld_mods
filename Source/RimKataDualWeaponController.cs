@@ -381,13 +381,60 @@ namespace KRWF.RimKata
             bool closeTargetResolved = false,
             bool allowAutomaticRangedFire = true)
         {
+            TickCore(
+                pawn,
+                null,
+                assignedTarget,
+                playerForced,
+                killIncappedTarget,
+                closeCombatContext,
+                closeTargetResolved,
+                allowAutomaticRangedFire,
+                false);
+        }
+
+        internal static void TickWithKnownState(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool killIncappedTarget,
+            bool closeCombatContext,
+            bool closeTargetResolved,
+            bool allowAutomaticRangedFire)
+        {
+            TickCore(
+                pawn,
+                state,
+                assignedTarget,
+                playerForced,
+                killIncappedTarget,
+                closeCombatContext,
+                closeTargetResolved,
+                allowAutomaticRangedFire,
+                true);
+        }
+
+        private static void TickCore(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool killIncappedTarget,
+            bool closeCombatContext,
+            bool closeTargetResolved,
+            bool allowAutomaticRangedFire,
+            bool attackEligibilityVerified)
+        {
             if (pawn?.InMentalState == true)
             {
                 CancelOffenseForMentalState(pawn);
                 return;
             }
 
-            if (pawn?.Map == null || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+            if (pawn?.Map == null
+                || (!attackEligibilityVerified
+                    && !RimKataEligibility.CanBeginGunKataAttack(pawn)))
             {
                 Reset(pawn, true);
                 return;
@@ -396,8 +443,10 @@ namespace KRWF.RimKata
             allowAutomaticRangedFire = allowAutomaticRangedFire
                 && (!pawn.Drafted
                     || pawn.drafter?.FireAtWill == true);
+            bool randomAttackEnabled =
+                RimKataMod.Settings?.randomAttackEnabled != false;
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
+            state ??= StateFor(pawn, true);
             int currentTick = Find.TickManager.TicksGame;
             if (state.dualLastDrivenTick == currentTick)
             {
@@ -405,7 +454,11 @@ namespace KRWF.RimKata
             }
 
             ThingWithComps primaryWeapon = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondaryWeapon = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+            ThingWithComps secondaryWeapon = RimKataWeaponSlotUtility
+                .CanUseSecondarySlot(
+                    pawn,
+                    primaryWeapon,
+                    true)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                 : null;
             if (state.primaryWeaponCycle.weapon != primaryWeapon && state.secondaryWeaponCycle.weapon == primaryWeapon && secondaryWeapon == null)
@@ -425,11 +478,13 @@ namespace KRWF.RimKata
             if (NormalizeUnavailableCycleWork(
                     pawn,
                     state,
-                    state.primaryWeaponCycle)
+                    state.primaryWeaponCycle,
+                    randomAttackEnabled)
                 | NormalizeUnavailableCycleWork(
                     pawn,
                     state,
-                    state.secondaryWeaponCycle))
+                    state.secondaryWeaponCycle,
+                    randomAttackEnabled))
             {
                 state.ResetCandidateSaturationExpansion(true);
             }
@@ -473,15 +528,17 @@ namespace KRWF.RimKata
                         pawn,
                         state,
                         state.primaryWeaponCycle,
-                        assignedTarget);
+                        assignedTarget,
+                        randomAttackEnabled);
                     TryCacheSharedCandidate(
                         pawn,
                         state,
                         state.secondaryWeaponCycle,
-                        assignedTarget);
+                        assignedTarget,
+                        randomAttackEnabled);
                 }
                 state.ConsumeIdleProjectileSearchTrigger();
-                RefreshDualEngagementState(pawn, state);
+                RefreshDualEngagementState(pawn, state, randomAttackEnabled);
             }
 
             if (!allowAutomaticRangedFire
@@ -503,7 +560,7 @@ namespace KRWF.RimKata
             if (state.sharedTargetSearch?.scanActive == true)
             {
                 AdvanceSharedTargetSearch(pawn, state, assignedTarget);
-                RefreshDualEngagementState(pawn, state);
+                RefreshDualEngagementState(pawn, state, randomAttackEnabled);
                 if (state.dualEngagementActive)
                 {
                     if (pawn.Drafted)
@@ -519,7 +576,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!HasCombatContinuity(pawn))
+            if (!HasCombatContinuity(pawn, state, randomAttackEnabled))
             {
                 UpdateBodyAimStance(pawn, state);
                 return;
@@ -554,7 +611,8 @@ namespace KRWF.RimKata
                 closeCombatContext,
                 blockedByStance,
                 out Thing primaryPromotionTarget,
-                allowAutomaticRangedFire);
+                allowAutomaticRangedFire,
+                randomAttackEnabled);
             PrepareCycle(
                 pawn,
                 state,
@@ -565,7 +623,8 @@ namespace KRWF.RimKata
                 closeCombatContext,
                 blockedByStance,
                 out Thing secondaryPromotionTarget,
-                allowAutomaticRangedFire);
+                allowAutomaticRangedFire,
+                randomAttackEnabled);
             if (TryPromoteAutomaticJobTarget(
                 pawn,
                 state,
@@ -573,23 +632,24 @@ namespace KRWF.RimKata
                 playerForced,
                 primaryPromotionTarget,
                 secondaryPromotionTarget,
+                randomAttackEnabled,
                 out Thing promotedJobTarget))
             {
                 assignedTarget = promotedJobTarget;
             }
-            RefreshDualEngagementState(pawn, state);
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
 
             if (!blockedByStance && ReadyToAct(state.primaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire);
+                ExecuteCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
             }
 
             if (!blockedByStance && ReadyToAct(state.secondaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire);
+                ExecuteCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
             }
 
-            RefreshDualEngagementState(pawn, state);
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
             UpdateBodyAimStance(pawn, state);
         }
         // !!! Debug HUD !!!
@@ -741,7 +801,10 @@ namespace KRWF.RimKata
 
             ThingWithComps weapon = verb.EquipmentSource as ThingWithComps;
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                pawn,
+                primary,
+                true)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                 : null;
             return weapon != null
@@ -799,7 +862,7 @@ namespace KRWF.RimKata
                 && !pawn.InMentalState
                 && pawn.IsPlayerControlled
                 && RimKataEligibility.CanBeginGunKataAttack(pawn)
-                && HasUsableWeapon(pawn, true)
+                && HasUsableWeapon(pawn, true, true)
                 && target != null
                 && target != pawn
                 && !target.Destroyed
@@ -926,6 +989,14 @@ namespace KRWF.RimKata
 
         public static bool NotifyDraftedMovementCell(Pawn pawn)
         {
+            return NotifyDraftedMovementCell(pawn, null, false);
+        }
+
+        internal static bool NotifyDraftedMovementCell(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool attackEligibilityVerified)
+        {
             bool dedicatedJob = pawn?.CurJobDef == RimKataDefOf.RimKata_Attack;
             if (pawn?.Map == null
                 || (pawn.Drafted != true && !dedicatedJob))
@@ -933,7 +1004,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
+            state ??= StateFor(pawn, true);
             IntVec3 currentCell = pawn.Position;
             IntVec3 previousCell = state.draftedMovementSearchCell;
             bool movingFireEnabled = MovingFireEnabledForPawn(pawn);
@@ -952,7 +1023,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn))
+            bool randomAttackEnabled =
+                RimKataMod.Settings?.randomAttackEnabled != false
+                && (attackEligibilityVerified
+                    || RimKataEligibility.HasRimKataAccess(pawn));
+            if (!randomAttackEnabled)
             {
                 state.ConsumeDraftedMovementSearchTrigger();
                 return false;
@@ -960,7 +1035,10 @@ namespace KRWF.RimKata
 
             if (movedToAnotherCell)
             {
-                BindCurrentWeapons(pawn, state);
+                BindCurrentWeapons(
+                    pawn,
+                    state,
+                    attackEligibilityVerified);
             }
 
             bool searchInProgress = MovementSearchInProgress(state);
@@ -1259,7 +1337,8 @@ namespace KRWF.RimKata
 
             ThingWithComps weapon = verb.EquipmentSource as ThingWithComps;
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+            ThingWithComps secondary = RimKataWeaponSlotUtility
+                .CanUseSecondarySlot(pawn)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                 : null;
             if (weapon == null || (weapon != primary && weapon != secondary))
@@ -1726,7 +1805,8 @@ namespace KRWF.RimKata
             Pawn pawn,
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle,
-            Thing preferredTarget)
+            Thing preferredTarget,
+            bool? randomAttackEnabled = null)
         {
             if (pawn?.Map == null
                 || state == null
@@ -1759,9 +1839,10 @@ namespace KRWF.RimKata
             }
 
             Thing retainedTarget = cycle.lastFiredTarget;
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && retainedTarget != null
-                && !(retainedTarget is Projectile))
+            if (retainedTarget != null
+                && !(retainedTarget is Projectile)
+                && !(randomAttackEnabled
+                    ?? RimKataEligibility.RandomAttackEnabledForPawn(pawn)))
             {
                 if (ValidCurrentTargetForVerb(
                         pawn,
@@ -1798,7 +1879,8 @@ namespace KRWF.RimKata
         private static Verb LongestAutomaticRangeVerb(Pawn pawn)
         {
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+            ThingWithComps secondary = RimKataWeaponSlotUtility
+                .CanUseSecondarySlot(pawn)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                 : null;
             Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
@@ -1925,7 +2007,8 @@ namespace KRWF.RimKata
         private static bool HasCycleTargetWork(
             Pawn pawn,
             RimKataPawnCombatState state,
-            RimKataWeaponCycleState cycle)
+            RimKataWeaponCycleState cycle,
+            bool? randomAttackEnabled = null)
         {
             if (pawn?.Map == null || cycle?.weapon == null)
             {
@@ -1944,8 +2027,9 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (RimKataEligibility.RandomAttackEnabledForPawn(pawn)
-                && cycle.HasAutomaticCandidates)
+            if (cycle.HasAutomaticCandidates
+                && (randomAttackEnabled
+                    ?? RimKataEligibility.RandomAttackEnabledForPawn(pawn)))
             {
                 return true;
             }
@@ -2058,21 +2142,35 @@ namespace KRWF.RimKata
 
         private static bool HasAnyCycleTargetWork(
             Pawn pawn,
-            RimKataPawnCombatState state)
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled = null)
         {
+            RimKataWeaponCycleState primary = state?.primaryWeaponCycle;
+            RimKataWeaponCycleState secondary = state?.secondaryWeaponCycle;
+            if (!randomAttackEnabled.HasValue
+                && (primary?.HasAutomaticCandidates == true
+                    || secondary?.HasAutomaticCandidates == true))
+            {
+                randomAttackEnabled =
+                    RimKataEligibility.RandomAttackEnabledForPawn(pawn);
+            }
+
             return HasCycleTargetWork(
                     pawn,
                     state,
-                    state?.primaryWeaponCycle)
+                    primary,
+                    randomAttackEnabled)
                 || HasCycleTargetWork(
                     pawn,
                     state,
-                    state?.secondaryWeaponCycle);
+                    secondary,
+                    randomAttackEnabled);
         }
 
         private static void RefreshDualEngagementState(
             Pawn pawn,
-            RimKataPawnCombatState state)
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled = null)
         {
             if (state == null)
             {
@@ -2080,7 +2178,10 @@ namespace KRWF.RimKata
             }
 
             bool wasActive = state.dualEngagementActive;
-            state.dualEngagementActive = EvaluateCombatContinuity(pawn, state);
+            state.dualEngagementActive = EvaluateCombatContinuity(
+                pawn,
+                state,
+                randomAttackEnabled);
             if (wasActive && !state.dualEngagementActive)
             {
                 state.ResetCandidateSaturationExpansion(true);
@@ -2089,19 +2190,27 @@ namespace KRWF.RimKata
 
         public static bool HasCombatContinuity(Pawn pawn)
         {
-            RimKataPawnCombatState state = StateFor(pawn, false);
+            return HasCombatContinuity(pawn, StateFor(pawn, false));
+        }
+
+        internal static bool HasCombatContinuity(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled = null)
+        {
             if (pawn?.InMentalState == true || state == null)
             {
                 return false;
             }
 
-            RefreshDualEngagementState(pawn, state);
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
             return state.dualEngagementActive;
         }
 
         private static bool EvaluateCombatContinuity(
             Pawn pawn,
-            RimKataPawnCombatState state)
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled = null)
         {
             if (pawn?.Map == null || pawn.InMentalState || state == null)
             {
@@ -2124,7 +2233,7 @@ namespace KRWF.RimKata
                 || state.idleProjectileSearchTriggerPending
                 || state.dedicatedFollowupJobPending
                 || HasDedicatedTargetContinuity(pawn, state)
-                || HasAnyCycleTargetWork(pawn, state)
+                || HasAnyCycleTargetWork(pawn, state, randomAttackEnabled)
                 || state.AutomaticAttackRequestActive
                 || state.CloseAttackRequestActive;
         }
@@ -2264,7 +2373,15 @@ namespace KRWF.RimKata
 
         public static void TryConsumePendingDedicatedFollowupJob(Pawn pawn)
         {
-            RimKataPawnCombatState state = StateFor(pawn, false);
+            TryConsumePendingDedicatedFollowupJob(
+                pawn,
+                StateFor(pawn, false));
+        }
+
+        internal static void TryConsumePendingDedicatedFollowupJob(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
             if (pawn?.InMentalState == true)
             {
                 CancelOffenseForMentalState(pawn);
@@ -2273,6 +2390,7 @@ namespace KRWF.RimKata
 
             if (state?.dedicatedFollowupJobPending != true)
             {
+                RimKataPendingFollowupTickCache.Clear(pawn);
                 return;
             }
 
@@ -2750,7 +2868,7 @@ namespace KRWF.RimKata
                 || !target.Spawned
                 || target.Map != pawn.Map
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn)
-                || !HasUsableWeapon(pawn, true))
+                || !HasUsableWeapon(pawn, true, true))
             {
                 return false;
             }
@@ -2939,7 +3057,17 @@ namespace KRWF.RimKata
 
         public static bool HasUsableWeapon(Pawn pawn, bool closeCombatContext)
         {
-            if (pawn == null || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+            return HasUsableWeapon(pawn, closeCombatContext, false);
+        }
+
+        internal static bool HasUsableWeapon(
+            Pawn pawn,
+            bool closeCombatContext,
+            bool attackEligibilityVerified)
+        {
+            if (pawn == null
+                || (!attackEligibilityVerified
+                    && !RimKataEligibility.CanBeginGunKataAttack(pawn)))
             {
                 return false;
             }
@@ -2953,7 +3081,11 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+            ThingWithComps secondary = RimKataWeaponSlotUtility
+                .CanUseSecondarySlot(
+                    pawn,
+                    primary,
+                    attackEligibilityVerified)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                 : null;
             Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(
@@ -2968,9 +3100,24 @@ namespace KRWF.RimKata
             bool playerForced,
             bool killIncappedTarget)
         {
-            return ResolveCloseTarget(
+            return ResolveImmediateCloseTarget(
                 pawn,
                 StateFor(pawn, false),
+                assignedTarget,
+                playerForced,
+                killIncappedTarget);
+        }
+
+        internal static Thing ResolveImmediateCloseTarget(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool killIncappedTarget)
+        {
+            return ResolveCloseTarget(
+                pawn,
+                state,
                 assignedTarget,
                 playerForced,
                 killIncappedTarget);
@@ -3872,11 +4019,18 @@ namespace KRWF.RimKata
             state.draftedPlannedCloseContext = false;
         }
 
-        private static void BindCurrentWeapons(Pawn pawn, RimKataPawnCombatState state)
+        private static void BindCurrentWeapons(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool accessVerified = false)
         {
-            state.primaryWeaponCycle.Bind(RimKataWeaponSlotUtility.PrimaryWeapon(pawn));
+            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            state.primaryWeaponCycle.Bind(primary);
             state.secondaryWeaponCycle.Bind(
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+                RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                    pawn,
+                    primary,
+                    accessVerified)
                     ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
                     : null);
         }
@@ -3886,13 +4040,26 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle)
         {
+            return NormalizeUnavailableCycleWork(
+                pawn,
+                state,
+                cycle,
+                RimKataEligibility.RandomAttackEnabledForPawn(pawn));
+        }
+
+        private static bool NormalizeUnavailableCycleWork(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            RimKataWeaponCycleState cycle,
+            bool randomAttackEnabled)
+        {
             if (cycle == null)
             {
                 return false;
             }
 
             bool changed = false;
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+            if (!randomAttackEnabled
                 && cycle.HasAutomaticCandidates)
             {
                 cycle.automaticCandidates.Clear();
@@ -3962,7 +4129,8 @@ namespace KRWF.RimKata
             bool closeCombatContext,
             bool blockedByStance,
             out Thing promotedAutomaticTarget,
-            bool allowAutomaticRangedFire = true)
+            bool allowAutomaticRangedFire,
+            bool randomAttackEnabled)
         {
             promotedAutomaticTarget = null;
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
@@ -3976,7 +4144,8 @@ namespace KRWF.RimKata
                 if (NormalizeUnavailableCycleWork(
                     pawn,
                     state,
-                    cycle))
+                    cycle,
+                    randomAttackEnabled))
                 {
                     state?.ResetCandidateSaturationExpansion(true);
                 }
@@ -3990,7 +4159,7 @@ namespace KRWF.RimKata
                 && !playerForced;
             bool requestAutomaticRefill = allowAutomaticRangedFire
                 && !closeCombatContext
-                && RimKataEligibility.RandomAttackEnabledForPawn(pawn);
+                && randomAttackEnabled;
 
             if (cycle.HasPlan
                 && cycle.plannedTarget?.Spawned == true
@@ -4041,7 +4210,8 @@ namespace KRWF.RimKata
                     cycle,
                     verb,
                     cycle.plannedTarget ?? cycle.visualTarget,
-                    requestAutomaticRefill);
+                    requestAutomaticRefill,
+                    randomAttackEnabled);
             }
 
             PromoteApproachingShotToCloseContext(pawn, cycle, verb, closeCombatContext);
@@ -4093,7 +4263,8 @@ namespace KRWF.RimKata
                         pawn,
                         state,
                         cycle,
-                        assignedTarget);
+                        assignedTarget,
+                        randomAttackEnabled);
                 }
 
                 automaticPromotionAttempted =
@@ -4107,7 +4278,7 @@ namespace KRWF.RimKata
                         killIncappedTarget,
                         closeCombatContext,
                         requestAutomaticRefill,
-                        RimKataEligibility.RandomAttackEnabledForPawn(pawn),
+                        randomAttackEnabled,
                         out Thing promotedCandidate))
                 {
                     promotedAutomaticTarget = promotedCandidate;
@@ -4160,7 +4331,8 @@ namespace KRWF.RimKata
                     cycle,
                     verb,
                     cycle.plannedTarget,
-                    requestAutomaticRefill))
+                    requestAutomaticRefill,
+                    randomAttackEnabled))
             {
                 return true;
             }
@@ -4219,6 +4391,7 @@ namespace KRWF.RimKata
             bool playerForced,
             Thing primaryCandidate,
             Thing secondaryCandidate,
+            bool? randomAttackEnabled,
             out Thing promotedTarget)
         {
             promotedTarget = null;
@@ -4227,8 +4400,9 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || state == null
                 || playerForced
-                || !RimKataEligibility.RandomAttackEnabledForPawn(pawn)
                 || pawn.CurJobDef != RimKataDefOf.RimKata_Attack
+                || !(randomAttackEnabled
+                    ?? RimKataEligibility.RandomAttackEnabledForPawn(pawn))
                 || pawn.CurJob.targetA.Thing != assignedTarget
                 || (RimKataTargeting.IsValidAutomaticAttackTarget(
                         pawn,
@@ -4868,7 +5042,8 @@ namespace KRWF.RimKata
             bool playerForced,
             bool killIncappedTarget,
             bool closeCombatContext,
-            bool allowAutomaticRangedFire = true)
+            bool allowAutomaticRangedFire,
+            bool randomAttackEnabled)
         {
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
@@ -4943,7 +5118,8 @@ namespace KRWF.RimKata
                     cycle,
                     verb,
                     cycle.plannedTarget,
-                    allowAutomaticRangedFire && !closeCombatContext))
+                    allowAutomaticRangedFire && !closeCombatContext,
+                    randomAttackEnabled))
             {
                 return -1;
             }
@@ -5093,8 +5269,7 @@ namespace KRWF.RimKata
                     bool requestAutomaticRefill =
                         allowAutomaticRangedFire
                         && !closeCombatContext
-                        && RimKataEligibility.RandomAttackEnabledForPawn(
-                            pawn);
+                        && randomAttackEnabled;
                     if (!(firedTarget is Projectile)
                         && !RimKataTargeting.IsValidAutomaticAttackTarget(
                             pawn,
@@ -5112,7 +5287,8 @@ namespace KRWF.RimKata
                         pawn,
                         state,
                         cycle,
-                        assignedTarget);
+                        assignedTarget,
+                        randomAttackEnabled);
                     if (cycle.cachedCandidateTarget != null
                         && TryPromoteCachedCandidate(
                             pawn,
@@ -5122,8 +5298,7 @@ namespace KRWF.RimKata
                             killIncappedTarget,
                             closeCombatContext,
                             requestAutomaticRefill,
-                            RimKataEligibility.RandomAttackEnabledForPawn(
-                                pawn),
+                            randomAttackEnabled,
                             out Thing nextAutomaticTarget))
                     {
                         TryPromoteAutomaticJobTarget(
@@ -5137,6 +5312,7 @@ namespace KRWF.RimKata
                             cycle == state.secondaryWeaponCycle
                                 ? nextAutomaticTarget
                                 : null,
+                            randomAttackEnabled,
                             out Thing _);
                     }
                 }
@@ -5207,7 +5383,8 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             Verb verb,
             Thing target,
-            bool requestRefill)
+            bool requestRefill,
+            bool? randomAttackEnabled = null)
         {
             if (pawn?.pather?.MovingNow != true
                 || verb == null
@@ -5226,7 +5403,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (!RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+            if (!(randomAttackEnabled
+                    ?? RimKataEligibility.RandomAttackEnabledForPawn(pawn))
                 && !(target is Projectile)
                 && verb.CanHitTarget(target))
             {
