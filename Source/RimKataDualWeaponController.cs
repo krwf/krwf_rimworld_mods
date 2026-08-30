@@ -484,7 +484,9 @@ namespace KRWF.RimKata
                 RefreshDualEngagementState(pawn, state);
             }
 
-            if (!allowAutomaticRangedFire && !closeCombatContext)
+            if (!allowAutomaticRangedFire
+                && !closeCombatContext
+                && !playerForced)
             {
                 SuppressNewAutomaticRangedTargeting(pawn, state);
             }
@@ -1213,6 +1215,11 @@ namespace KRWF.RimKata
             cycle.ClearAutomaticCandidates();
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
+            if (!IsLiveFocusedTarget(pawn, cycle) && cycle.HasPlan)
+            {
+                ApplyInterruptedBurstCooldown(pawn, cycle, verb);
+                ClearTargetPreservingCycle(cycle);
+            }
             return false;
         }
 

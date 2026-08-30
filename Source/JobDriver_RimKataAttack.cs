@@ -604,8 +604,7 @@ namespace KRWF.RimKata
                 && job.targetA.HasThing;
             bool playerSquadRangedOrder =
                 RimKataAttackGizmoTargetContext.Active
-                && orderedAttack
-                && job.playerForced;
+                && orderedAttack;
             Verb orderedVerb = job?.verbToUse;
             bool playerRangedCloseOrder = orderedAttack
                 && job.playerForced
