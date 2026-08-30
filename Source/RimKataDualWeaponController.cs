@@ -2646,6 +2646,10 @@ namespace KRWF.RimKata
                     state,
                     openingJobTarget);
             }
+            RimKataSharedTargetSearch.Begin(
+                pawn,
+                state,
+                pawn.Position);
             if (sourceJob.def == JobDefOf.AttackMelee
                 && pawn.CanReachImmediate(
                     openingJobTarget,

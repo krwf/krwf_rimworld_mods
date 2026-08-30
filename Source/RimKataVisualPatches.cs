@@ -1203,7 +1203,6 @@ namespace KRWF.RimKata
 
     public static class RimKataAutomaticRangeVisualUtility
     {
-        private const float DualMeleeSearchRange = 1.42f;
         private const float RangeRingAltitudeOffset = -0.0001f;
         private const int RangeRingRenderQueue = 2899;
         private static readonly List<IntVec3> RingCells = new List<IntVec3>();
@@ -1241,11 +1240,6 @@ namespace KRWF.RimKata
                 pawn,
                 primary,
                 usableSecondary);
-            if (radius <= 0f
-                && HasDualMeleeLoadout(primary, rawSecondary))
-            {
-                radius = DualMeleeSearchRange;
-            }
 
             if (radius <= 0
                 || radius > GenRadial.MaxRadialPatternRadius)
@@ -1382,46 +1376,29 @@ namespace KRWF.RimKata
             ThingWithComps weapon,
             Verb verb)
         {
-            if (verb == null || verb.IsMeleeAttack)
+            if (verb == null)
             {
                 return 0f;
             }
 
             return Mathf.Max(
                 0f,
-                RimKataRangeUtility.ResolveCandidateRange(
-                    pawn,
-                    weapon,
-                    verb));
-        }
-
-        public static bool HasDualMeleeLoadout(Pawn pawn)
-        {
-            if (!RimKataVisualUtility.TryGetUiLoadout(
-                    pawn,
-                    out ThingWithComps primary,
-                    out ThingWithComps secondary))
-            {
-                primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-                secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
-            }
-
-            return HasDualMeleeLoadout(primary, secondary);
-        }
-
-        private static bool HasDualMeleeLoadout(
-            ThingWithComps primary,
-            ThingWithComps secondary)
-        {
-            return primary?.def?.IsMeleeWeapon == true
-                && secondary?.def?.IsMeleeWeapon == true;
+                verb.IsMeleeAttack
+                    ? RimKataRangeUtility.ResolveEffectiveRange(
+                        pawn,
+                        weapon,
+                        verb)
+                    : RimKataRangeUtility.ResolveCandidateRange(
+                        pawn,
+                        weapon,
+                        verb));
         }
     }
 
     [HarmonyPatch(typeof(PawnAttackGizmoUtility), "GetMeleeAttackGizmo")]
     public static class Patch_PawnAttackGizmoUtility_RimKataMeleeRange
     {
-        private static readonly Action<LocalTargetInfo> DrawSelectedDualMeleeRangesAction = DrawSelectedDualMeleeRanges;
+        private static readonly Action<LocalTargetInfo> DrawSelectedMeleeRangesAction = DrawSelectedMeleeRanges;
 
         public static void Postfix(Pawn pawn, ref Gizmo __result)
         {
@@ -1441,15 +1418,15 @@ namespace KRWF.RimKata
 
             if (command.onUpdate == null)
             {
-                command.onUpdate = DrawSelectedDualMeleeRangesAction;
+                command.onUpdate = DrawSelectedMeleeRangesAction;
             }
-            else if (command.onUpdate != DrawSelectedDualMeleeRangesAction)
+            else if (command.onUpdate != DrawSelectedMeleeRangesAction)
             {
-                command.onUpdate += DrawSelectedDualMeleeRangesAction;
+                command.onUpdate += DrawSelectedMeleeRangesAction;
             }
         }
 
-        private static void DrawSelectedDualMeleeRanges(LocalTargetInfo _)
+        private static void DrawSelectedMeleeRanges(LocalTargetInfo _)
         {
             List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
             if (selectedPawns == null)
