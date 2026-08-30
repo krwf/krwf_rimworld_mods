@@ -1302,7 +1302,14 @@ namespace KRWF.RimKata
             Verb secondaryVerb = StandardCommandVerb(secondary);
             if (secondaryVerb?.IsMeleeAttack == false
                 && (longest == null
-                    || secondaryVerb.EffectiveRange > longest.EffectiveRange))
+                    || RimKataRangeUtility.ResolveEffectiveRange(
+                            pawn,
+                            secondary,
+                            secondaryVerb)
+                        > RimKataRangeUtility.ResolveEffectiveRange(
+                            pawn,
+                            primary,
+                            longest)))
             {
                 longest = secondaryVerb;
             }
@@ -1361,12 +1368,19 @@ namespace KRWF.RimKata
         {
             return Mathf.Max(
                 AutomaticSearchVisualRange(
+                    pawn,
+                    primary,
                     RimKataWeaponSlotUtility.CombatVerb(pawn, primary)),
                 AutomaticSearchVisualRange(
+                    pawn,
+                    secondary,
                     RimKataWeaponSlotUtility.CombatVerb(pawn, secondary)));
         }
 
-        private static float AutomaticSearchVisualRange(Verb verb)
+        private static float AutomaticSearchVisualRange(
+            Pawn pawn,
+            ThingWithComps weapon,
+            Verb verb)
         {
             if (verb == null || verb.IsMeleeAttack)
             {
@@ -1375,7 +1389,10 @@ namespace KRWF.RimKata
 
             return Mathf.Max(
                 0f,
-                RimKataRangeUtility.ResolveCandidateRange(verb));
+                RimKataRangeUtility.ResolveCandidateRange(
+                    pawn,
+                    weapon,
+                    verb));
         }
 
         public static bool HasDualMeleeLoadout(Pawn pawn)

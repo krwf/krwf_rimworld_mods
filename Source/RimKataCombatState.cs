@@ -666,7 +666,7 @@ namespace KRWF.RimKata
             pendingMeleeThreatClearTick = -1;
 
             if (pawn?.Drafted == true
-                && RimKataEligibility.HasRimKataAccess(pawn)
+                && RimKataDualWeaponController.CounterattackControlEnabled(pawn)
                 && pawn.mindState?.meleeThreat != null)
             {
                 pawn.mindState.meleeThreat = null;
@@ -1324,6 +1324,19 @@ namespace KRWF.RimKata
         private bool projectileWakeDirty;
         private bool projectileSchedulerSuspended;
         private int projectileWakeTraversalIndex;
+        private bool weatherRangeCapInitialized;
+        private float observedWeatherMaxRangeCap;
+        private int weatherRangeRevision;
+        private int lastWeatherRangeCheckTick = int.MinValue;
+
+        internal int WeatherRangeRevision
+        {
+            get
+            {
+                RefreshWeatherRangeRevision();
+                return weatherRangeRevision;
+            }
+        }
 
         public RimKataMapComponent(Map map) : base(map)
         {
@@ -1332,6 +1345,7 @@ namespace KRWF.RimKata
         public override void FinalizeInit()
         {
             base.FinalizeInit();
+            RefreshWeatherRangeRevision(true);
             lock (statesLock)
             {
                 RebuildStateIndex();
@@ -1361,6 +1375,10 @@ namespace KRWF.RimKata
 
                 if (Scribe.mode == LoadSaveMode.PostLoadInit)
                 {
+                    weatherRangeCapInitialized = false;
+                    observedWeatherMaxRangeCap = 0f;
+                    weatherRangeRevision = 0;
+                    lastWeatherRangeCheckTick = int.MinValue;
                     RebuildStateIndex();
                 }
             }
@@ -1368,6 +1386,7 @@ namespace KRWF.RimKata
 
         public override void MapComponentTick()
         {
+            RefreshWeatherRangeRevision();
             TickProjectileScheduler();
             lock (statesLock)
             {
@@ -1838,6 +1857,41 @@ namespace KRWF.RimKata
             projectileWakeTraversalActive = false;
             projectileWakeDirty = false;
             projectileWakeTraversalIndex = 0;
+        }
+
+        private void RefreshWeatherRangeRevision(bool force = false)
+        {
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (!force && lastWeatherRangeCheckTick == currentTick)
+            {
+                return;
+            }
+
+            lastWeatherRangeCheckTick = currentTick;
+            float currentCap =
+                map?.weatherManager?.CurWeatherMaxRangeCap ?? float.MaxValue;
+            if (!weatherRangeCapInitialized)
+            {
+                observedWeatherMaxRangeCap = currentCap;
+                weatherRangeCapInitialized = true;
+                return;
+            }
+
+            if (observedWeatherMaxRangeCap.Equals(currentCap))
+            {
+                return;
+            }
+
+            observedWeatherMaxRangeCap = currentCap;
+            unchecked
+            {
+                weatherRangeRevision++;
+            }
+
+            if (weatherRangeRevision == 0)
+            {
+                weatherRangeRevision = 1;
+            }
         }
 
         public void ScheduleDraftedMeleeThreatClear(Pawn pawn)

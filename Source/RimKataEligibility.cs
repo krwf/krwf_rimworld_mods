@@ -20,11 +20,6 @@ namespace KRWF.RimKata
             return RimKataEligibilityCache.HasAnyAccessSource(pawn);
         }
 
-        public static bool HasActiveGene(Pawn pawn)
-        {
-            return HasRimKataAccess(pawn);
-        }
-
         public static bool RandomAttackEnabledForPawn(Pawn pawn)
         {
             return pawn != null
@@ -104,23 +99,6 @@ namespace KRWF.RimKata
                 && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn);
         }
 
-        public static bool CanUseGunKataAttacks(Pawn pawn)
-        {
-            return CanBeginGunKataAttack(pawn)
-                && !IsWorking(pawn)
-                && pawn.CurJob?.def == RimKataDefOf.RimKata_Attack;
-        }
-
-        public static bool TryGetEnabledRangedVerb(Pawn pawn, out Verb verb)
-        {
-            if (!TryGetEnabledCombatVerb(pawn, out verb))
-            {
-                return false;
-            }
-
-            return !verb.IsMeleeAttack;
-        }
-
         public static bool TryGetEnabledCombatVerb(Pawn pawn, out Verb verb)
         {
             verb = null;
@@ -131,35 +109,6 @@ namespace KRWF.RimKata
 
             verb = RimKataWeaponSlotUtility.CombatVerb(pawn, pawn.equipment?.Primary);
             return verb != null;
-        }
-
-        public static bool CanShootWithPrimaryWeapon(Pawn pawn, out Verb verb)
-        {
-            verb = null;
-            if (!CanUseGunKataAttacks(pawn) || !TryGetEnabledRangedVerb(pawn, out verb))
-            {
-                return false;
-            }
-
-            return verb != null
-                && verb.Available()
-                && !verb.ApparelPreventsShooting();
-        }
-
-        public static bool CanShootWithPrimaryWeaponInCloseCombat(Pawn pawn, out Verb verb)
-        {
-            verb = null;
-            if (!CanUseGunKataAttacks(pawn) || !TryGetEnabledRangedVerb(pawn, out verb))
-            {
-                return false;
-            }
-
-            if (verb == null || verb.ApparelPreventsShooting())
-            {
-                return false;
-            }
-
-            return IsRangedVerbAvailableInCloseCombat(pawn, verb);
         }
 
         public static bool IsRangedVerbAvailableInCloseCombat(Pawn pawn, Verb verb)

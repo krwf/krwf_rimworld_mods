@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using Verse;
 
@@ -26,10 +27,75 @@ namespace KRWF.RimKata
 
     public static class RimKataRangeUtility
     {
+        private sealed class CachedWeaponRange
+        {
+            public ThingWithComps weapon;
+            public Verb verb;
+            public Map map;
+            public RimKataMapComponent mapComponent;
+            public int weatherRevision;
+            public float effectiveRange;
+            public bool valid;
+
+            public void AssignWeapon(ThingWithComps assignedWeapon)
+            {
+                weapon = assignedWeapon;
+                verb = null;
+                map = null;
+                mapComponent = null;
+                weatherRevision = 0;
+                effectiveRange = 0f;
+                valid = false;
+            }
+        }
+
+        private sealed class PawnWeaponRangeCache
+        {
+            private readonly CachedWeaponRange first = new CachedWeaponRange();
+            private readonly CachedWeaponRange second = new CachedWeaponRange();
+            private bool replaceFirst;
+
+            public CachedWeaponRange EntryFor(ThingWithComps weapon)
+            {
+                if (ReferenceEquals(first.weapon, weapon))
+                {
+                    return first;
+                }
+
+                if (ReferenceEquals(second.weapon, weapon))
+                {
+                    return second;
+                }
+
+                if (first.weapon == null)
+                {
+                    first.AssignWeapon(weapon);
+                    return first;
+                }
+
+                if (second.weapon == null)
+                {
+                    second.AssignWeapon(weapon);
+                    return second;
+                }
+
+                CachedWeaponRange replacement = replaceFirst ? first : second;
+                replaceFirst = !replaceFirst;
+                replacement.AssignWeapon(weapon);
+                return replacement;
+            }
+        }
+
         private const float ProbeLow = 0.2f;
         private const float ProbeHigh = 0.8f;
         private const float ProbeTolerance = 0.000001f;
         private const float ProbeSearchLimit = 4096f;
+        private static readonly ConditionalWeakTable<Pawn, PawnWeaponRangeCache>
+            WeaponRangeCaches =
+                new ConditionalWeakTable<Pawn, PawnWeaponRangeCache>();
+        private static readonly ConditionalWeakTable<Pawn, PawnWeaponRangeCache>
+            .CreateValueCallback CreateWeaponRangeCache =
+                delegate { return new PawnWeaponRangeCache(); };
         private static bool runtimeBandsAvailable;
         private static readonly RimKataRangeBands CachedBands = DetectRuntimeBands();
 
@@ -38,9 +104,89 @@ namespace KRWF.RimKata
             get => CachedBands;
         }
 
-        public static float ResolveCandidateRange(Verb verb)
+        public static float ResolveCandidateRange(
+            Pawn pawn,
+            ThingWithComps weapon,
+            Verb verb)
         {
-            float effectiveRange = Mathf.Max(0f, verb?.EffectiveRange ?? 0f);
+            return ApplyCandidateRange(
+                ResolveEffectiveRange(pawn, weapon, verb));
+        }
+
+        public static float ResolveEffectiveRange(
+            Pawn pawn,
+            ThingWithComps weapon,
+            Verb verb)
+        {
+            if (verb == null)
+            {
+                return 0f;
+            }
+
+            if (ShouldAlwaysResample(verb)
+                || pawn?.Map == null
+                || weapon == null
+                || !ReferenceEquals(verb.Caster, pawn)
+                || !ReferenceEquals(verb.EquipmentSource, weapon))
+            {
+                return SampleEffectiveRange(verb);
+            }
+
+            Map map = pawn.Map;
+            PawnWeaponRangeCache pawnCache = WeaponRangeCaches.GetValue(
+                pawn,
+                CreateWeaponRangeCache);
+            CachedWeaponRange cached = pawnCache.EntryFor(weapon);
+            RimKataMapComponent mapComponent =
+                ReferenceEquals(cached.map, map)
+                    ? cached.mapComponent
+                    : map.GetComponent<RimKataMapComponent>();
+            if (mapComponent == null)
+            {
+                return SampleEffectiveRange(verb);
+            }
+
+            int weatherRevision = mapComponent.WeatherRangeRevision;
+            if (cached.valid
+                && ReferenceEquals(cached.verb, verb)
+                && ReferenceEquals(cached.map, map)
+                && ReferenceEquals(cached.mapComponent, mapComponent)
+                && cached.weatherRevision == weatherRevision)
+            {
+                return cached.effectiveRange;
+            }
+
+            float effectiveRange = SampleEffectiveRange(verb);
+            cached.verb = verb;
+            cached.map = map;
+            cached.mapComponent = mapComponent;
+            cached.weatherRevision = weatherRevision;
+            cached.effectiveRange = effectiveRange;
+            cached.valid = true;
+            return effectiveRange;
+        }
+
+        public static void InvalidateWeaponRanges(Pawn pawn)
+        {
+            if (pawn != null)
+            {
+                WeaponRangeCaches.Remove(pawn);
+            }
+        }
+
+        private static bool ShouldAlwaysResample(Verb verb)
+        {
+            return verb.verbProps?.rangeStat != null
+                || verb.GetType().Assembly != typeof(Verb).Assembly;
+        }
+
+        private static float SampleEffectiveRange(Verb verb)
+        {
+            return Mathf.Max(0f, verb?.EffectiveRange ?? 0f);
+        }
+
+        private static float ApplyCandidateRange(float effectiveRange)
+        {
             RimKataSettings settings = RimKataMod.Settings;
             if (settings == null)
             {

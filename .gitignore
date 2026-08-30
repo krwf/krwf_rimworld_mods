@@ -1,6 +1,8 @@
 /Assemblies/
 /Source/bin/
 /Source/obj/
+/Source/.vs/
+/.codex-build/
 /.vs/
 *.txt
 *.user

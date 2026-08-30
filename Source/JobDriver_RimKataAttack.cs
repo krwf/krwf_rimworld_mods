@@ -1130,6 +1130,11 @@ namespace KRWF.RimKata
             Pawn pawn,
             ref Job __result)
         {
+            if (PreferVanillaCloseMeleeThreat(pawn, ref __result))
+            {
+                return;
+            }
+
             if (RejectNonAutomaticMeleeThreat(pawn, ref __result))
             {
                 return;
@@ -1167,6 +1172,60 @@ namespace KRWF.RimKata
             {
                 __result.verbToUse = rangedVerb;
             }
+        }
+
+        private static bool PreferVanillaCloseMeleeThreat(
+            Pawn pawn,
+            ref Job job)
+        {
+            Thing threat = pawn?.mindState?.meleeThreat;
+            if (pawn?.Map == null
+                || !RimKataEligibility.HasRimKataAccess(pawn)
+                || RimKataDualWeaponController.CounterattackControlEnabled(pawn)
+                || pawn.Drafted
+                || pawn.InMentalState
+                || pawn.IsBurning()
+                || pawn.WorkTagIsDisabled(WorkTags.Violent)
+                || PawnUtility.PlayerForcedJobNowOrSoon(pawn)
+                || job == null
+                || (job.def != JobDefOf.AttackStatic
+                    && job.def != JobDefOf.AttackMelee)
+                || job.playerForced
+                || threat == null
+                || threat.Destroyed
+                || !threat.Spawned
+                || threat.Map != pawn.Map
+                || !pawn.mindState.MeleeThreatStillThreat
+                || !RimKataTargeting.IsAutomaticEnemy(pawn, threat)
+                || !pawn.CanReachImmediate(threat, PathEndMode.Touch))
+            {
+                return false;
+            }
+
+            Job currentJob = pawn.CurJob;
+            if (currentJob?.def == JobDefOf.AttackMelee
+                && currentJob.targetA.Thing == threat
+                && !currentJob.playerForced)
+            {
+                if (job != currentJob)
+                {
+                    JobMaker.ReturnToPool(job);
+                }
+
+                job = null;
+                return true;
+            }
+
+            if (job.def == JobDefOf.AttackMelee
+                && job.targetA.Thing == threat)
+            {
+                return true;
+            }
+
+            Job previousJob = job;
+            job = JobMaker.MakeJob(JobDefOf.AttackMelee, threat);
+            JobMaker.ReturnToPool(previousJob);
+            return true;
         }
 
         private static bool RejectNonAutomaticMeleeThreat(

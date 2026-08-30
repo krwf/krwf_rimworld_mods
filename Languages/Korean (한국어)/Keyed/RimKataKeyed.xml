@@ -104,7 +104,6 @@
   <KRWF_RimKata_SecondaryMenuSwap>교체</KRWF_RimKata_SecondaryMenuSwap>
   <KRWF_RimKata_SecondaryMenuSwapCombat>교체(전투 중)</KRWF_RimKata_SecondaryMenuSwapCombat>
   <KRWF_RimKata_DebugMenuLabel>RimKata 디버그</KRWF_RimKata_DebugMenuLabel>
-  <KRWF_RimKata_DebugMenuDesc>RimKata 개발자용 표시를 설정합니다.</KRWF_RimKata_DebugMenuDesc>
   <KRWF_RimKata_DebugHUDOption>HUD</KRWF_RimKata_DebugHUDOption>
   <KRWF_RimKata_DebugSearchRangeOption>탐색 범위</KRWF_RimKata_DebugSearchRangeOption>
 </LanguageData>

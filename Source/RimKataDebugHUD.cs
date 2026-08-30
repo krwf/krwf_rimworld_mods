@@ -802,7 +802,6 @@ namespace KRWF.RimKata
             yield return new Command_Action
             {
                 defaultLabel = "KRWF_RimKata_DebugMenuLabel".Translate(),
-                defaultDesc = "KRWF_RimKata_DebugMenuDesc".Translate(),
                 action = OpenDebugMenu
             };
         }

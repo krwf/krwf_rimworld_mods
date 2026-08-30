@@ -647,14 +647,6 @@ namespace KRWF.RimKata
             }
         }
 
-        public static Verb CombatVerbForContext(
-            Pawn pawn,
-            ThingWithComps weapon,
-            bool closeCombatContext)
-        {
-            return CombatVerb(pawn, weapon);
-        }
-
         private static Verb ResolveMeleeCombatVerb(Pawn pawn, ThingWithComps weapon)
         {
             List<VerbEntry> meleeVerbs =
@@ -766,7 +758,14 @@ namespace KRWF.RimKata
                     return primaryVerb;
                 }
 
-                return secondaryVerb.EffectiveRange > primaryVerb.EffectiveRange
+                return RimKataRangeUtility.ResolveEffectiveRange(
+                        pawn,
+                        secondary,
+                        secondaryVerb)
+                    > RimKataRangeUtility.ResolveEffectiveRange(
+                        pawn,
+                        primary,
+                        primaryVerb)
                     ? secondaryVerb
                     : primaryVerb;
             }
@@ -932,6 +931,7 @@ namespace KRWF.RimKata
         public static void NotifyLoadoutChanged(Pawn pawn)
         {
             InvalidateCombatVerbCache(pawn);
+            RimKataRangeUtility.InvalidateWeaponRanges(pawn);
             RimKataDualWeaponController.NotifyLoadoutChanged(pawn);
         }
 
@@ -1943,7 +1943,8 @@ namespace KRWF.RimKata
             Pawn pawn,
             ref bool __result)
         {
-            if (pawn?.Drafted == true)
+            if (pawn?.Drafted == true
+                && RimKataEligibility.HasRimKataAccess(pawn))
             {
                 __result = true;
             }
@@ -2353,12 +2354,7 @@ namespace KRWF.RimKata
             AppendFireAtWillGizmo(Pawn_DraftController drafter, IEnumerable<Gizmo> source)
 
         {
-            foreach (Gizmo gizmo in source)
-            {
-                yield return gizmo;
-            }
-
-            yield return new Command_Toggle
+            Command_Toggle fireAtWill = new Command_Toggle
             {
                 hotKey = KeyBindingDefOf.Misc6,
                 isActive = () => drafter.FireAtWill,
@@ -2368,6 +2364,26 @@ namespace KRWF.RimKata
                 defaultDesc = "CommandFireAtWillDesc".Translate(),
                 tutorTag = "FireAtWillToggle"
             };
+            bool inserted = false;
+            foreach (Gizmo gizmo in source)
+            {
+                yield return gizmo;
+
+                if (!inserted
+                    && gizmo is Command_Toggle draftToggle
+                    && draftToggle.hotKey
+                        == KeyBindingDefOf.Command_ColonistDraft)
+                {
+                    fireAtWill.Order = draftToggle.Order;
+                    yield return fireAtWill;
+                    inserted = true;
+                }
+            }
+
+            if (!inserted)
+            {
+                yield return fireAtWill;
+            }
         }
     }
 }

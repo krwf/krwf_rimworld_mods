@@ -1,7 +1,5 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.Reflection;
 using RimWorld;
 using Verse;
 
@@ -131,24 +129,9 @@ namespace KRWF.RimKata
 
     public static class RimKataGripUtility
     {
-        private const string RatkinGripPropertiesTypeName = "NewRatkin.CompProperties_WeaponGripType";
         private static readonly Dictionary<ThingDef, RimKataGripType> gripCache = new Dictionary<ThingDef, RimKataGripType>();
         private static HashSet<string> forcedTwoHandedDefNames;
         private static HashSet<string> forcedOneHandedDefNames;
-        private static bool? ratkinGripMetadataDetected;
-
-        public static bool RatkinGripMetadataDetected
-        {
-            get
-            {
-                if (!ratkinGripMetadataDetected.HasValue)
-                {
-                    ratkinGripMetadataDetected = DetectRatkinGripMetadata();
-                }
-
-                return ratkinGripMetadataDetected.Value;
-            }
-        }
 
         public static RimKataGripType GripTypeFor(ThingDef weaponDef)
         {
@@ -188,8 +171,7 @@ namespace KRWF.RimKata
                 return RimKataGripType.OneHand;
             }
 
-            if (ReadRatkinGripType(weaponDef) == RimKataGripType.TwoHand
-                || ContainsTwoHandToken(weaponDef.defName)
+            if (ContainsTwoHandToken(weaponDef.defName)
                 || ContainsTwoHandToken(weaponDef.label)
                 || ContainsTwoHandToken(weaponDef.description)
                 || AnyContainsTwoHandToken(weaponDef.weaponTags)
@@ -240,7 +222,6 @@ namespace KRWF.RimKata
             gripCache.Clear();
             forcedTwoHandedDefNames = null;
             forcedOneHandedDefNames = null;
-            ratkinGripMetadataDetected = null;
         }
 
         private static void EnsureOverrides()
@@ -280,63 +261,5 @@ namespace KRWF.RimKata
                     || value.IndexOf("two hand", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
-        private static RimKataGripType ReadRatkinGripType(ThingDef weaponDef)
-        {
-            if (weaponDef.comps == null)
-            {
-                return RimKataGripType.OneHand;
-            }
-
-            for (int i = 0; i < weaponDef.comps.Count; i++)
-            {
-                CompProperties properties = weaponDef.comps[i];
-                Type propertiesType = properties?.GetType();
-                if (propertiesType?.FullName != RatkinGripPropertiesTypeName)
-                {
-                    continue;
-                }
-
-                FieldInfo field = propertiesType.GetField("gripTypes", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (!(field?.GetValue(properties) is IEnumerable values))
-                {
-                    continue;
-                }
-
-                foreach (object value in values)
-                {
-                    string name = value?.ToString();
-                    if (string.Equals(name, "TwoHand", StringComparison.Ordinal)
-                        || string.Equals(name, "Special", StringComparison.Ordinal))
-                    {
-                        return RimKataGripType.TwoHand;
-                    }
-                }
-            }
-
-            return RimKataGripType.OneHand;
-        }
-
-        private static bool DetectRatkinGripMetadata()
-        {
-            List<ThingDef> defs = DefDatabase<ThingDef>.AllDefsListForReading;
-            for (int i = 0; i < defs.Count; i++)
-            {
-                List<CompProperties> comps = defs[i].comps;
-                if (comps == null)
-                {
-                    continue;
-                }
-
-                for (int j = 0; j < comps.Count; j++)
-                {
-                    if (comps[j]?.GetType().FullName == RatkinGripPropertiesTypeName)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        }
     }
 }

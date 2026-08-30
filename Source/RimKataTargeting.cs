@@ -56,6 +56,8 @@ namespace KRWF.RimKata
                     ? Mathf.Max(
                         0f,
                         RimKataRangeUtility.ResolveCandidateRange(
+                            pawn,
+                            primaryWeapon,
                             primaryVerb))
                     : 0f;
 
@@ -65,6 +67,8 @@ namespace KRWF.RimKata
                     ? Mathf.Max(
                         0f,
                         RimKataRangeUtility.ResolveCandidateRange(
+                            pawn,
+                            secondaryWeapon,
                             secondaryVerb))
                     : 0f;
 

@@ -61,26 +61,16 @@ namespace KRWF.RimKata
         internal bool pushed;
         internal Verb previousVerb;
         internal int previousDepth;
-        internal int previousOriginalBurstCount;
     }
 
     public static class RimKataVanillaSingleShotContext
     {
         [ThreadStatic] private static Verb activeVerb;
         [ThreadStatic] private static int depth;
-        [ThreadStatic] private static int originalBurstCount;
 
         public static bool ActiveFor(Verb verb)
         {
             return depth > 0 && verb != null && activeVerb == verb;
-        }
-
-        public static bool TryGetOriginalBurstCount(
-            Verb verb,
-            out int burstCount)
-        {
-            burstCount = originalBurstCount;
-            return ActiveFor(verb) && burstCount > 0;
         }
 
         public static RimKataVanillaSingleShotContextState Push(Verb verb)
@@ -90,17 +80,12 @@ namespace KRWF.RimKata
                 {
                     pushed = verb != null,
                     previousVerb = activeVerb,
-                    previousDepth = depth,
-                    previousOriginalBurstCount = originalBurstCount
+                    previousDepth = depth
                 };
             if (verb != null)
             {
-                int nextOriginalBurstCount = depth > 0 && activeVerb == verb
-                    ? originalBurstCount
-                    : Mathf.Max(1, verb.BurstShotCount);
                 activeVerb = verb;
                 depth++;
-                originalBurstCount = nextOriginalBurstCount;
             }
 
             return state;
@@ -115,7 +100,6 @@ namespace KRWF.RimKata
 
             activeVerb = state.previousVerb;
             depth = state.previousDepth;
-            originalBurstCount = state.previousOriginalBurstCount;
         }
     }
 

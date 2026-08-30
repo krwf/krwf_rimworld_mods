@@ -104,7 +104,6 @@
   <KRWF_RimKata_SecondaryMenuSwap>Swap</KRWF_RimKata_SecondaryMenuSwap>
   <KRWF_RimKata_SecondaryMenuSwapCombat>Swap(in combat)</KRWF_RimKata_SecondaryMenuSwapCombat>
   <KRWF_RimKata_DebugMenuLabel>RimKata debug</KRWF_RimKata_DebugMenuLabel>
-  <KRWF_RimKata_DebugMenuDesc>Configure the RimKata developer overlays.</KRWF_RimKata_DebugMenuDesc>
   <KRWF_RimKata_DebugHUDOption>HUD</KRWF_RimKata_DebugHUDOption>
   <KRWF_RimKata_DebugSearchRangeOption>Search range</KRWF_RimKata_DebugSearchRangeOption>
 </LanguageData>

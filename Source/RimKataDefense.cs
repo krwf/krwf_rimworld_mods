@@ -654,8 +654,8 @@ namespace KRWF.RimKata
             ThingWithComps secondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(defender)
                 ? RimKataWeaponSlotUtility.SecondaryWeapon(defender)
                 : null;
-            bool primaryUsable = primary != null && !primary.Destroyed && RimKataEquipmentUtility.IsWeaponEnabled(primary.def);
-            bool secondaryUsable = secondary != null && !secondary.Destroyed && RimKataEquipmentUtility.IsWeaponEnabled(secondary.def);
+            bool primaryUsable = primary != null && !primary.Destroyed;
+            bool secondaryUsable = secondary != null && !secondary.Destroyed;
             if (primaryUsable && secondaryUsable)
             {
                 return Rand.Bool ? primary : secondary;
@@ -1051,7 +1051,7 @@ namespace KRWF.RimKata
             Pawn defender = __instance?.CurrentTarget.Pawn;
             if (defender == null
                 || defender.Drafted != true
-                || !RimKataEligibility.HasRimKataAccess(defender)
+                || !RimKataDualWeaponController.CounterattackControlEnabled(defender)
                 || defender.mindState?.meleeThreat == null)
             {
                 return;

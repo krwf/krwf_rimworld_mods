@@ -583,7 +583,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             if (!IsValidAutomaticTargetForCycle(
                     pawn,
                     combatState,
@@ -665,7 +665,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             if (IsValidAutomaticTargetForCycle(
                 pawn,
                 combatState,
@@ -975,7 +975,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             float range = RangeForCycle(
                 pawn,
                 combatState,
@@ -1028,7 +1028,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             float fullRange = RangeForCycle(
                 pawn,
                 combatState,
@@ -1062,7 +1062,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             float cycleRange = RangeForCycle(
                 pawn,
                 combatState,
@@ -1094,7 +1094,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            Verb verb = CombatVerbForCycle(pawn, cycle);
             return cycle.automaticCandidateCollectionClosed
                 || outerRing >= MaximumLogicalRing(
                     RangeForCycle(
@@ -1258,12 +1258,12 @@ namespace KRWF.RimKata
                     pawn,
                     combatState,
                     primary,
-                    CombatVerbForCycle(pawn, combatState, primary)),
+                    CombatVerbForCycle(pawn, primary)),
                 RangeForCycle(
                     pawn,
                     combatState,
                     secondary,
-                    CombatVerbForCycle(pawn, combatState, secondary)));
+                    CombatVerbForCycle(pawn, secondary)));
         }
 
         private static float RangeForCycle(
@@ -1289,7 +1289,10 @@ namespace KRWF.RimKata
             {
                 return UsesRangedCandidateLimit(cycle)
                     ? CloseCombatRangedCandidateRange
-                    : Mathf.Max(0f, verb.EffectiveRange);
+                    : RimKataRangeUtility.ResolveEffectiveRange(
+                        pawn,
+                        cycle.weapon,
+                        verb);
             }
 
             return FullRangeForCycle(pawn, cycle, verb);
@@ -1309,10 +1312,16 @@ namespace KRWF.RimKata
             {
                 return Mathf.Max(
                     0f,
-                    RimKataRangeUtility.ResolveCandidateRange(verb));
+                    RimKataRangeUtility.ResolveCandidateRange(
+                        pawn,
+                        cycle.weapon,
+                        verb));
             }
 
-            return Mathf.Max(0f, verb.EffectiveRange);
+            return RimKataRangeUtility.ResolveEffectiveRange(
+                pawn,
+                cycle.weapon,
+                verb);
         }
 
         private static float ProjectileRangeForCycle(
@@ -1333,7 +1342,10 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
-            return Mathf.Max(0f, verb.EffectiveRange);
+            return RimKataRangeUtility.ResolveEffectiveRange(
+                pawn,
+                cycle.weapon,
+                verb);
         }
 
         private static bool IsCloseCombatContext(
@@ -1344,13 +1356,11 @@ namespace KRWF.RimKata
 
         private static Verb CombatVerbForCycle(
             Pawn pawn,
-            RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle)
         {
-            return RimKataWeaponSlotUtility.CombatVerbForContext(
+            return RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
-                cycle?.weapon,
-                IsCloseCombatContext(combatState));
+                cycle?.weapon);
         }
 
         private static RimKataWeaponCycleState CycleForVerb(

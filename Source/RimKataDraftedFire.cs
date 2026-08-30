@@ -221,12 +221,6 @@ namespace KRWF.RimKata
         }
 
         // !!! Debug HUD !!!
-        public static bool DebugHasCombatDemand(Pawn pawn)
-        {
-            return RimKataDualWeaponController.HasCombatContinuity(pawn);
-        }
-
-        // !!! Debug HUD !!!
         public static string DebugCombatDemandReasons(Pawn pawn)
         {
             if (pawn == null)
