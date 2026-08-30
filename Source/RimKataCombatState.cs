@@ -304,6 +304,7 @@ namespace KRWF.RimKata
         public int staggerSearchLastCheckTick = -1;
         public Pawn incomingThreatSource;
         public int incomingThreatTicksRemaining;
+        public int pendingMeleeThreatClearTick = -1;
         public Thing closeAttackRequestTarget;
         public bool closeAttackRequestFromAttackGizmo;
         public Thing automaticAttackRequestTarget;
@@ -355,6 +356,7 @@ namespace KRWF.RimKata
             || dualEngagementActive
             || sharedTargetSearch?.KeepsCombatAlive == true;
         public bool IncomingThreatActive => IsIncomingThreatActive();
+        public bool MeleeThreatClearPending => pendingMeleeThreatClearTick >= 0;
         public bool CloseAttackRequestActive => IsCloseAttackRequestActive();
         public bool AutomaticAttackRequestActive => IsAutomaticAttackRequestActive();
         public bool DebugIncomingThreatStored => incomingThreatSource != null;
@@ -381,6 +383,7 @@ namespace KRWF.RimKata
             || StoredCooldownActive
             || WeaponCyclesActive
             || IncomingThreatActive
+            || MeleeThreatClearPending
             || CloseAttackRequestActive
             || AutomaticAttackRequestActive
             || sharedTargetSearch?.KeepsCombatAlive == true
@@ -488,6 +491,7 @@ namespace KRWF.RimKata
                 "projectileWakeResumeJob");
             Scribe_References.Look(ref incomingThreatSource, "incomingThreatSource");
             Scribe_Values.Look(ref incomingThreatTicksRemaining, "incomingThreatTicksRemaining");
+            Scribe_Values.Look(ref pendingMeleeThreatClearTick, "pendingMeleeThreatClearTick", -1);
             Scribe_References.Look(ref closeAttackRequestTarget, "closeAttackRequestTarget");
             Scribe_Values.Look(
                 ref closeAttackRequestFromAttackGizmo,
@@ -525,6 +529,7 @@ namespace KRWF.RimKata
         public void Tick()
         {
             UpdateDraftedCooldown();
+            TickDraftedMeleeThreatClear();
             if (incomingThreatSource != null && !IsIncomingThreatActive())
             {
                 incomingThreatSource = null;
@@ -597,7 +602,14 @@ namespace KRWF.RimKata
                 responsePoseTicksRemaining--;
                 if (responsePoseTicksRemaining <= 0)
                 {
+                    bool restoreBodyAim = responsePoseLookAtFocus;
                     CancelResponsePose();
+                    if (restoreBodyAim)
+                    {
+                        RimKataDualWeaponController.UpdateBodyAimStance(
+                            pawn,
+                            this);
+                    }
                 }
             }
 
@@ -630,6 +642,34 @@ namespace KRWF.RimKata
                     RimKataResponseVisualParticipantCache
                         .RefreshBodyVisual(this);
                 }
+            }
+        }
+
+        public void ScheduleDraftedMeleeThreatClear()
+        {
+            int currentTick = CurrentGameTick;
+            if (currentTick >= 0)
+            {
+                pendingMeleeThreatClearTick = currentTick + 1;
+            }
+        }
+
+        private void TickDraftedMeleeThreatClear()
+        {
+            int currentTick = CurrentGameTick;
+            if (!MeleeThreatClearPending
+                || currentTick < pendingMeleeThreatClearTick)
+            {
+                return;
+            }
+
+            pendingMeleeThreatClearTick = -1;
+
+            if (pawn?.Drafted == true
+                && RimKataEligibility.HasRimKataAccess(pawn)
+                && pawn.mindState?.meleeThreat != null)
+            {
+                pawn.mindState.meleeThreat = null;
             }
         }
 
@@ -1800,6 +1840,16 @@ namespace KRWF.RimKata
             projectileWakeTraversalIndex = 0;
         }
 
+        public void ScheduleDraftedMeleeThreatClear(Pawn pawn)
+        {
+            if (pawn?.Map != map)
+            {
+                return;
+            }
+
+            GetState(pawn, true)?.ScheduleDraftedMeleeThreatClear();
+        }
+
         public RimKataPawnCombatState GetState(Pawn pawn, bool createIfMissing)
         {
             lock (statesLock)
@@ -2394,17 +2444,10 @@ namespace KRWF.RimKata
 
         public void EnterCloseCombat(Pawn pawn, Thing trigger)
         {
-            bool clearPreviousAim = false;
             lock (statesLock)
             {
                 RimKataPawnCombatState state = GetState(pawn, true);
-                clearPreviousAim = state != null && !state.CloseCombatActive;
                 state?.EnterCloseCombat(trigger);
-            }
-
-            if (clearPreviousAim && pawn?.stances?.curStance is Stance_RimKataAim)
-            {
-                pawn.stances.SetStance(new Stance_Mobile());
             }
         }
 

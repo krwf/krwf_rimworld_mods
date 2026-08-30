@@ -56,8 +56,7 @@ namespace KRWF.RimKata
 
     internal static class RimKataSharedTargetSearch
     {
-        internal const float ApiRadiusPadding =
-            RimKataRangeUtility.CandidateApiRadiusPadding;
+        private const float ApiRadiusPadding = 0.7f;
         private const float RadiusEpsilon = 0.001f;
         private const int TouchCandidateLimit = 8;
         private const int ShortCandidateLimit = 16;
@@ -181,7 +180,9 @@ namespace KRWF.RimKata
             float innerRadius = innerRing <= 0
                 ? -1f
                 : innerRing + ApiRadiusPadding;
-            float outerRadius = outerRing + ApiRadiusPadding;
+            float outerRadius = Mathf.Min(
+                outerRing + ApiRadiusPadding,
+                maximumRange);
             IntVec3 center = search.origin.IsValid
                 ? search.origin
                 : pawn.Position;
@@ -868,7 +869,9 @@ namespace KRWF.RimKata
                     continue;
                 }
 
-                float outerRadius = ring + ApiRadiusPadding;
+                float outerRadius = Mathf.Min(
+                    ring + ApiRadiusPadding,
+                    range);
                 float outerSquared = outerRadius * outerRadius;
                 int count = 0;
                 for (int i = 0; i < candidates.Count; i++)
@@ -1171,7 +1174,7 @@ namespace KRWF.RimKata
             {
                 return Mathf.Max(
                     0f,
-                    RimKataRangeUtility.ResolveCandidateApiRange(verb));
+                    RimKataRangeUtility.ResolveCandidateRange(verb));
             }
 
             return Mathf.Max(0f, verb.EffectiveRange);

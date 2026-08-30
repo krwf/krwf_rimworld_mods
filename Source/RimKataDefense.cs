@@ -1046,6 +1046,21 @@ namespace KRWF.RimKata
             return codes;
         }
 
+        public static void Postfix(Verb_MeleeAttack __instance)
+        {
+            Pawn defender = __instance?.CurrentTarget.Pawn;
+            if (defender == null
+                || defender.Drafted != true
+                || !RimKataEligibility.HasRimKataAccess(defender)
+                || defender.mindState?.meleeThreat == null)
+            {
+                return;
+            }
+
+            defender.Map?.GetComponent<RimKataMapComponent>()
+                ?.ScheduleDraftedMeleeThreatClear(defender);
+        }
+
         public static Exception Finalizer(
             Exception __exception,
             MeleeAttackContextState __state)

@@ -4744,7 +4744,7 @@ namespace KRWF.RimKata
                     target);
             }
 
-            float range = RimKataRangeUtility.ResolveCandidateApiRange(verb);
+            float range = RimKataRangeUtility.ResolveCandidateRange(verb);
             if (pawn.Position.DistanceToSquared(target.Position) > range * range)
             {
                 return false;
@@ -5370,7 +5370,7 @@ namespace KRWF.RimKata
                 : LocalTargetInfo.Invalid;
         }
 
-        private static void UpdateBodyAimStance(Pawn pawn, RimKataPawnCombatState state)
+        internal static void UpdateBodyAimStance(Pawn pawn, RimKataPawnCombatState state)
         {
             if ((state.responsePoseLookAtFocus
                     && state.TryGetLiveResponsePoseFocus(

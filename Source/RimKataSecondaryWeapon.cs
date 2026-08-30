@@ -2074,7 +2074,21 @@ namespace KRWF.RimKata
                 ___pawn,
                 newEq) == true;
 
-            if (Patch_PawnEquipmentTracker_RimKataMakeRoom.TryConsumePending(__instance, newEq, out ThingWithComps secondary))
+            if (Patch_DebugToolsPawns_RimKataSecondaryWeapon
+                .TryGetActivePrimaryReplacement(
+                    __instance,
+                    ___pawn,
+                    newEq,
+                    out ThingWithComps secondary))
+            {
+                return !TryInsertPrimaryBeforeSecondary(
+                    __instance,
+                    ___pawn,
+                    newEq,
+                    secondary);
+            }
+
+            if (Patch_PawnEquipmentTracker_RimKataMakeRoom.TryConsumePending(__instance, newEq, out secondary))
             {
                 return !TryInsertPrimaryBeforeSecondary(__instance, ___pawn, newEq, secondary);
             }
@@ -2168,6 +2182,16 @@ namespace KRWF.RimKata
     [HarmonyPatch]
     public static class Patch_DebugToolsPawns_RimKataSecondaryWeapon
     {
+        private sealed class PrimaryReplacementScope
+        {
+            public Pawn pawn;
+            public Pawn_EquipmentTracker tracker;
+            public ThingWithComps secondary;
+        }
+
+        [ThreadStatic]
+        private static PrimaryReplacementScope activePrimaryReplacement;
+
         public static MethodBase TargetMethod()
         {
             return AccessTools.Method(typeof(DebugToolsPawns), "Options_SetPrimary", new[] { typeof(Pawn) });
@@ -2180,12 +2204,75 @@ namespace KRWF.RimKata
                 return;
             }
 
+            for (int i = 1; i < __result.Count; i++)
+            {
+                DebugMenuOption option = __result[i];
+                if (option.mode == DebugMenuOptionMode.Action
+                    && option.method != null)
+                {
+                    option.method = WrapPrimaryWeaponOption(
+                        pawn,
+                        option.method);
+                }
+            }
+
             bool canUseSecondary = RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn);
             string label = canUseSecondary ? "[RimKata]" : "[RimKata] NO";
             Action action = canUseSecondary
                 ? (Action)(() => Find.WindowStack.Add(new Dialog_DebugOptionListLister(SecondaryWeaponOptions(pawn), null)))
                 : () => { };
             __result.Insert(Math.Min(1, __result.Count), new DebugMenuOption(label, DebugMenuOptionMode.Action, action));
+        }
+
+        public static bool TryGetActivePrimaryReplacement(
+            Pawn_EquipmentTracker tracker,
+            Pawn pawn,
+            ThingWithComps incoming,
+            out ThingWithComps secondary)
+        {
+            PrimaryReplacementScope scope = activePrimaryReplacement;
+            secondary = scope?.secondary;
+            return scope != null
+                && scope.pawn == pawn
+                && scope.tracker == tracker
+                && incoming?.def?.equipmentType == EquipmentType.Primary
+                && secondary != null
+                && !secondary.Destroyed
+                && tracker?.Primary == secondary;
+        }
+
+        private static Action WrapPrimaryWeaponOption(
+            Pawn pawn,
+            Action original)
+        {
+            return delegate
+            {
+                Pawn_EquipmentTracker tracker = pawn?.equipment;
+                ThingWithComps secondary =
+                    RimKataSecondaryWeaponRegistry.CurrentRegistry
+                        ?.GetRegistered(pawn);
+                if (tracker == null || secondary == null)
+                {
+                    original();
+                    return;
+                }
+
+                PrimaryReplacementScope previous = activePrimaryReplacement;
+                activePrimaryReplacement = new PrimaryReplacementScope
+                {
+                    pawn = pawn,
+                    tracker = tracker,
+                    secondary = secondary
+                };
+                try
+                {
+                    original();
+                }
+                finally
+                {
+                    activePrimaryReplacement = previous;
+                }
+            };
         }
 
         private static List<DebugMenuOption> SecondaryWeaponOptions(Pawn pawn)

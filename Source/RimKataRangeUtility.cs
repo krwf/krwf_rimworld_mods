@@ -26,7 +26,6 @@ namespace KRWF.RimKata
 
     public static class RimKataRangeUtility
     {
-        internal const float CandidateApiRadiusPadding = 0.7f;
         private const float ProbeLow = 0.2f;
         private const float ProbeHigh = 0.8f;
         private const float ProbeTolerance = 0.000001f;
@@ -81,14 +80,6 @@ namespace KRWF.RimKata
             }
 
             return Mathf.Min(effectiveRange, Mathf.Max(0f, configuredRange));
-        }
-
-        internal static float ResolveCandidateApiRange(Verb verb)
-        {
-            float logicalRange = ResolveCandidateRange(verb);
-            return logicalRange > 0f
-                ? logicalRange + CandidateApiRadiusPadding
-                : 0f;
         }
 
         public static float PresetRange(RimKataCandidateRangeMode mode)

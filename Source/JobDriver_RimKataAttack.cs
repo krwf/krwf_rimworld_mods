@@ -602,6 +602,10 @@ namespace KRWF.RimKata
             bool orderedAttack = job != null
                 && job.def == JobDefOf.AttackStatic
                 && job.targetA.HasThing;
+            bool playerSquadRangedOrder =
+                RimKataAttackGizmoTargetContext.Active
+                && orderedAttack
+                && job.playerForced;
             Verb orderedVerb = job?.verbToUse;
             bool playerRangedCloseOrder = orderedAttack
                 && job.playerForced
@@ -609,7 +613,8 @@ namespace KRWF.RimKata
                     ___pawn,
                     orderedVerb,
                     job.targetA.Thing);
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(___pawn)
+            if (!playerSquadRangedOrder
+                && !RimKataDualWeaponController.IsDedicatedFollowupActive(___pawn)
                 && !playerRangedCloseOrder)
             {
                 return;

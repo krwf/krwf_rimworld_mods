@@ -1375,7 +1375,7 @@ namespace KRWF.RimKata
 
             return Mathf.Max(
                 0f,
-                RimKataRangeUtility.ResolveCandidateApiRange(verb));
+                RimKataRangeUtility.ResolveCandidateRange(verb));
         }
 
         public static bool HasDualMeleeLoadout(Pawn pawn)
