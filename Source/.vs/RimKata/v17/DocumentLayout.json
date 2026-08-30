@@ -104,7 +104,7 @@
               "RelativeDocumentMoniker": "RimKataDualWeaponController.cs",
               "ToolTip": "C:\\Users\\user\\Documents\\RimworldModsFolder\\RimKata\\Source\\RimKataDualWeaponController.cs",
               "RelativeToolTip": "RimKataDualWeaponController.cs",
-              "ViewState": "AgIAADsCAAAAAAAAAAArwFMCAAAKAAAAAAAAAA==",
+              "ViewState": "AgIAADsCAAAAAAAAAAArwFoCAAAiAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-08-19T14:41:00.503Z",
               "IsPinned": true,
@@ -134,8 +134,7 @@
               "ViewState": "AgIAAMcAAAAAAAAAAAApwOQAAAAKAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
               "WhenOpened": "2026-08-19T15:36:25.497Z",
-              "IsPinned": true,
-              "EditorCaption": ""
+              "IsPinned": true
             },
             {
               "$type": "Document",
@@ -243,8 +242,7 @@
               "RelativeToolTip": "RimKataEligibilityCache.cs",
               "ViewState": "AgIAABcAAAAAAAAAAAApwC4AAAAKAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-08-20T11:42:44.631Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-08-20T11:42:44.631Z"
             },
             {
               "$type": "Document",
@@ -339,8 +337,7 @@
               "RelativeToolTip": "RimKataVisualPatches.cs",
               "ViewState": "AgIAACIAAAAAAAAAAAASwC0AAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
-              "WhenOpened": "2026-08-20T11:37:54.822Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-08-20T11:37:54.822Z"
             },
             {
               "$type": "Document",

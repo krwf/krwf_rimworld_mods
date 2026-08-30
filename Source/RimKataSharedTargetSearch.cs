@@ -58,12 +58,17 @@ namespace KRWF.RimKata
     {
         private const float ApiRadiusPadding = 0.7f;
         private const float RadiusEpsilon = 0.001f;
+        private const float CloseCombatRangedCandidateRange = 1.7f;
         private const int TouchCandidateLimit = 8;
         private const int ShortCandidateLimit = 16;
         private const int MediumCandidateLimit = 12;
         private const int LongCandidateLimit = 8;
 
         private static readonly List<Thing> EligibleCandidates =
+            new List<Thing>();
+        private static readonly List<Thing> PrimaryRingCandidates =
+            new List<Thing>();
+        private static readonly List<Thing> SecondaryRingCandidates =
             new List<Thing>();
 
         internal static bool Begin(
@@ -202,7 +207,8 @@ namespace KRWF.RimKata
                 combatState,
                 center,
                 innerRadius,
-                outerRadius);
+                outerRadius,
+                outerRing);
             RimKataDebugHUD.RecordActualSearchRing(
                 pawn,
                 pawn.Map,
@@ -439,6 +445,42 @@ namespace KRWF.RimKata
             RimKataPawnCombatState combatState,
             IntVec3 center,
             float innerRadius,
+            float outerRadius,
+            int outerRing)
+        {
+            PrimaryRingCandidates.Clear();
+            SecondaryRingCandidates.Clear();
+            try
+            {
+                CollectAutomaticTargetsInRingCells(
+                    pawn,
+                    combatState,
+                    center,
+                    innerRadius,
+                    outerRadius);
+                CommitStagedRangedCandidates(
+                    combatState?.primaryWeaponCycle,
+                    PrimaryRingCandidates,
+                    center,
+                    outerRing);
+                CommitStagedRangedCandidates(
+                    combatState?.secondaryWeaponCycle,
+                    SecondaryRingCandidates,
+                    center,
+                    outerRing);
+            }
+            finally
+            {
+                PrimaryRingCandidates.Clear();
+                SecondaryRingCandidates.Clear();
+            }
+        }
+
+        private static void CollectAutomaticTargetsInRingCells(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            IntVec3 center,
+            float innerRadius,
             float outerRadius)
         {
             float innerSquared = innerRadius < 0f
@@ -513,16 +555,102 @@ namespace KRWF.RimKata
                     continue;
                 }
 
-                TryAddValidatedAutomaticTargetToCycle(
+                TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     combatState.primaryWeaponCycle,
-                    candidate);
-                TryAddValidatedAutomaticTargetToCycle(
+                    candidate,
+                    PrimaryRingCandidates);
+                TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     combatState.secondaryWeaponCycle,
-                    candidate);
+                    candidate,
+                    SecondaryRingCandidates);
+            }
+        }
+
+        private static void TryStageOrAddRingCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Thing target,
+            List<Thing> stagedCandidates)
+        {
+            if (cycle == null
+                || cycle.automaticCandidateCollectionClosed)
+            {
+                return;
+            }
+
+            Verb verb = CombatVerbForCycle(pawn, combatState, cycle);
+            if (!IsValidAutomaticTargetForCycle(
+                    pawn,
+                    combatState,
+                    cycle,
+                    verb,
+                    target))
+            {
+                return;
+            }
+
+            if (!UsesRangedCandidateLimit(cycle))
+            {
+                cycle.AddAutomaticCandidate(target);
+                return;
+            }
+
+            if (cycle.automaticCandidates?.Contains(target) == true
+                || stagedCandidates.Contains(target))
+            {
+                return;
+            }
+
+            stagedCandidates.Add(target);
+        }
+
+        private static void CommitStagedRangedCandidates(
+            RimKataWeaponCycleState cycle,
+            List<Thing> stagedCandidates,
+            IntVec3 center,
+            int outerRing)
+        {
+            if (!UsesRangedCandidateLimit(cycle)
+                || cycle.automaticCandidateCollectionClosed
+                || stagedCandidates == null
+                || stagedCandidates.Count == 0)
+            {
+                return;
+            }
+
+            int remaining = Mathf.Max(
+                0,
+                EffectiveCandidateLimitForRing(cycle, outerRing)
+                    - CountStoredCandidatesThroughRing(
+                        cycle,
+                        center,
+                        outerRing));
+            if (remaining <= 0)
+            {
+                return;
+            }
+
+            if (stagedCandidates.Count <= remaining)
+            {
+                for (int i = 0; i < stagedCandidates.Count; i++)
+                {
+                    cycle.AddAutomaticCandidate(stagedCandidates[i]);
+                }
+                return;
+            }
+
+            for (int i = 0; i < remaining; i++)
+            {
+                int swapIndex = Rand.Range(i, stagedCandidates.Count);
+                Thing selected = stagedCandidates[swapIndex];
+                stagedCandidates[swapIndex] = stagedCandidates[i];
+                stagedCandidates[i] = selected;
+                cycle.AddAutomaticCandidate(selected);
             }
         }
 
@@ -1155,6 +1283,13 @@ namespace KRWF.RimKata
                     closeCombatContext))
             {
                 return 0f;
+            }
+
+            if (closeCombatContext)
+            {
+                return UsesRangedCandidateLimit(cycle)
+                    ? CloseCombatRangedCandidateRange
+                    : Mathf.Max(0f, verb.EffectiveRange);
             }
 
             return FullRangeForCycle(pawn, cycle, verb);
