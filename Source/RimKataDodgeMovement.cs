@@ -31,9 +31,46 @@ namespace KRWF.RimKata
             return pawn?.Map?.GetComponent<RimKataMapComponent>()?.IsDodgeMovementActive(pawn) == true;
         }
 
+        internal static bool CalculateIsActive(
+            Pawn pawn,
+            RimKataPawnCombatState state)
+        {
+            if (pawn == null
+                || state?.DodgeMovementActive != true
+                || state.dodgeMovementJob != pawn.CurJob)
+            {
+                return false;
+            }
+
+            return pawn.Position == state.dodgeMovementDestination
+                || (pawn.pather?.Destination.IsValid == true
+                    && pawn.pather.Destination.Cell
+                        == state.dodgeMovementDestination);
+        }
+
         public static bool BlocksJob(Pawn pawn)
         {
             return pawn?.Map?.GetComponent<RimKataMapComponent>()?.IsDodgeMotionBlocking(pawn) == true;
+        }
+
+        internal static void GetStatus(
+            Pawn pawn,
+            out bool blocksJob,
+            out bool isActive)
+        {
+            RimKataMapComponent component =
+                pawn?.Map?.GetComponent<RimKataMapComponent>();
+            if (component == null)
+            {
+                blocksJob = false;
+                isActive = false;
+                return;
+            }
+
+            component.GetDodgeMovementStatus(
+                pawn,
+                out blocksJob,
+                out isActive);
         }
 
         public static bool IsVisualLocked(Pawn pawn)
@@ -92,29 +129,154 @@ namespace KRWF.RimKata
                 || jobDef == RimKataDefOf.RimKata_Attack;
         }
 
-        public static bool TryStartMovingFirstDodge(
+        internal static void ApplySuccessfulRangedDodge(
             Pawn pawn,
+            Thing attacker,
             Projectile projectile,
+            RimKataMapComponent component,
             int dodgeWindowDurationTicks)
         {
-            if (!TryGetCurrentMovementDirection(pawn, out IntVec3 movementDirection)
-                || !TryChooseDestination(pawn, movementDirection, out IntVec3 destination))
+            bool inAdditionalWindow =
+                component?.IsStandardDodgeWindow(pawn) == true;
+            bool preserveCurrentVisual =
+                component?.IsDodgeVisualLocked(pawn) == true;
+            bool hasActiveMovementPath = TryGetCurrentMovementDirection(
+                pawn,
+                out IntVec3 movementDirection);
+
+            if (!hasActiveMovementPath
+                && component?.IsCloseCombatActive(pawn) == true)
             {
-                return false;
+                component.BeginCloseCombatDodge(
+                    pawn,
+                    dodgeWindowDurationTicks);
+                return;
             }
 
-            return TryStartInternal(
+            if (RimKataMod.Settings?.tumbleEnabled != false)
+            {
+                if (inAdditionalWindow
+                    && component?.TryUpgradeDodgeMovementToTumble(pawn)
+                        == true)
+                {
+                    return;
+                }
+
+                if (inAdditionalWindow
+                    && component?.TryBeginStationaryAdditionalDodge(pawn)
+                        == true)
+                {
+                    return;
+                }
+            }
+
+            if (preserveCurrentVisual || inAdditionalWindow)
+            {
+                return;
+            }
+
+            if (hasActiveMovementPath
+                && !RimKataDualWeaponController
+                    .PendingFollowupCanReplaceCurrentNonForcedGoto(pawn)
+                && TryChooseDestination(
+                    pawn,
+                    movementDirection,
+                    out IntVec3 destination)
+                && TryStartInternal(
+                    pawn,
+                    projectile,
+                    component,
+                    destination,
+                    movementDirection,
+                    dodgeWindowDurationTicks))
+            {
+                return;
+            }
+
+            BeginStandardDodge(
                 pawn,
-                projectile,
-                destination,
+                attacker,
+                component,
                 movementDirection,
                 dodgeWindowDurationTicks);
         }
 
-        public static bool TryUpgradeMovingDodgeToTumble(Pawn pawn)
+        private static void BeginStandardDodge(
+            Pawn pawn,
+            Thing attacker,
+            RimKataMapComponent component,
+            IntVec3 movementDirection,
+            int durationTicks)
         {
-            return pawn?.Map?.GetComponent<RimKataMapComponent>()
-                ?.TryUpgradeDodgeMovementToTumble(pawn) == true;
+            component?.BeginVisualState(
+                pawn,
+                RimKataVisualState.StandardDodge,
+                durationTicks,
+                DodgeDirection(pawn, attacker, movementDirection));
+        }
+
+        private static IntVec3 DodgeDirection(
+            Pawn pawn,
+            Thing attacker,
+            IntVec3 movementDirection)
+        {
+            Vector3 line;
+            if (pawn?.pather?.MovingNow == true)
+            {
+                IntVec3 forward = movementDirection.IsValid
+                    ? movementDirection
+                    : MovementDirection(pawn);
+                line = forward.ToVector3();
+            }
+            else if (attacker != null)
+            {
+                line = (pawn.Position - attacker.Position).ToVector3();
+            }
+            else
+            {
+                line = Vector3.forward;
+            }
+
+            if (line.sqrMagnitude < 0.01f)
+            {
+                line = Vector3.forward;
+            }
+
+            Vector3 side = new Vector3(-line.z, 0f, line.x).normalized
+                * (Rand.Bool ? 1f : -1f);
+            IntVec3 result = new IntVec3(
+                Mathf.RoundToInt(side.x),
+                0,
+                Mathf.RoundToInt(side.z));
+            return result == IntVec3.Zero ? IntVec3.East : result;
+        }
+
+        private static IntVec3 FacingCell(Rot4 rotation)
+        {
+            switch (rotation.AsInt)
+            {
+                case 0: return IntVec3.North;
+                case 1: return IntVec3.East;
+                case 2: return IntVec3.South;
+                case 3: return IntVec3.West;
+                default: return IntVec3.North;
+            }
+        }
+
+        private static IntVec3 MovementDirection(Pawn pawn)
+        {
+            if (pawn?.pather?.MovingNow == true
+                && pawn.pather.nextCell.IsValid
+                && pawn.pather.nextCell != pawn.Position)
+            {
+                IntVec3 direction = pawn.pather.nextCell - pawn.Position;
+                return new IntVec3(
+                    Math.Sign(direction.x),
+                    0,
+                    Math.Sign(direction.z));
+            }
+
+            return FacingCell(pawn?.Rotation ?? Rot4.North);
         }
 
         public static bool TryGetCurrentMovementDirection(Pawn pawn, out IntVec3 direction)
@@ -139,48 +301,6 @@ namespace KRWF.RimKata
             IntVec3 delta = pather.nextCell - pawn.Position;
             direction = QuantizeDirection(delta.ToVector3());
             return true;
-        }
-
-        public static IntVec3 CombatDirection(Pawn pawn, Thing attacker)
-        {
-            if (pawn == null)
-            {
-                return IntVec3.North;
-            }
-
-            LocalTargetInfo aimingTarget = pawn.TargetCurrentlyAimingAt;
-            if (TryDirectionTo(pawn, aimingTarget, out IntVec3 direction))
-            {
-                return direction;
-            }
-
-            Job job = pawn.CurJob;
-            bool combatJob = job != null
-                && (job.def == RimKataDefOf.RimKata_Attack
-                    || job.def == JobDefOf.AttackStatic
-                    || job.def == JobDefOf.AttackMelee);
-            if (combatJob && TryDirectionTo(pawn, job.targetA, out direction))
-            {
-                return direction;
-            }
-
-            if (pawn.pather?.MovingNow == true
-                && pawn.pather.nextCell.IsValid
-                && pawn.pather.nextCell != pawn.Position)
-            {
-                return QuantizeDirection((pawn.pather.nextCell - pawn.Position).ToVector3());
-            }
-
-            if (attacker != null && attacker != pawn)
-            {
-                Vector3 attackVector = attacker.DrawPos - pawn.DrawPos;
-                if (attackVector.sqrMagnitude > 0.001f)
-                {
-                    return QuantizeDirection(attackVector);
-                }
-            }
-
-            return IntVec3.North;
         }
 
         public static void AdjacentDirections(IntVec3 combatDirection, out IntVec3 first, out IntVec3 second)
@@ -216,11 +336,12 @@ namespace KRWF.RimKata
         private static bool TryStartInternal(
             Pawn pawn,
             Projectile projectile,
+            RimKataMapComponent component,
             IntVec3 destination,
             IntVec3 combatDirection,
             int dodgeWindowDurationTicks)
         {
-            if (pawn?.Map == null || !CanEnterDodgeCell(pawn, destination))
+            if (pawn?.Map == null || component == null)
             {
                 return false;
             }
@@ -233,12 +354,6 @@ namespace KRWF.RimKata
             PathEndMode resumeMode = resumeWasMoving && PathEndModeField != null
                 ? (PathEndMode)PathEndModeField.GetValue(pather)
                 : (resumeDestination.HasThing ? PathEndMode.Touch : PathEndMode.OnCell);
-            RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
-            if (component == null)
-            {
-                return false;
-            }
-
             if (component.IsDodgeVisualLocked(pawn))
             {
                 return false;
@@ -287,18 +402,6 @@ namespace KRWF.RimKata
         public static bool TryFinish(Pawn pawn, bool failed)
         {
             return pawn?.Map?.GetComponent<RimKataMapComponent>()?.TryFinishDodgeMovement(pawn, failed) == true;
-        }
-
-        private static bool TryDirectionTo(Pawn pawn, LocalTargetInfo target, out IntVec3 direction)
-        {
-            direction = IntVec3.Invalid;
-            if (!target.IsValid || target.Cell == pawn.Position)
-            {
-                return false;
-            }
-
-            direction = QuantizeDirection((target.Cell - pawn.Position).ToVector3());
-            return true;
         }
 
         private static IntVec3 QuantizeDirection(Vector3 vector)
@@ -391,12 +494,25 @@ namespace KRWF.RimKata
     {
         public static bool Prefix(JobDriver __instance, Pawn ___pawn)
         {
-            if (!RimKataDodgeMovementUtility.BlocksJob(___pawn))
+            // Negative-only fast gate. Active dodge movement is published to
+            // the body-visual participant cache before its path starts; a hit
+            // still requires the exact movement-state check below.
+            if (!RimKataResponseVisualParticipantCache
+                    .IsBodyVisualParticipant(___pawn))
             {
                 return true;
             }
 
-            return RimKataDodgeMovementUtility.IsActive(___pawn)
+            RimKataDodgeMovementUtility.GetStatus(
+                ___pawn,
+                out bool blocksJob,
+                out bool isActive);
+            if (!blocksJob)
+            {
+                return true;
+            }
+
+            return isActive
                 && __instance is JobDriver_RimKataAttack;
         }
     }
@@ -436,7 +552,12 @@ namespace KRWF.RimKata
 
         public static bool GateFullBodyBusy(bool fullBodyBusy, Pawn pawn)
         {
-            return fullBodyBusy && !RimKataDodgeMovementUtility.IsActive(pawn);
+            // Body-visual participation is only a negative fast gate. The
+            // exact dodge owner, Job and path are still verified by IsActive.
+            return fullBodyBusy
+                && (!RimKataResponseVisualParticipantCache
+                        .IsBodyVisualParticipant(pawn)
+                    || !RimKataDodgeMovementUtility.IsActive(pawn));
         }
     }
 }

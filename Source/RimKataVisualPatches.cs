@@ -227,10 +227,7 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Downed
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()))
+                && !RimKataTargeting.IsPawnTargetStateValid(targetPawn))
             {
                 return false;
             }
@@ -693,7 +690,8 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Vector3 start = pawn.Position.ToVector3Shifted();
+            Vector3 start = pawn.DrawPos;
+            start.y = 0f;
             Vector3 end = new LocalTargetInfo(target).CenterVector3;
             end.y = start.y;
             float altitude = Altitudes.AltitudeFor(
@@ -2026,7 +2024,7 @@ namespace KRWF.RimKata
             if (originalAction != null)
             {
                 command.action = target =>
-                    RimKataAttackGizmoTargetContext.Invoke(
+                    RimKataAttackGizmoTargetContext.InvokeSquad(
                         originalAction,
                         target);
             }

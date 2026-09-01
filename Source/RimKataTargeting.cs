@@ -33,6 +33,31 @@ namespace KRWF.RimKata
                 || pawnFaction.HostileTo(targetFaction);
         }
 
+        public static bool IsCombatCapableCrawling(Pawn pawn)
+        {
+            return pawn?.Downed == true
+                && pawn.Crawling
+                && pawn.CanAttackWhileCrawling;
+        }
+
+        public static bool IsIncapacitatedTarget(Pawn pawn)
+        {
+            return pawn?.Downed == true
+                && !IsCombatCapableCrawling(pawn);
+        }
+
+        public static bool IsPawnTargetStateValid(
+            Pawn pawn,
+            bool allowIncapacitated = false)
+        {
+            return pawn != null
+                && !pawn.Dead
+                && !pawn.IsPsychologicallyInvisible()
+                && (!pawn.Downed
+                    || IsCombatCapableCrawling(pawn)
+                    || allowIncapacitated);
+        }
+
         public static float MaximumAutomaticSearchRange(Pawn pawn)
         {
             if (pawn?.Map == null)
@@ -84,7 +109,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            return !(target is Pawn targetPawn) || (!targetPawn.Dead && !targetPawn.Downed && !targetPawn.Crawling && !targetPawn.IsPsychologicallyInvisible());
+            return !(target is Pawn targetPawn)
+                || IsPawnTargetStateValid(targetPawn);
         }
 
         internal static bool IsValidAutomaticAttackTarget(

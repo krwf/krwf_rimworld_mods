@@ -589,7 +589,7 @@ namespace KRWF.RimKata
             state.primaryWeaponCycle.TickTimers();
             state.secondaryWeaponCycle.TickTimers();
             RearmOpeningOwnerIfBothWaiting(state);
-            if (MovementBlocksFire(pawn))
+            if (MovementBlocksFire(pawn, state))
             {
                 InterruptCycleForMovement(
                     pawn,
@@ -601,13 +601,42 @@ namespace KRWF.RimKata
             }
 
             bool blockedByStance = StanceBlocksRimKata(pawn);
+            ThingWithComps weaponScopedFocusJobWeapon =
+                ResolveWeaponScopedFocusJobWeapon(
+                    pawn,
+                    state,
+                    assignedTarget,
+                    playerForced,
+                    killIncappedTarget);
+            bool primaryReceivesAssignedTarget =
+                weaponScopedFocusJobWeapon == null
+                || state.primaryWeaponCycle.weapon
+                    == weaponScopedFocusJobWeapon;
+            bool secondaryReceivesAssignedTarget =
+                weaponScopedFocusJobWeapon == null
+                || state.secondaryWeaponCycle.weapon
+                    == weaponScopedFocusJobWeapon;
+            Thing primaryAssignedTarget = primaryReceivesAssignedTarget
+                ? assignedTarget
+                : null;
+            Thing secondaryAssignedTarget = secondaryReceivesAssignedTarget
+                ? assignedTarget
+                : null;
+            bool primaryPlayerForced = primaryReceivesAssignedTarget
+                && playerForced;
+            bool secondaryPlayerForced = secondaryReceivesAssignedTarget
+                && playerForced;
+            bool primaryKillIncappedTarget = primaryReceivesAssignedTarget
+                && killIncappedTarget;
+            bool secondaryKillIncappedTarget = secondaryReceivesAssignedTarget
+                && killIncappedTarget;
             PrepareCycle(
                 pawn,
                 state,
                 state.primaryWeaponCycle,
-                assignedTarget,
-                playerForced,
-                killIncappedTarget,
+                primaryAssignedTarget,
+                primaryPlayerForced,
+                primaryKillIncappedTarget,
                 closeCombatContext,
                 blockedByStance,
                 out Thing primaryPromotionTarget,
@@ -617,9 +646,9 @@ namespace KRWF.RimKata
                 pawn,
                 state,
                 state.secondaryWeaponCycle,
-                assignedTarget,
-                playerForced,
-                killIncappedTarget,
+                secondaryAssignedTarget,
+                secondaryPlayerForced,
+                secondaryKillIncappedTarget,
                 closeCombatContext,
                 blockedByStance,
                 out Thing secondaryPromotionTarget,
@@ -636,21 +665,66 @@ namespace KRWF.RimKata
                 out Thing promotedJobTarget))
             {
                 assignedTarget = promotedJobTarget;
+                primaryAssignedTarget = promotedJobTarget;
+                secondaryAssignedTarget = promotedJobTarget;
             }
             RefreshDualEngagementState(pawn, state, randomAttackEnabled);
 
             if (!blockedByStance && ReadyToAct(state.primaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state, state.primaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
+                ExecuteCycle(pawn, state, state.primaryWeaponCycle, primaryAssignedTarget, primaryPlayerForced, primaryKillIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
             }
 
             if (!blockedByStance && ReadyToAct(state.secondaryWeaponCycle))
             {
-                ExecuteCycle(pawn, state, state.secondaryWeaponCycle, assignedTarget, playerForced, killIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
+                ExecuteCycle(pawn, state, state.secondaryWeaponCycle, secondaryAssignedTarget, secondaryPlayerForced, secondaryKillIncappedTarget, closeCombatContext, allowAutomaticRangedFire, randomAttackEnabled);
             }
 
             RefreshDualEngagementState(pawn, state, randomAttackEnabled);
             UpdateBodyAimStance(pawn, state);
+        }
+
+        private static ThingWithComps ResolveWeaponScopedFocusJobWeapon(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool killIncappedTarget)
+        {
+            Job job = pawn?.CurJob;
+            if (pawn?.Drafted == true
+                || state == null
+                || assignedTarget == null
+                || !playerForced
+                || killIncappedTarget
+                || job?.def != RimKataDefOf.RimKata_Attack
+                || job.targetA.Thing != assignedTarget)
+            {
+                return null;
+            }
+
+            ThingWithComps weapon =
+                job.verbToUse?.EquipmentSource as ThingWithComps;
+            RimKataWeaponCycleState cycle = CycleForWeapon(state, weapon);
+            return cycle != null
+                && cycle.focusedTarget == assignedTarget
+                && cycle.focusedTargetFromAttackGizmo
+                    ? weapon
+                    : null;
+        }
+
+        internal static bool IsWeaponScopedFocusJob(
+            Pawn pawn,
+            Thing assignedTarget)
+        {
+            Job job = pawn?.CurJob;
+            return ResolveWeaponScopedFocusJobWeapon(
+                    pawn,
+                    StateFor(pawn, false),
+                    assignedTarget,
+                    job?.playerForced == true,
+                    job?.killIncappedTarget == true)
+                != null;
         }
         // !!! Debug HUD !!!
         public static bool TryGetDebugState(
@@ -755,7 +829,9 @@ namespace KRWF.RimKata
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
-                || target.Map != pawn.Map)
+                || target.Map != pawn.Map
+                || (target is Pawn targetPawn
+                    && !RimKataTargeting.IsPawnTargetStateValid(targetPawn)))
             {
                 return false;
             }
@@ -870,10 +946,7 @@ namespace KRWF.RimKata
                 && target.Map == pawn.Map
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && target is Pawn targetPawn
-                && !targetPawn.Dead
-                && !targetPawn.Downed
-                && !targetPawn.Crawling
-                && !targetPawn.IsPsychologicallyInvisible()
+                && RimKataTargeting.IsPawnTargetStateValid(targetPawn)
                 && pawn.CanReachImmediate(target, PathEndMode.Touch);
         }
 
@@ -904,10 +977,7 @@ namespace KRWF.RimKata
                 && target.Spawned
                 && target.Map == pawn.Map
                 && (!(target is Pawn targetPawn)
-                    || (!targetPawn.Dead
-                        && !targetPawn.Downed
-                        && !targetPawn.Crawling
-                        && !targetPawn.IsPsychologicallyInvisible()));
+                    || RimKataTargeting.IsPawnTargetStateValid(targetPawn));
         }
 
         public static bool CanOrderRangedCloseAttack(
@@ -926,9 +996,9 @@ namespace KRWF.RimKata
                 || target.Map != pawn.Map
                 || !target.HostileTo(pawn)
                 || target is Pawn targetPawn
-                    && (targetPawn.Dead
-                        || targetPawn.Crawling
-                        || targetPawn.IsPsychologicallyInvisible())
+                    && !RimKataTargeting.IsPawnTargetStateValid(
+                        targetPawn,
+                        true)
                 || !pawn.CanReachImmediate(target, PathEndMode.Touch)
                 || !RimKataEligibility.IsRangedVerbAvailableInCloseCombat(
                     pawn,
@@ -1704,11 +1774,9 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed
-                        && !(playerForced && killIncappedTarget))))
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    playerForced && killIncappedTarget))
             {
                 return false;
             }
@@ -1914,10 +1982,7 @@ namespace KRWF.RimKata
                 || attacker.Map != pawn.Map
                 || !RimKataTargeting.IsAutomaticEnemy(pawn, attacker)
                 || (attacker is Pawn attackerPawn
-                    && (attackerPawn.Dead
-                        || attackerPawn.Downed
-                        || attackerPawn.Crawling
-                        || attackerPawn.IsPsychologicallyInvisible()))
+                    && !RimKataTargeting.IsPawnTargetStateValid(attackerPawn))
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 return;
@@ -2378,6 +2443,28 @@ namespace KRWF.RimKata
                 StateFor(pawn, false));
         }
 
+        internal static bool PendingFollowupCanReplaceCurrentNonForcedGoto(
+            Pawn pawn)
+        {
+            Job currentJob = pawn?.CurJob;
+            if (currentJob?.def != JobDefOf.Goto
+                || currentJob.playerForced
+                || pawn.Map == null
+                || pawn.InMentalState)
+            {
+                return false;
+            }
+
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            return state?.dedicatedFollowupJobStartInProgress != true
+                && state?.dedicatedFollowupJobLastStartTick != currentTick
+                && CanConsumePendingDedicatedFollowupRequest(
+                    pawn,
+                    state,
+                    currentTick);
+        }
+
         internal static void TryConsumePendingDedicatedFollowupJob(
             Pawn pawn,
             RimKataPawnCombatState state)
@@ -2401,6 +2488,10 @@ namespace KRWF.RimKata
                 return;
             }
 
+            bool requestReady = CanConsumePendingDedicatedFollowupRequest(
+                pawn,
+                state,
+                currentTick);
             Thing target = state.dedicatedFollowupJobTarget;
             Job sourceJob = state.dedicatedFollowupJobSourceJob;
             ThinkNode sourceJobGiver = sourceJob?.jobGiver;
@@ -2413,15 +2504,7 @@ namespace KRWF.RimKata
             bool playerForced = state.dedicatedFollowupJobPlayerForced;
             bool killIncappedTarget = state.dedicatedFollowupJobKillIncappedTarget;
             state.ClearDedicatedFollowupJobRequest();
-            if (requestedTick < 0
-                || currentTick > requestedTick + 1
-                || !CanConsumeDedicatedFollowupRequest(
-                    pawn,
-                    sourceJob,
-                    target)
-                || (pawn.Drafted
-                    && !playerForced
-                    && pawn.drafter?.FireAtWill != true))
+            if (!requestReady)
             {
                 if (state.projectileWakeResumeJob == sourceJob)
                 {
@@ -2437,6 +2520,30 @@ namespace KRWF.RimKata
                 killIncappedTarget,
                 sourceJobGiver,
                 sourceTarget);
+        }
+
+        private static bool CanConsumePendingDedicatedFollowupRequest(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            int currentTick)
+        {
+            if (pawn == null
+                || state?.dedicatedFollowupJobPending != true
+                || currentTick < 0
+                || state.dedicatedFollowupJobRequestedTick < 0
+                || state.dedicatedFollowupJobRequestedTick > currentTick
+                || currentTick > state.dedicatedFollowupJobRequestedTick + 1
+                || !CanConsumeDedicatedFollowupRequest(
+                    pawn,
+                    state.dedicatedFollowupJobSourceJob,
+                    state.dedicatedFollowupJobTarget))
+            {
+                return false;
+            }
+
+            return !pawn.Drafted
+                || state.dedicatedFollowupJobPlayerForced
+                || pawn.drafter?.FireAtWill == true;
         }
 
         private static bool CanConsumeDedicatedFollowupRequest(
@@ -2598,8 +2705,8 @@ namespace KRWF.RimKata
             job.killIncappedTarget = validTarget
                 ? playerForced
                     && killIncappedTarget
-                    && target is Pawn targetPawn
-                    && targetPawn.Downed
+                    && RimKataTargeting.IsIncapacitatedTarget(
+                        target as Pawn)
                 : killIncappedTarget;
             job.verbToUse = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
@@ -2812,10 +2919,7 @@ namespace KRWF.RimKata
                 && RimKataEligibility.CanBeginGunKataAttack(pawn)
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && (!(target is Pawn targetPawn)
-                    || (!targetPawn.Dead
-                        && !targetPawn.Downed
-                        && !targetPawn.Crawling
-                        && !targetPawn.IsPsychologicallyInvisible()));
+                    || RimKataTargeting.IsPawnTargetStateValid(targetPawn));
         }
 
         public static bool CanRushTarget(Pawn pawn, Thing target)
@@ -2828,8 +2932,7 @@ namespace KRWF.RimKata
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
-                || target.Map != pawn.Map
-                || (target is Pawn targetPawn && targetPawn.Dead))
+                || target.Map != pawn.Map)
             {
                 return false;
             }
@@ -2837,6 +2940,16 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state = StateFor(pawn, false);
             bool playerRushRequest =
                 state?.IsPlayerRushRequestFor(target) == true;
+            bool allowIncapacitated = playerRushRequest
+                && pawn.CurJob?.killIncappedTarget == true;
+            if (target is Pawn targetPawn
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    allowIncapacitated))
+            {
+                return false;
+            }
+
             if (playerRushRequest)
             {
                 return true;
@@ -2847,10 +2960,61 @@ namespace KRWF.RimKata
                 && TargetWithinAutomaticSearchRange(pawn, target)
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && (!(target is Pawn automaticTargetPawn)
-                    || (!automaticTargetPawn.Dead
-                        && !automaticTargetPawn.Downed
-                        && !automaticTargetPawn.Crawling
-                        && !automaticTargetPawn.IsPsychologicallyInvisible()));
+                    || RimKataTargeting.IsPawnTargetStateValid(
+                        automaticTargetPawn));
+        }
+
+        public static bool TryConvertSecondaryMeleeAttackOrder(
+            Pawn pawn,
+            Job job,
+            Verb meleeVerb)
+        {
+            Thing target = job?.targetA.Thing;
+            ThingWithComps weapon =
+                meleeVerb?.EquipmentSource as ThingWithComps;
+            if (pawn?.Map == null
+                || pawn.Drafted
+                || pawn.InMentalState
+                || pawn.IsBurning()
+                || !pawn.IsPlayerControlled
+                || job?.def != JobDefOf.AttackMelee
+                || !job.playerForced
+                || target == null
+                || target == pawn
+                || target.Destroyed
+                || !target.Spawned
+                || target.Map != pawn.Map
+                || meleeVerb?.IsMeleeAttack != true
+                || meleeVerb.CasterPawn != pawn
+                || weapon == null
+                || !meleeVerb.Available()
+                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+            {
+                return false;
+            }
+
+            ThingWithComps primary =
+                RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            ThingWithComps secondary =
+                RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                    pawn,
+                    primary,
+                    true)
+                        ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
+                        : null;
+            if (weapon != secondary)
+            {
+                return false;
+            }
+
+            RimKataPawnCombatState state = StateFor(pawn, true);
+            state.RequestPlayerRush(target);
+            job.def = RimKataDefOf.RimKata_Attack;
+            job.playerForced = true;
+            job.verbToUse = meleeVerb;
+            job.killIncappedTarget =
+                RimKataTargeting.IsIncapacitatedTarget(job.targetA.Pawn);
+            return true;
         }
 
         public static bool TryConvertPlayerRushOrder(Pawn pawn, Job job)
@@ -2885,7 +3049,7 @@ namespace KRWF.RimKata
             job.playerForced = true;
             job.verbToUse = meleeVerb;
             job.killIncappedTarget =
-                job.killIncappedTarget || job.targetA.Pawn?.Downed == true;
+                RimKataTargeting.IsIncapacitatedTarget(job.targetA.Pawn);
             return true;
         }
 
@@ -2964,11 +3128,9 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed
-                        && !(playerForced && killIncappedTarget))))
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    playerForced && killIncappedTarget))
             {
                 return false;
             }
@@ -3780,10 +3942,7 @@ namespace KRWF.RimKata
                 && target.Spawned
                 && target.Map == pawn?.Map
                 && (!(target is Pawn targetPawn)
-                    || (!targetPawn.Dead
-                        && !targetPawn.Downed
-                        && !targetPawn.Crawling
-                        && !targetPawn.IsPsychologicallyInvisible()));
+                    || RimKataTargeting.IsPawnTargetStateValid(targetPawn));
         }
 
         private static Thing ResolveCloseTarget(
@@ -3837,12 +3996,9 @@ namespace KRWF.RimKata
                 && (playerForced
                     || RimKataTargeting.IsAutomaticEnemy(pawn, target))
                 && target is Pawn targetPawn
-                && !targetPawn.Dead
-                && (!targetPawn.Downed
-                    || (playerForced && killIncappedTarget))
-                && (!targetPawn.Crawling || playerForced)
-                && (playerForced
-                    || !targetPawn.IsPsychologicallyInvisible())
+                && RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    playerForced && killIncappedTarget)
                 && pawn.CanReachImmediate(target, PathEndMode.Touch);
         }
 
@@ -3885,10 +4041,15 @@ namespace KRWF.RimKata
                 return;
             }
 
+            bool preservePlayerRushRequest = pawn?.Drafted != true
+                && state.IsPlayerRushRequestFor(state.closeAttackRequestTarget);
             state.dualCloseCombatActive = false;
             state.dualCloseTarget = null;
             state.CancelCloseCombat();
-            state.ClearCloseAttackRequest();
+            if (!preservePlayerRushRequest)
+            {
+                state.ClearCloseAttackRequest();
+            }
             state.ResetCandidateSaturationExpansion(true);
             RimKataSharedTargetSearch.Restart(pawn, state, pawn.Position);
         }
@@ -4777,10 +4938,9 @@ namespace KRWF.RimKata
             }
 
             if (assignedTarget is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed && !(playerForced && killIncappedTarget))))
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    playerForced && killIncappedTarget))
             {
                 return false;
             }
@@ -4910,13 +5070,11 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed
-                        && !(playerForced
-                            && killIncappedTarget
-                            && target == assignedTarget))))
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    playerForced
+                        && killIncappedTarget
+                        && target == assignedTarget))
             {
                 return false;
             }
@@ -4968,11 +5126,9 @@ namespace KRWF.RimKata
             }
 
             return target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.Crawling
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (targetPawn.Downed
-                        && !(forcedAssignedTarget && killIncappedTarget)));
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    forcedAssignedTarget && killIncappedTarget);
         }
 
         internal static bool VerbUsable(Pawn pawn, Verb verb, bool closeCombatContext)
@@ -5124,7 +5280,7 @@ namespace KRWF.RimKata
                 return -1;
             }
 
-            if (MovementBlocksFire(pawn))
+            if (MovementBlocksFire(pawn, state))
             {
                 ApplyInterruptedBurstCooldown(pawn, cycle, verb);
                 cycle.ClearPlan();
@@ -5367,9 +5523,13 @@ namespace KRWF.RimKata
             return pawn?.stances?.stunner?.Stunned == true;
         }
 
-        private static bool MovementBlocksFire(Pawn pawn)
+        private static bool MovementBlocksFire(
+            Pawn pawn,
+            RimKataPawnCombatState state)
         {
-            if (RimKataDodgeMovementUtility.IsActive(pawn))
+            if (RimKataDodgeMovementUtility.CalculateIsActive(
+                    pawn,
+                    state))
             {
                 return false;
             }

@@ -324,9 +324,6 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            bool inAdditionalWindow = component?.IsStandardDodgeWindow(defender) == true;
-            bool preserveCurrentVisual = component?.IsDodgeVisualLocked(defender) == true;
-            bool hasActiveMovementPath = RimKataDodgeMovementUtility.TryGetCurrentMovementDirection(defender, out IntVec3 _);
             int dodgeDurationTicks = RimKataMod.Settings?.GetRangedDodgeDurationTicks(defender) ?? RimKataSettings.DefaultRangedDodgeDurationTicks;
 
             if (!RimKataCombatMath.RollConfiguredChance(defender, RimKataChanceKind.RangedDodge))
@@ -335,42 +332,12 @@ namespace KRWF.RimKata
             }
 
             NotifyDefensiveCombatEvent(defender, attacker);
-
-            if (!hasActiveMovementPath && component?.IsCloseCombatActive(defender) == true)
-            {
-                component.BeginCloseCombatDodge(defender, dodgeDurationTicks);
-                return true;
-            }
-
-            if (RimKataMod.Settings?.tumbleEnabled != false)
-            {
-                if (inAdditionalWindow && RimKataDodgeMovementUtility.TryUpgradeMovingDodgeToTumble(defender))
-                {
-                    return true;
-                }
-
-                if (inAdditionalWindow && component?.TryBeginStationaryAdditionalDodge(defender) == true)
-                {
-                    return true;
-                }
-            }
-
-            if (preserveCurrentVisual)
-            {
-                return true;
-            }
-
-            if (inAdditionalWindow)
-            {
-                return true;
-            }
-            else
-            {
-                if (!RimKataDodgeMovementUtility.TryStartMovingFirstDodge(defender, projectile, dodgeDurationTicks))
-                {
-                    BeginStandardDodge(defender, attacker, dodgeDurationTicks);
-                }
-            }
+            RimKataDodgeMovementUtility.ApplySuccessfulRangedDodge(
+                defender,
+                attacker,
+                projectile,
+                component,
+                dodgeDurationTicks);
 
             return true;
         }
@@ -709,6 +676,18 @@ namespace KRWF.RimKata
             attacker.equipment.TryDropEquipment(weapon, out _, dropCell, false);
         }
 
+        private static IntVec3 FacingCell(Rot4 rotation)
+        {
+            switch (rotation.AsInt)
+            {
+                case 0: return IntVec3.North;
+                case 1: return IntVec3.East;
+                case 2: return IntVec3.South;
+                case 3: return IntVec3.West;
+                default: return IntVec3.North;
+            }
+        }
+
         private static void ApplyResponseWeaponDurabilityLoss(ThingWithComps weapon)
         {
             RimKataSettings settings = RimKataMod.Settings;
@@ -769,63 +748,6 @@ namespace KRWF.RimKata
             effecter?.Cleanup();
         }
 
-        private static void BeginStandardDodge(Pawn pawn, Thing attacker, int durationTicks)
-        {
-            IntVec3 direction = DodgeDirection(pawn, attacker);
-            pawn.Map.GetComponent<RimKataMapComponent>()?.BeginVisualState(pawn, RimKataVisualState.StandardDodge, durationTicks, direction);
-        }
-
-        private static IntVec3 DodgeDirection(Pawn pawn, Thing attacker)
-        {
-            Vector3 line;
-            if (pawn.pather?.MovingNow == true)
-            {
-                IntVec3 forward = MovementDirection(pawn);
-                line = forward.ToVector3();
-            }
-            else if (attacker != null)
-            {
-                line = (pawn.Position - attacker.Position).ToVector3();
-            }
-            else
-            {
-                line = Vector3.forward;
-            }
-
-            if (line.sqrMagnitude < 0.01f)
-            {
-                line = Vector3.forward;
-            }
-
-            Vector3 side = new Vector3(-line.z, 0f, line.x).normalized * (Rand.Bool ? 1f : -1f);
-            IntVec3 result = new IntVec3(Mathf.RoundToInt(side.x), 0, Mathf.RoundToInt(side.z));
-            return result == IntVec3.Zero ? IntVec3.East : result;
-        }
-
-        private static IntVec3 FacingCell(Rot4 rotation)
-        {
-            switch (rotation.AsInt)
-            {
-                case 0: return IntVec3.North;
-                case 1: return IntVec3.East;
-                case 2: return IntVec3.South;
-                case 3: return IntVec3.West;
-                default: return IntVec3.North;
-            }
-        }
-
-        private static IntVec3 MovementDirection(Pawn pawn)
-        {
-            if (pawn?.pather?.MovingNow == true
-                && pawn.pather.nextCell.IsValid
-                && pawn.pather.nextCell != pawn.Position)
-            {
-                IntVec3 direction = pawn.pather.nextCell - pawn.Position;
-                return new IntVec3(Math.Sign(direction.x), 0, Math.Sign(direction.z));
-            }
-
-            return FacingCell(pawn?.Rotation ?? Rot4.North);
-        }
     }
 
     [HarmonyPatch(typeof(Pawn), nameof(Pawn.PreApplyDamage))]

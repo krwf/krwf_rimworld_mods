@@ -206,14 +206,23 @@ namespace KRWF.RimKata
                 state.CloseAttackRequestActive
                     ? state.closeAttackRequestTarget
                     : null;
+            bool closePlayerForced = false;
+            bool closeKillIncappedTarget = false;
+            if (requestedCloseTarget != null)
+            {
+                state.TryGetForcedAttackRequestContext(
+                    requestedCloseTarget,
+                    out closePlayerForced,
+                    out closeKillIncappedTarget);
+            }
 
             Thing immediateCloseTarget =
                 RimKataDualWeaponController.ResolveImmediateCloseTarget(
                     pawn,
                     state,
                     requestedCloseTarget,
-                    false,
-                    false);
+                    closePlayerForced,
+                    closeKillIncappedTarget);
             bool closeContext = immediateCloseTarget != null;
 
             if (!RimKataDualWeaponController.HasUsableWeapon(
@@ -232,8 +241,8 @@ namespace KRWF.RimKata
                 pawn,
                 state,
                 immediateCloseTarget,
-                false,
-                false,
+                closePlayerForced,
+                closeKillIncappedTarget,
                 closeContext,
                 true,
                 automaticRangedFireAllowed);
@@ -300,9 +309,6 @@ namespace KRWF.RimKata
             bool controllerDriven = dedicatedJob
                 || CanControllerPrerequisites(pawn);
             if (!controllerDriven
-                || (!RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                    && !(pawn.CurJob?.playerForced == true
-                        && pawn.CurJob.targetA.Thing == target))
                 || !pawn.CanReachImmediate(target, PathEndMode.Touch)
                 || !RimKataDualWeaponController.HasUsableWeapon(
                     pawn,
@@ -313,13 +319,40 @@ namespace KRWF.RimKata
             }
 
             RimKataPawnCombatState state = StateFor(pawn, true);
+            if (state == null)
+            {
+                return false;
+            }
+
+            bool playerForced = false;
+            bool killIncappedTarget = false;
+            state.TryGetForcedAttackRequestContext(
+                target,
+                out playerForced,
+                out killIncappedTarget);
+            if ((!RimKataTargeting.IsAutomaticEnemy(pawn, target)
+                    && !playerForced)
+                || (target is Pawn targetPawn
+                    && !RimKataTargeting.IsPawnTargetStateValid(
+                        targetPawn,
+                        playerForced && killIncappedTarget))
+                || RimKataDualWeaponController.ResolveImmediateCloseTarget(
+                    pawn,
+                    null,
+                    target,
+                    playerForced,
+                    killIncappedTarget) != target)
+            {
+                return false;
+            }
+
             state.RequestCloseAttack(target);
             if (pawn.Drafted)
             {
                 state.draftedFireActive = true;
             }
 
-            return true;
+            return state.CloseAttackRequestActive;
         }
 
         public static void NotifyTargetedByHostile(Pawn target, Pawn attacker)
@@ -332,10 +365,7 @@ namespace KRWF.RimKata
                 || target.Map != attacker.Map
                 || target.Drafted != true
                 || !RimKataTargeting.IsAutomaticEnemy(target, attacker)
-                || attacker.Dead
-                || attacker.Downed
-                || attacker.Crawling
-                || attacker.IsPsychologicallyInvisible()
+                || !RimKataTargeting.IsPawnTargetStateValid(attacker)
                 || !CanControllerPrerequisites(target))
             {
                 return;

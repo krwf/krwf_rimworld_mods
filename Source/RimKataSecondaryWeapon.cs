@@ -1640,6 +1640,9 @@ namespace KRWF.RimKata
     public static class Patch_CommandVerbTarget_RimKataSecondarySwap
     {
         [ThreadStatic] private static bool replayingAttack;
+        private static Pawn pendingMeleePawn;
+        private static Verb pendingMeleeVerb;
+        private static ITargetingSource pendingMeleeTargetingSource;
 
         public static bool Prefix(Command_VerbTarget __instance)
         {
@@ -1837,6 +1840,7 @@ namespace KRWF.RimKata
             Command_VerbTarget representative,
             List<Command_VerbTarget> commands)
         {
+            ClearPendingMeleeAttack();
             replayingAttack = true;
             try
             {
@@ -1863,6 +1867,125 @@ namespace KRWF.RimKata
             {
                 replayingAttack = false;
             }
+
+            ArmPendingMeleeAttack(commands);
+        }
+
+        private static void ArmPendingMeleeAttack(
+            List<Command_VerbTarget> commands)
+        {
+            ClearPendingMeleeAttack();
+            Targeter targeter = Find.Targeter;
+            Verb targetingVerb = targeter?.targetingSource?.GetVerb;
+            Pawn pawn = targetingVerb?.CasterPawn;
+            List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
+            if (targeter?.IsTargeting != true
+                || targeter.targetingSourceAdditionalPawns?.Count > 0
+                || targetingVerb?.IsMeleeAttack != true
+                || pawn?.Drafted == true
+                || pawn?.Spawned != true
+                || !pawn.IsPlayerControlled
+                || selectedPawns == null
+                || selectedPawns.Count != 1
+                || selectedPawns[0] != pawn)
+            {
+                return;
+            }
+
+            bool sourceFromRimKataCommand = false;
+            for (int i = 0; i < commands.Count; i++)
+            {
+                Command_VerbTarget command = commands[i];
+                if (!command.Disabled
+                    && command.verb == targetingVerb
+                    && IsRimKataSecondaryCommand(command))
+                {
+                    sourceFromRimKataCommand = true;
+                    break;
+                }
+            }
+
+            if (!sourceFromRimKataCommand)
+            {
+                return;
+            }
+
+            pendingMeleePawn = pawn;
+            pendingMeleeVerb = targetingVerb;
+            pendingMeleeTargetingSource = targeter.targetingSource;
+        }
+
+        internal static bool TryConsumePendingMeleeAttack(
+            Pawn pawn,
+            Job job,
+            out Verb verb)
+        {
+            verb = null;
+            Targeter targeter = Find.Targeter;
+            bool matchingOrder = pendingMeleePawn == pawn
+                && pendingMeleeVerb != null
+                && pendingMeleeVerb.CasterPawn == pawn
+                && pendingMeleeVerb.IsMeleeAttack
+                && pawn?.Drafted != true
+                && job?.def == JobDefOf.AttackMelee
+                && job.playerForced
+                && job.targetA.HasThing
+                && targeter?.IsTargeting == true
+                && targeter.targetingSource == pendingMeleeTargetingSource
+                && targeter.targetingSource?.GetVerb == pendingMeleeVerb
+                && RimKataWeaponSlotUtility.IsSecondaryWeapon(
+                    pawn,
+                    pendingMeleeVerb.EquipmentSource);
+            if (!matchingOrder)
+            {
+                return false;
+            }
+
+            verb = pendingMeleeVerb;
+            ClearPendingMeleeAttack();
+            return true;
+        }
+
+        internal static void ClearPendingMeleeAttack()
+        {
+            pendingMeleePawn = null;
+            pendingMeleeVerb = null;
+            pendingMeleeTargetingSource = null;
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_Targeter_BeginTargeting_RimKataSecondaryMelee
+    {
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            MethodInfo[] methods = typeof(Targeter).GetMethods(
+                BindingFlags.Instance
+                | BindingFlags.Public
+                | BindingFlags.NonPublic);
+            for (int i = 0; i < methods.Length; i++)
+            {
+                if (methods[i].Name == nameof(Targeter.BeginTargeting))
+                {
+                    yield return methods[i];
+                }
+            }
+        }
+
+        public static void Prefix()
+        {
+            Patch_CommandVerbTarget_RimKataSecondarySwap
+                .ClearPendingMeleeAttack();
+        }
+    }
+
+    [HarmonyPatch(typeof(Targeter), nameof(Targeter.StopTargeting))]
+    public static class Patch_Targeter_StopTargeting_RimKataSecondaryMelee
+    {
+        public static void Postfix()
+        {
+            Patch_CommandVerbTarget_RimKataSecondarySwap
+                .ClearPendingMeleeAttack();
         }
     }
 

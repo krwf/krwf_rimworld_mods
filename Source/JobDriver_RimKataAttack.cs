@@ -10,8 +10,10 @@ namespace KRWF.RimKata
     public static class RimKataAttackGizmoTargetContext
     {
         [ThreadStatic] private static int depth;
+        [ThreadStatic] private static int squadDepth;
 
         public static bool Active => depth > 0;
+        public static bool SquadActive => squadDepth > 0;
 
         public static void Invoke(
             Action<LocalTargetInfo> action,
@@ -22,15 +24,125 @@ namespace KRWF.RimKata
                 return;
             }
 
-            depth++;
+            Enter(false);
             try
             {
                 action(target);
             }
             finally
             {
-                depth--;
+                Exit(false);
             }
+        }
+
+        public static void Invoke(Action action)
+        {
+            if (action == null)
+            {
+                return;
+            }
+
+            Enter(false);
+            try
+            {
+                action();
+            }
+            finally
+            {
+                Exit(false);
+            }
+        }
+
+        public static T Invoke<T>(Func<T> action)
+        {
+            if (action == null)
+            {
+                return default(T);
+            }
+
+            Enter(false);
+            try
+            {
+                return action();
+            }
+            finally
+            {
+                Exit(false);
+            }
+        }
+
+        public static void InvokeSquad(
+            Action<LocalTargetInfo> action,
+            LocalTargetInfo target)
+        {
+            if (action == null)
+            {
+                return;
+            }
+
+            Enter(true);
+            try
+            {
+                action(target);
+            }
+            finally
+            {
+                Exit(true);
+            }
+        }
+
+        public static void InvokeSquad(Action action)
+        {
+            if (action == null)
+            {
+                return;
+            }
+
+            Enter(true);
+            try
+            {
+                action();
+            }
+            finally
+            {
+                Exit(true);
+            }
+        }
+
+        public static T InvokeSquad<T>(Func<T> action)
+        {
+            if (action == null)
+            {
+                return default(T);
+            }
+
+            Enter(true);
+            try
+            {
+                return action();
+            }
+            finally
+            {
+                Exit(true);
+            }
+        }
+
+        private static void Enter(bool squad)
+        {
+            depth++;
+            if (squad)
+            {
+                squadDepth++;
+            }
+        }
+
+        private static void Exit(bool squad)
+        {
+            if (squad)
+            {
+                squadDepth--;
+            }
+            depth--;
         }
     }
 
@@ -163,6 +275,10 @@ namespace KRWF.RimKata
             }
 
             Thing assignedTarget = AssignedTarget;
+            bool weaponScopedFocusJob =
+                RimKataDualWeaponController.IsWeaponScopedFocusJob(
+                    pawn,
+                    assignedTarget);
             bool assignedTargetValid = IsValidAssignedTarget(assignedTarget);
             if (assignedTargetValid)
             {
@@ -179,6 +295,12 @@ namespace KRWF.RimKata
 
             if (!assignedTargetValid)
             {
+                if (weaponScopedFocusJob)
+                {
+                    job.playerForced = false;
+                    job.killIncappedTarget = false;
+                }
+
                 RimKataDualWeaponController.EnsureContinuationSearchBeforeExit(
                     pawn);
                 if (TryAdoptContinuationTarget(out assignedTarget))
@@ -225,20 +347,24 @@ namespace KRWF.RimKata
             }
 
             RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
+            RimKataPawnCombatState state = component?.GetState(pawn, false);
 
             bool assignedTargetInTouchRange = assignedTargetValid && pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch);
 
             Thing immediateCloseTarget =
                 RimKataDualWeaponController.ResolveImmediateCloseTarget(
                     pawn,
+                    state,
                     assignedTarget,
                     IsPlayerForced,
                     job.killIncappedTarget);
 
-            if (RimKataDodgeMovementUtility.IsActive(pawn))
+            if (RimKataDodgeMovementUtility.CalculateIsActive(
+                    pawn,
+                    state))
             {
                 bool dodgeCloseCombat = assignedTargetInTouchRange
-                    || component?.IsCloseCombatActive(pawn) == true;
+                    || state?.CloseCombatActive == true;
 
                 TickCombatFire(
                     assignedTarget,
@@ -376,6 +502,22 @@ namespace KRWF.RimKata
 
         private bool CanAttackWithoutRushing(Thing target)
         {
+            ThingWithComps orderedWeapon = IsPlayerForced
+                ? job?.verbToUse?.EquipmentSource as ThingWithComps
+                : null;
+            bool weaponScopedFocusJob = orderedWeapon != null
+                && RimKataDualWeaponController.IsWeaponScopedFocusJob(
+                    pawn,
+                    target);
+            if (weaponScopedFocusJob)
+            {
+                return RimKataWeaponSlotUtility
+                    .CanWeaponAttackTargetWithoutRushing(
+                        pawn,
+                        orderedWeapon,
+                        target);
+            }
+
             return RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(pawn, target);
         }
 
@@ -448,11 +590,9 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && (targetPawn.Dead
-                    || targetPawn.IsPsychologicallyInvisible()
-                    || (!IsPlayerForced && targetPawn.Crawling)
-                    || (!(IsPlayerForced && job.killIncappedTarget)
-                        && targetPawn.Downed)))
+                && !RimKataTargeting.IsPawnTargetStateValid(
+                    targetPawn,
+                    IsPlayerForced && job.killIncappedTarget))
             {
                 return false;
             }
@@ -470,6 +610,11 @@ namespace KRWF.RimKata
         public static bool Prefix(Verb __instance, LocalTargetInfo target)
         {
             Pawn pawn = __instance?.CasterPawn;
+            if (RimKataAttackGizmoTargetContext.Active)
+            {
+                return true;
+            }
+
             if (__instance?.IsMeleeAttack == true)
             {
                 bool closeTargetAccepted = target.HasThing
@@ -482,26 +627,31 @@ namespace KRWF.RimKata
                     || pawn?.CurJobDef != RimKataDefOf.RimKata_Attack;
             }
 
-            if (RimKataAttackGizmoTargetContext.Active)
+            if (!target.HasThing
+                || (target.Pawn != null
+                    && !RimKataTargeting.IsPawnTargetStateValid(target.Pawn)))
             {
                 return true;
             }
 
-            bool forcedIncappedTarget = target.Pawn?.Downed == true
-                && RimKataDualWeaponController.CanUsePlayerWeaponCommand(
-                    pawn,
-                    __instance);
-            bool fixedWeaponTarget = false;
-            if (!forcedIncappedTarget
-                && __instance?.IsMeleeAttack == false
-                && target.HasThing)
+            if (!RimKataDualWeaponController.CanUsePlayerWeaponCommand(
+                pawn,
+                __instance))
             {
-                fixedWeaponTarget = RimKataDualWeaponController.NotifyPlayerWeaponTarget(
+                return true;
+            }
+
+            bool fixedWeaponTarget =
+                RimKataDualWeaponController.NotifyPlayerWeaponTarget(
                     pawn,
                     __instance,
                     target.Thing,
                     true);
-            }
+            bool playerCloseFire =
+                RimKataDualWeaponController.BeginPlayerRangedCloseAttack(
+                    pawn,
+                    __instance,
+                    target.Thing);
 
             if (fixedWeaponTarget
                 && (pawn?.Drafted == true
@@ -510,27 +660,19 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool playerCloseFire = target.HasThing
-                && RimKataDualWeaponController.BeginPlayerRangedCloseAttack(
-                    pawn,
-                    __instance,
-                    target.Thing);
-
-            if (forcedIncappedTarget)
-            {
-                return true;
-            }
-
-            if (!playerCloseFire
+            bool startUndraftedFocusJob = fixedWeaponTarget
+                && pawn?.Drafted != true;
+            if (!startUndraftedFocusJob
+                && !playerCloseFire
                 && !RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
             {
                 return true;
             }
 
             if (pawn?.IsBurning() == true
-                || !target.HasThing
-                || !RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
+                || !RimKataWeaponSlotUtility.CanWeaponAttackTargetWithoutRushing(
                     pawn,
+                    __instance.EquipmentSource as ThingWithComps,
                     target.Thing))
             {
                 return true;
@@ -547,7 +689,8 @@ namespace KRWF.RimKata
             job.verbToUse = selectedVerb;
             if (target.Pawn != null)
             {
-                job.killIncappedTarget = target.Pawn.Downed;
+                job.killIncappedTarget =
+                    RimKataTargeting.IsIncapacitatedTarget(target.Pawn);
             }
 
             pawn.jobs.TryTakeOrderedJob(job, JobTag.Misc);
@@ -589,21 +732,54 @@ namespace KRWF.RimKata
     [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob))]
     public static class Patch_PawnJobTracker_TryTakeOrderedJob_RimKata
     {
-        public static void Prefix(Pawn ___pawn, ref Job job)
+        public static bool Prefix(Pawn ___pawn, ref Job job)
         {
+            if (Patch_CommandVerbTarget_RimKataSecondarySwap
+                    .TryConsumePendingMeleeAttack(
+                        ___pawn,
+                        job,
+                        out Verb secondaryMeleeVerb)
+                && RimKataDualWeaponController
+                    .TryConvertSecondaryMeleeAttackOrder(
+                        ___pawn,
+                        job,
+                        secondaryMeleeVerb))
+            {
+                return true;
+            }
+
+            if (RimKataAttackGizmoTargetContext.SquadActive
+                && ___pawn?.Drafted != true)
+            {
+                if (job != null)
+                {
+                    JobMaker.ReturnToPool(job);
+                    job = null;
+                }
+                return false;
+            }
+
             if (RimKataAttackGizmoTargetContext.Active
+                && !RimKataAttackGizmoTargetContext.SquadActive
                 && RimKataDualWeaponController.TryConvertPlayerRushOrder(
                     ___pawn,
                     job))
             {
-                return;
+                return true;
             }
 
             bool orderedAttack = job != null
                 && job.def == JobDefOf.AttackStatic
                 && job.targetA.HasThing;
+            if (orderedAttack
+                && ___pawn?.Drafted == true
+                && RimKataTargeting.IsIncapacitatedTarget(job.targetA.Pawn))
+            {
+                job.killIncappedTarget = true;
+            }
+
             bool playerSquadRangedOrder =
-                RimKataAttackGizmoTargetContext.Active
+                RimKataAttackGizmoTargetContext.SquadActive
                 && orderedAttack;
             Verb orderedVerb = job?.verbToUse;
             bool playerRangedCloseOrder = orderedAttack
@@ -616,7 +792,12 @@ namespace KRWF.RimKata
                 && !RimKataDualWeaponController.IsDedicatedFollowupActive(___pawn)
                 && !playerRangedCloseOrder)
             {
-                return;
+                return true;
+            }
+
+            if (!RimKataEligibility.CanBeginGunKataAttack(___pawn))
+            {
+                return true;
             }
 
             if (___pawn?.Drafted != true
@@ -627,7 +808,7 @@ namespace KRWF.RimKata
                     ___pawn,
                     job.targetA.Thing))
             {
-                return;
+                return true;
             }
 
             Verb verb = playerRangedCloseOrder
@@ -637,12 +818,14 @@ namespace KRWF.RimKata
                     job.targetA.Thing);
             if (verb == null)
             {
-                return;
+                return true;
             }
 
             job.def = RimKataDefOf.RimKata_Attack;
             job.verbToUse = verb;
-            job.killIncappedTarget = job.killIncappedTarget || job.targetA.Pawn?.Downed == true;
+            job.killIncappedTarget =
+                RimKataTargeting.IsIncapacitatedTarget(job.targetA.Pawn);
+            return true;
         }
     }
 
@@ -730,7 +913,6 @@ namespace KRWF.RimKata
             {
                 newJob.def = RimKataDefOf.RimKata_Attack;
                 newJob.verbToUse = queuedVerb;
-                newJob.killIncappedTarget = newJob.killIncappedTarget || newJob.targetA.Pawn?.Downed == true;
                 return true;
             }
 
@@ -963,7 +1145,8 @@ namespace KRWF.RimKata
                 && !target.Destroyed
                 && target.Map == pawn.Map
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                && (!(target is Pawn targetPawn) || (!targetPawn.Dead && !targetPawn.Downed && !targetPawn.Crawling && !targetPawn.IsPsychologicallyInvisible()));
+                && (!(target is Pawn targetPawn)
+                    || RimKataTargeting.IsPawnTargetStateValid(targetPawn));
         }
     }
 
@@ -986,8 +1169,19 @@ namespace KRWF.RimKata
 
             Action originalAction = __result;
             Thing targetThing = target.Thing;
+            bool squadOrder = RimKataAttackGizmoTargetContext.SquadActive;
             __result = delegate
             {
+                if (squadOrder)
+                {
+                    if (pawn?.Drafted == true)
+                    {
+                        RimKataAttackGizmoTargetContext.InvokeSquad(
+                            originalAction);
+                    }
+                    return;
+                }
+
                 bool closeTargetAccepted = RimKataDualWeaponController
                     .TryNotifyPlayerMeleeCloseTarget(
                         pawn,
@@ -1009,22 +1203,22 @@ namespace KRWF.RimKata
             Pawn pawn,
             LocalTargetInfo target,
             ref System.Action __result,
-            ref string failStr)
+            ref string failStr,
+            ref bool __state)
         {
-            if (RimKataAttackGizmoTargetContext.Active)
+            __state = !RimKataAttackGizmoTargetContext.Active
+                && IsSelectedPlayerPawnInGroup(pawn);
+            if (RimKataAttackGizmoTargetContext.Active || __state)
             {
                 return true;
             }
 
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn)
-                || pawn?.Drafted != true
+            if (pawn?.Drafted != true
                 || pawn.IsBurning()
                 || !target.IsValid
                 || !target.HasThing
-                || target.Pawn?.IsPsychologicallyInvisible() == true
-                || !RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
-                    pawn,
-                    target.Thing))
+                || (target.Pawn != null
+                    && !RimKataTargeting.IsPawnTargetStateValid(target.Pawn)))
             {
                 return true;
             }
@@ -1033,6 +1227,17 @@ namespace KRWF.RimKata
                 pawn,
                 target.Thing);
             if (verb == null)
+            {
+                return true;
+            }
+
+            if (!RimKataDualWeaponController.CanUsePlayerWeaponCommand(
+                    pawn,
+                    verb)
+                || !RimKataWeaponSlotUtility.CanWeaponAttackTargetWithoutRushing(
+                    pawn,
+                    verb.EquipmentSource as ThingWithComps,
+                    target.Thing))
             {
                 return true;
             }
@@ -1074,15 +1279,20 @@ namespace KRWF.RimKata
             }
             else
             {
-                bool fromAttackGizmo =
-                    RimKataAttackGizmoTargetContext.Active;
                 __result = delegate
                 {
-                    RimKataDualWeaponController.NotifyPlayerWeaponTarget(
-                        pawn,
-                        verb,
-                        target.Thing,
-                        fromAttackGizmo);
+                    if (RimKataDualWeaponController.NotifyPlayerWeaponTarget(
+                            pawn,
+                            verb,
+                            target.Thing,
+                            true))
+                    {
+                        RimKataDualWeaponController
+                            .BeginPlayerRangedCloseAttack(
+                                pawn,
+                                verb,
+                                target.Thing);
+                    }
                 };
                 return false;
             }
@@ -1096,25 +1306,95 @@ namespace KRWF.RimKata
             Pawn pawn,
             LocalTargetInfo target,
             ref System.Action __result,
-            ref string failStr)
+            ref string failStr,
+            bool __state)
         {
-            if (__result != null
-                || !RimKataAttackGizmoTargetContext.Active
-                || !target.HasThing
-                || failStr != "TooClose".Translate().CapitalizeFirst()
-                || !RimKataDualWeaponController
-                    .CanNotifyPlayerMeleeCloseTarget(
-                        pawn,
-                        target.Thing))
+            bool squadContext = RimKataAttackGizmoTargetContext.SquadActive
+                || __state;
+            bool explicitIncapacitatedOrder = pawn?.Drafted == true
+                && RimKataEligibility.CanBeginGunKataAttack(pawn)
+                && RimKataTargeting.IsIncapacitatedTarget(target.Pawn);
+            bool attackContext = RimKataAttackGizmoTargetContext.Active
+                || __state
+                || explicitIncapacitatedOrder;
+            if (__result == null
+                && attackContext
+                && target.HasThing
+                && failStr == "TooClose".Translate().CapitalizeFirst())
+            {
+                Func<KeyValuePair<Action, string>> meleeActionFactory =
+                    delegate
+                    {
+                        Action action = FloatMenuUtility.GetMeleeAttackAction(
+                            pawn,
+                            target,
+                            out string meleeFailStr,
+                            false);
+                        return new KeyValuePair<Action, string>(
+                            action,
+                            meleeFailStr);
+                    };
+                KeyValuePair<Action, string> meleeResult = squadContext
+                    ? RimKataAttackGizmoTargetContext.InvokeSquad(
+                        meleeActionFactory)
+                    : RimKataAttackGizmoTargetContext.Invoke(
+                        meleeActionFactory);
+                __result = meleeResult.Key;
+                failStr = meleeResult.Value;
+            }
+
+            if (__result == null || !squadContext)
             {
                 return;
             }
 
-            __result = FloatMenuUtility.GetMeleeAttackAction(
-                pawn,
-                target,
-                out failStr,
-                false);
+            Action originalAction = __result;
+            __result = delegate
+            {
+                if (pawn?.Drafted == true)
+                {
+                    RimKataAttackGizmoTargetContext.InvokeSquad(
+                        originalAction);
+                }
+            };
+        }
+
+        private static bool IsSelectedPlayerPawnInGroup(Pawn pawn)
+        {
+            List<object> selectedObjects = Find.Selector?
+                .SelectedObjectsListForReading;
+            if (pawn == null
+                || selectedObjects == null)
+            {
+                return false;
+            }
+
+            bool pawnSelected = false;
+            int selectedPlayerPawns = 0;
+            for (int i = 0; i < selectedObjects.Count; i++)
+            {
+                if (!(selectedObjects[i] is Pawn selectedPawn))
+                {
+                    continue;
+                }
+
+                if (selectedPawn == pawn)
+                {
+                    pawnSelected = true;
+                }
+
+                if (selectedPawn?.Spawned == true
+                    && selectedPawn.IsPlayerControlled)
+                {
+                    selectedPlayerPawns++;
+                    if (pawnSelected && selectedPlayerPawns >= 2)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 
