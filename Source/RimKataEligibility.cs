@@ -20,11 +20,17 @@ namespace KRWF.RimKata
             return RimKataEligibilityCache.HasAnyAccessSource(pawn);
         }
 
+        public static bool HasActiveRimKataAccess(Pawn pawn)
+        {
+            return HasRimKataAccess(pawn)
+                && !RimKataTemporaryInactivity.IsInactive(pawn);
+        }
+
         public static bool RandomAttackEnabledForPawn(Pawn pawn)
         {
             return pawn != null
                 && RimKataMod.Settings?.randomAttackEnabled != false
-                && HasRimKataAccess(pawn);
+                && HasActiveRimKataAccess(pawn);
         }
 
         public static bool FactionEffectsEnabled(Pawn pawn)
@@ -61,13 +67,19 @@ namespace KRWF.RimKata
                 && pawn.CurJob?.workGiverDef != null;
         }
 
+        public static bool IsWorkMovementDefenseException(Pawn pawn)
+        {
+            return IsWorking(pawn)
+                && pawn.pather?.MovingNow == true
+                && pawn.carryTracker?.CarriedThing == null;
+        }
+
         public static bool CanUseDefense(Pawn pawn)
         {
-            return HasRimKataAccess(pawn)
+            return HasActiveRimKataAccess(pawn)
                 && IsConsciousAndMobile(pawn)
-                && !IsWorking(pawn)
-                && pawn.stances?.stunner != null
-                && !pawn.stances.stunner.Stunned
+                && (!IsWorking(pawn)
+                    || IsWorkMovementDefenseException(pawn))
                 && pawn.health.capacities.CapableOf(PawnCapacityDefOf.Moving);
         }
 
@@ -86,14 +98,12 @@ namespace KRWF.RimKata
         public static bool CanUseMeleeResponse(Pawn pawn)
         {
             return CanUseDefense(pawn)
-                && pawn.kindDef?.canMeleeAttack == true
-                && pawn.meleeVerbs != null
-                && pawn.meleeVerbs.GetUpdatedAvailableVerbsList(false).Count > 0;
+                && pawn.kindDef?.canMeleeAttack == true;
         }
 
         public static bool CanBeginGunKataAttack(Pawn pawn)
         {
-            return HasRimKataAccess(pawn)
+            return HasActiveRimKataAccess(pawn)
                 && IsConsciousAndMobile(pawn)
                 && !pawn.WorkTagIsDisabled(WorkTags.Violent)
                 && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn);

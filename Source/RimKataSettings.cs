@@ -442,10 +442,16 @@ namespace KRWF.RimKata
         public float GetMeleeResponseChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
             pawn, meleeResponseChanceFixed, meleeResponseChancePercent,
             meleeResponseChanceMinimumPercent, meleeResponseChanceGrowthPerLevelPercent, SkillDefOf.Melee));
+        public float GetMeleeResponseBonusMultiplier(Pawn pawn) => BonusMultiplierFromPercent(ResolvePercent(
+            pawn, meleeResponseChanceFixed, meleeResponseChancePercent,
+            meleeResponseChanceMinimumPercent, meleeResponseChanceGrowthPerLevelPercent, SkillDefOf.Melee));
         public float GetResponseDisarmChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
             pawn, responseDisarmChanceFixed, responseDisarmChancePercent,
             responseDisarmChanceMinimumPercent, responseDisarmChanceGrowthPerLevelPercent, SkillDefOf.Melee));
         public float GetMeleeDodgeChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
+            pawn, meleeDodgeChanceFixed, meleeDodgeChancePercent,
+            meleeDodgeChanceMinimumPercent, meleeDodgeChanceGrowthPerLevelPercent, SkillDefOf.Melee));
+        public float GetMeleeDodgeBonusMultiplier(Pawn pawn) => BonusMultiplierFromPercent(ResolvePercent(
             pawn, meleeDodgeChanceFixed, meleeDodgeChancePercent,
             meleeDodgeChanceMinimumPercent, meleeDodgeChanceGrowthPerLevelPercent, SkillDefOf.Melee));
         public float GetInterceptionChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
@@ -864,6 +870,7 @@ namespace KRWF.RimKata
 
         private static float ChanceFromPercent(float percent) => Mathf.Clamp01(percent / 100f);
         private static float MultiplierFromPercent(float percent) => Mathf.Max(0f, percent / 100f);
+        private static float BonusMultiplierFromPercent(float percent) => 1f + Mathf.Max(0f, percent) / 100f;
 
         private static float SanitizePercent(float value, float defaultValue)
         {

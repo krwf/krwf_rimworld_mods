@@ -1096,7 +1096,7 @@ namespace KRWF.RimKata
             bool randomAttackEnabled =
                 RimKataMod.Settings?.randomAttackEnabled != false
                 && (attackEligibilityVerified
-                    || RimKataEligibility.HasRimKataAccess(pawn));
+                    || RimKataEligibility.HasActiveRimKataAccess(pawn));
             if (!randomAttackEnabled)
             {
                 state.ConsumeDraftedMovementSearchTrigger();
@@ -3172,7 +3172,7 @@ namespace KRWF.RimKata
                 || pawn.InMentalState
                 || verb == null
                 || !verb.IsMeleeAttack
-                || !RimKataEligibility.HasRimKataAccess(pawn)
+                || !RimKataEligibility.HasActiveRimKataAccess(pawn)
                 || !RimKataEquipmentUtility.HasEnabledArmor(pawn))
             {
                 return false;

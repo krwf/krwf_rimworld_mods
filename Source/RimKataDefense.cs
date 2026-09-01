@@ -50,8 +50,6 @@ namespace KRWF.RimKata
         [ThreadStatic] private static Pawn closeResolvedDefender;
         [ThreadStatic] private static bool closeDefenseResolved;
         [ThreadStatic] private static bool closeDefenseAvoided;
-        [ThreadStatic] public static RimKataDefenseOutcome CurrentMeleeOutcome;
-        [ThreadStatic] public static Pawn CurrentMeleeDefender;
         [ThreadStatic] private static Pawn currentDamageStaggerDefender;
         [ThreadStatic] private static Thing currentDamageStaggerAttacker;
         [ThreadStatic] private static bool currentDamageStaggerConfirmed;
@@ -116,7 +114,7 @@ namespace KRWF.RimKata
             if (defender?.Map == null
                 || attacker == null
                 || attacker == defender
-                || !RimKataEligibility.HasRimKataAccess(defender)
+                || !RimKataEligibility.HasActiveRimKataAccess(defender)
                 || !RimKataTargeting.IsAutomaticEnemy(defender, attacker))
             {
                 return;
@@ -196,7 +194,8 @@ namespace KRWF.RimKata
         {
             if (defender?.Map == null
                 || attacker == null
-                || !RimKataTargeting.IsAutomaticEnemy(defender, attacker))
+                || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
+                || !RimKataEligibility.CanUseDefense(defender))
             {
                 return RimKataDefenseOutcome.None;
             }
@@ -206,11 +205,12 @@ namespace KRWF.RimKata
                 defender.Map.GetComponent<RimKataMapComponent>()?.EnterCloseCombat(defender, attacker);
             }
 
-            if (RimKataMod.Settings?.responseEnabled != false
-                && RimKataEligibility.CanUseMeleeResponse(defender)
-                && RimKataCombatMath.RollConfiguredChance(defender, RimKataChanceKind.MeleeResponse))
+            if (TryResolveMeleeParry(
+                defender,
+                attacker,
+                attackingVerb,
+                true))
             {
-                NotifySuccessfulResponse(defender, attacker, attackingVerb);
                 return RimKataDefenseOutcome.Response;
             }
 
@@ -230,6 +230,7 @@ namespace KRWF.RimKata
                 || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
                 || !RimKataEligibility.HasRimKataAccess(attacker)
                 || !RimKataEligibility.HasRimKataAccess(defender)
+                || !RimKataEligibility.CanUseDefense(defender)
                 || HasActiveApparelShield(defender))
             {
                 return RimKataCloseDefensePrecheck.None;
@@ -281,7 +282,8 @@ namespace KRWF.RimKata
             return false;
         }
 
-        public static bool ResolveMeleeDefense(float dodgeChance, Verb_MeleeAttack attackingVerb)
+        public static bool TryResolveMeleeParry(
+            Verb_MeleeAttack attackingVerb)
         {
             if (attackingVerb == null)
             {
@@ -292,46 +294,101 @@ namespace KRWF.RimKata
             Pawn attacker = attackingVerb.CasterPawn;
             if (defender == null
                 || attacker == null
-                || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
                 || !RimKataEligibility.CanUseDefense(defender))
             {
                 return false;
             }
 
-            if (Rand.Chance(dodgeChance))
+            if (RimKataTargeting.IsAutomaticEnemy(defender, attacker)
+                && defender.CanReachImmediate(attacker, PathEndMode.Touch))
             {
-                NotifyDefensiveCombatEvent(defender, attacker);
-                return true;
+                defender.Map?.GetComponent<RimKataMapComponent>()?
+                    .EnterCloseCombat(defender, attacker);
             }
 
-            RimKataDefenseOutcome outcome = ResolveCloseDefense(defender, attacker, attackingVerb);
-            if (outcome != RimKataDefenseOutcome.Response)
+            return TryResolveMeleeParry(
+                defender,
+                attacker,
+                attackingVerb,
+                true);
+        }
+
+        private static bool TryResolveMeleeParry(
+            Pawn defender,
+            Pawn attacker,
+            Verb attackingVerb,
+            bool defenseEligibilityVerified = false)
+        {
+            if (defender?.Map == null
+                || attacker == null
+                || attacker.Map != defender.Map
+                || RimKataMod.Settings?.responseEnabled == false
+                || (defenseEligibilityVerified
+                    ? defender.kindDef?.canMeleeAttack != true
+                    : !RimKataEligibility.CanUseMeleeResponse(defender))
+                || IsExcludedPlayerFactionMeleeAttack(defender, attacker)
+                || !Rand.Chance(
+                    RimKataCombatMath.MeleeParryChance(
+                        defender,
+                        attacker)))
             {
                 return false;
             }
 
-            CurrentMeleeOutcome = outcome;
-            CurrentMeleeDefender = defender;
+            NotifySuccessfulResponse(defender, attacker, attackingVerb);
             return true;
+        }
+
+        private static bool IsExcludedPlayerFactionMeleeAttack(
+            Pawn defender,
+            Pawn attacker)
+        {
+            return attacker.Faction == defender.Faction
+                && attacker.Faction?.IsPlayer == true
+                && attacker.IsFreeNonSlaveColonist
+                && !attacker.InMentalState
+                && !attacker.IsQuestLodger();
         }
 
         public static bool TryRangedDodge(Pawn defender, Thing attacker, Projectile projectile)
         {
             RimKataMapComponent component = defender.Map?.GetComponent<RimKataMapComponent>();
+            int dodgeDurationTicks = RimKataMod.Settings?.GetRangedDodgeDurationTicks(defender) ?? RimKataSettings.DefaultRangedDodgeDurationTicks;
 
-            if (component?.IsAdditionalDodgeProtectionActive(defender) == true)
+            if (component?.IsRangedDodgeDelayActive(defender) == true)
             {
+                if (!component.CanTryAdditionalDodge(defender)
+                    || !RimKataCombatMath.RollConfiguredChance(
+                        defender,
+                        RimKataChanceKind.RangedDodge))
+                {
+                    return false;
+                }
+
+                bool playTumble = RimKataMod.Settings?.tumbleEnabled != false;
+                if (!component.TryBeginAdditionalDodge(defender, playTumble))
+                {
+                    return false;
+                }
+
+                component.MarkCurrentRangedProjectilesAvoided(defender);
+                if (!RimKataEligibility.IsWorkMovementDefenseException(defender))
+                {
+                    NotifyDefensiveCombatEvent(defender, attacker);
+                }
+
                 return true;
             }
-
-            int dodgeDurationTicks = RimKataMod.Settings?.GetRangedDodgeDurationTicks(defender) ?? RimKataSettings.DefaultRangedDodgeDurationTicks;
 
             if (!RimKataCombatMath.RollConfiguredChance(defender, RimKataChanceKind.RangedDodge))
             {
                 return false;
             }
 
-            NotifyDefensiveCombatEvent(defender, attacker);
+            if (!RimKataEligibility.IsWorkMovementDefenseException(defender))
+            {
+                NotifyDefensiveCombatEvent(defender, attacker);
+            }
             RimKataDodgeMovementUtility.ApplySuccessfulRangedDodge(
                 defender,
                 attacker,
@@ -412,6 +469,19 @@ namespace KRWF.RimKata
 
             Projectile projectile = RimKataProjectileImpactContext.CurrentProjectile;
             Thing attacker = projectile?.Launcher ?? dinfo.Instigator;
+
+            RimKataMapComponent component =
+                defender.Map?.GetComponent<RimKataMapComponent>();
+            if (!closeAttack
+                && component?.TryConsumeAvoidedRangedProjectile(
+                    projectile,
+                    defender) == true)
+            {
+                RecordProjectileDefense(defender, true);
+                MarkProjectileAvoided(defender);
+                return true;
+            }
+
             if (closeAttack
                 && (attacker == null
                     || attacker == defender
@@ -431,13 +501,6 @@ namespace KRWF.RimKata
                         && defenderFaction == attackerFaction)))
             {
                 return false;
-            }
-
-            if (!closeAttack && defender.Map?.GetComponent<RimKataMapComponent>()?.IsAdditionalDodgeProtectionActive(defender) == true)
-            {
-                RecordProjectileDefense(defender, true);
-                MarkProjectileAvoided(defender);
-                return true;
             }
 
             if (!closeAttack && !RimKataEligibility.CanUseDefense(defender))
@@ -467,6 +530,13 @@ namespace KRWF.RimKata
                     RecordProjectileDefense(defender, true);
                     MarkProjectileAvoided(defender);
                     return true;
+                }
+
+                if (!RimKataEligibility.CanUseDefense(defender))
+                {
+                    RecordCloseAttackResolution(defender, false);
+                    RecordProjectileDefense(defender, false);
+                    return false;
                 }
 
                 bool firstDodgeAndResponseAlreadyFailed = precheck == RimKataCloseDefensePrecheck.FirstDodgeAndResponseFailed;
@@ -538,6 +608,16 @@ namespace KRWF.RimKata
 
         private static void NotifySuccessfulResponse(Pawn defender, Pawn attacker, Verb attackingVerb)
         {
+            if (Find.BattleLog != null
+                && RimKataDefOf.RimKata_ParryBattleLog != null)
+            {
+                Find.BattleLog.Add(
+                    new BattleLogEntry_Event(
+                        defender,
+                        RimKataDefOf.RimKata_ParryBattleLog,
+                        attacker));
+            }
+
             int deflectionSign = Rand.Bool ? 1 : -1;
             if (attacker?.Map != null)
             {
@@ -899,15 +979,35 @@ namespace KRWF.RimKata
     {
         public struct MeleeAttackContextState
         {
-            internal RimKataDefenseOutcome previousOutcome;
-            internal Pawn previousDefender;
             internal RimKataDefenseUtility.DamageStaggerContextState damageStaggerContext;
             internal bool active;
         }
 
         private static readonly MethodInfo GetDodgeChanceMethod = AccessTools.Method(typeof(Verb_MeleeAttack), "GetDodgeChance");
         private static readonly MethodInfo RandChanceMethod = AccessTools.Method(typeof(Rand), nameof(Rand.Chance), new[] { typeof(float) });
-        private static readonly MethodInfo ResolveMeleeDefenseMethod = AccessTools.Method(typeof(RimKataDefenseUtility), nameof(RimKataDefenseUtility.ResolveMeleeDefense));
+        private static readonly MethodInfo TryResolveMeleeParryMethod =
+            AccessTools.Method(
+                typeof(RimKataDefenseUtility),
+                nameof(RimKataDefenseUtility.TryResolveMeleeParry),
+                new[] { typeof(Verb_MeleeAttack) });
+        private static readonly MethodInfo PlayOneShotMethod =
+            AccessTools.Method(
+                typeof(Verse.Sound.SoundStarter),
+                "PlayOneShot",
+                new[]
+                {
+                    typeof(SoundDef),
+                    typeof(Verse.Sound.SoundInfo)
+                });
+        private static readonly MethodInfo NotifyMeleeAttackOnMethod =
+            AccessTools.Method(
+                typeof(Pawn_DrawTracker),
+                nameof(Pawn_DrawTracker.Notify_MeleeAttackOn));
+        private static readonly MethodInfo StaggerForMethod =
+            AccessTools.Method(
+                typeof(StaggerHandler),
+                nameof(StaggerHandler.StaggerFor),
+                new[] { typeof(int), typeof(float) });
 
         public static bool Prefix(
             Verb_MeleeAttack __instance,
@@ -916,17 +1016,12 @@ namespace KRWF.RimKata
         {
             __state = new MeleeAttackContextState
             {
-                previousOutcome = RimKataDefenseUtility.CurrentMeleeOutcome,
-                previousDefender = RimKataDefenseUtility.CurrentMeleeDefender,
                 damageStaggerContext = RimKataDefenseUtility.EnterDamageStaggerContext(
                     __instance?.CurrentTarget.Pawn,
                     __instance?.CasterPawn,
                     false),
                 active = true
             };
-
-            RimKataDefenseUtility.CurrentMeleeOutcome = RimKataDefenseOutcome.None;
-            RimKataDefenseUtility.CurrentMeleeDefender = null;
             bool rimKataCycleAttack = RimKataFireContext.ActiveVerb == __instance;
             bool physicalRangedWeaponAttack = !rimKataCycleAttack && RimKataDodgeMovementUtility.ShouldBlockPhysicalMeleeVerb(__instance);
             if (physicalRangedWeaponAttack
@@ -941,10 +1036,14 @@ namespace KRWF.RimKata
             return true;
         }
 
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        public static IEnumerable<CodeInstruction> Transpiler(
+            IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator)
         {
             List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
-            for (int i = 0; i < codes.Count - 1; i++)
+            int dodgeChanceIndex = -1;
+            int dodgeBranchIndex = -1;
+            for (int i = 0; i < codes.Count - 2; i++)
             {
                 if (!codes[i].Calls(GetDodgeChanceMethod)
                     || !codes[i + 1].Calls(RandChanceMethod))
@@ -952,19 +1051,95 @@ namespace KRWF.RimKata
                     continue;
                 }
 
-                CodeInstruction chanceCall = codes[i + 1];
-                CodeInstruction loadVerb = new CodeInstruction(OpCodes.Ldarg_0);
-                loadVerb.labels.AddRange(chanceCall.labels);
-                chanceCall.labels.Clear();
-                loadVerb.blocks.AddRange(chanceCall.blocks);
-                chanceCall.blocks.Clear();
-                chanceCall.opcode = OpCodes.Call;
-                chanceCall.operand = ResolveMeleeDefenseMethod;
-                codes.Insert(i + 1, loadVerb);
+                dodgeChanceIndex = i;
+                dodgeBranchIndex = i + 2;
+                break;
+            }
+
+            int playSoundIndex = codes.FindIndex(
+                code => code.Calls(PlayOneShotMethod));
+            int notifyAttackIndex = codes.FindIndex(
+                code => code.Calls(NotifyMeleeAttackOnMethod));
+            int staggerIndex = codes.FindIndex(
+                notifyAttackIndex + 1,
+                code => code.Calls(StaggerForMethod));
+
+            if (dodgeChanceIndex < 0
+                || dodgeBranchIndex < 0
+                || (codes[dodgeBranchIndex].opcode != OpCodes.Brtrue
+                    && codes[dodgeBranchIndex].opcode != OpCodes.Brtrue_S)
+                || playSoundIndex < 0
+                || playSoundIndex + 1 >= codes.Count
+                || notifyAttackIndex < 0
+                || notifyAttackIndex + 1 >= codes.Count
+                || staggerIndex < 0
+                || staggerIndex + 1 >= codes.Count)
+            {
+                Log.Error("[RimKata] Could not place the dedicated melee parry branch.");
                 return codes;
             }
 
-            Log.Error("[RimKata] Could not place the post-dodge melee response hook.");
+            int staggerSkipIndex = staggerIndex + 1;
+            if (codes[staggerSkipIndex].opcode == OpCodes.Pop)
+            {
+                staggerSkipIndex++;
+            }
+
+            if (staggerSkipIndex >= codes.Count)
+            {
+                Log.Error("[RimKata] Could not locate the post-stagger melee continuation.");
+                return codes;
+            }
+
+            LocalBuilder parrySucceeded = generator.DeclareLocal(typeof(bool));
+            Label continueHitLabel = generator.DefineLabel();
+            Label attackerFollowupLabel = generator.DefineLabel();
+            Label skipDefenderStaggerLabel = generator.DefineLabel();
+
+            CodeInstruction hitStart = codes[dodgeBranchIndex + 1];
+            hitStart.labels.Add(continueHitLabel);
+            codes[playSoundIndex + 1].labels.Add(attackerFollowupLabel);
+            codes[staggerSkipIndex].labels.Add(skipDefenderStaggerLabel);
+
+            int staggerGuardIndex = notifyAttackIndex + 1;
+            CodeInstruction staggerGuard = new CodeInstruction(
+                OpCodes.Ldloc,
+                parrySucceeded);
+            staggerGuard.labels.AddRange(codes[staggerGuardIndex].labels);
+            codes[staggerGuardIndex].labels.Clear();
+            staggerGuard.blocks.AddRange(codes[staggerGuardIndex].blocks);
+            codes[staggerGuardIndex].blocks.Clear();
+            codes.InsertRange(
+                staggerGuardIndex,
+                new[]
+                {
+                    staggerGuard,
+                    new CodeInstruction(
+                        OpCodes.Brtrue,
+                        skipDefenderStaggerLabel)
+                });
+
+            int parryInsertIndex = dodgeBranchIndex + 1;
+            codes.InsertRange(
+                parryInsertIndex,
+                new[]
+                {
+                    new CodeInstruction(OpCodes.Ldarg_0),
+                    new CodeInstruction(
+                        OpCodes.Call,
+                        TryResolveMeleeParryMethod),
+                    new CodeInstruction(
+                        OpCodes.Brfalse,
+                        continueHitLabel),
+                    new CodeInstruction(OpCodes.Ldc_I4_0),
+                    new CodeInstruction(OpCodes.Stloc_0),
+                    new CodeInstruction(OpCodes.Ldc_I4_1),
+                    new CodeInstruction(OpCodes.Stloc, parrySucceeded),
+                    new CodeInstruction(
+                        OpCodes.Br,
+                        attackerFollowupLabel)
+                });
+
             return codes;
         }
 
@@ -990,8 +1165,6 @@ namespace KRWF.RimKata
             if (__state.active)
             {
                 RimKataDefenseUtility.ExitDamageStaggerContext(__state.damageStaggerContext);
-                RimKataDefenseUtility.CurrentMeleeOutcome = __state.previousOutcome;
-                RimKataDefenseUtility.CurrentMeleeDefender = __state.previousDefender;
             }
 
             return __exception;
@@ -1036,50 +1209,9 @@ namespace KRWF.RimKata
         }
     }
 
-    [HarmonyPatch(typeof(Verb_MeleeAttack), nameof(Verb_MeleeAttack.CreateCombatLog))]
-    public static class Patch_Verb_MeleeAttack_RimKataResponseLog
-    {
-        public static bool Prefix(ref BattleLogEntry_MeleeCombat __result)
-        {
-            if (RimKataDefenseUtility.CurrentMeleeOutcome != RimKataDefenseOutcome.Response)
-            {
-                return true;
-            }
-
-            __result = null;
-            return false;
-        }
-    }
-
-    [HarmonyPatch(typeof(Verb_MeleeAttack), "SoundDodge")]
-    public static class Patch_Verb_MeleeAttack_RimKataResponseSound
-    {
-        public static bool Prefix(ref SoundDef __result)
-        {
-            if (RimKataDefenseUtility.CurrentMeleeOutcome != RimKataDefenseOutcome.Response)
-            {
-                return true;
-            }
-
-            __result = null;
-            return false;
-        }
-    }
-
     [HarmonyPatch(typeof(StaggerHandler), nameof(StaggerHandler.StaggerFor))]
     public static class Patch_StaggerHandler_RimKataMeleeDefense
     {
-        public static bool Prefix(StaggerHandler __instance, ref bool __result)
-        {
-            if (RimKataDefenseUtility.CurrentMeleeOutcome != RimKataDefenseOutcome.None && RimKataDefenseUtility.CurrentMeleeDefender == __instance.parent)
-            {
-                __result = false;
-                return false;
-            }
-
-            return true;
-        }
-
         public static void Postfix(
             StaggerHandler __instance,
             bool __result)
@@ -1088,29 +1220,6 @@ namespace KRWF.RimKata
             {
                 RimKataDefenseUtility.NotifyAppliedDamageStagger(__instance.parent);
             }
-        }
-    }
-
-    [HarmonyPatch]
-    public static class Patch_MoteMaker_RimKataSuppressResponseText
-    {
-        public static System.Reflection.MethodBase TargetMethod()
-        {
-            return AccessTools.Method(
-                typeof(MoteMaker),
-                nameof(MoteMaker.ThrowText),
-                new[] 
-                { 
-                    typeof(Vector3), 
-                    typeof(Map), 
-                    typeof(string), 
-                    typeof(float) 
-                });
-        }
-
-        public static bool Prefix()
-        {
-            return RimKataDefenseUtility.CurrentMeleeOutcome != RimKataDefenseOutcome.Response;
         }
     }
 }

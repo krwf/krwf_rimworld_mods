@@ -3,18 +3,18 @@
   <KRWF_RimKata_SettingsCategory>RimKata</KRWF_RimKata_SettingsCategory>
   <KRWF_RimKata_ChanceHeader>전투</KRWF_RimKata_ChanceHeader>
   <KRWF_RimKata_RangedDodgeChance>원거리 회피 확률</KRWF_RimKata_RangedDodgeChance>
-  <KRWF_RimKata_MeleeResponseChance>근거리 대응 확률</KRWF_RimKata_MeleeResponseChance>
-  <KRWF_RimKata_ResponseDisarmChance>대응 시 무기 탈취 확률</KRWF_RimKata_ResponseDisarmChance>
+  <KRWF_RimKata_MeleeResponseChance>쳐내기 확률 보너스</KRWF_RimKata_MeleeResponseChance>
+  <KRWF_RimKata_ResponseDisarmChance>쳐내기 시 무장 해제 확률</KRWF_RimKata_ResponseDisarmChance>
   <KRWF_RimKata_MeleeDodgeChance>근접 회피 확률 보너스</KRWF_RimKata_MeleeDodgeChance>
   <KRWF_RimKata_InterceptionChance>폭발 투사체 요격 확률</KRWF_RimKata_InterceptionChance>
   <KRWF_RimKata_InterceptionCriticalChance>요격 성공 시 폭발 확률</KRWF_RimKata_InterceptionCriticalChance>
   <KRWF_RimKata_TimingHeader>보정값</KRWF_RimKata_TimingHeader>
   <KRWF_RimKata_MovingAccuracyMultiplier>이동 중 명중률 배율</KRWF_RimKata_MovingAccuracyMultiplier>
   <KRWF_RimKata_ArmorCooldownReduction>허용 방어구 쿨다운 감소율</KRWF_RimKata_ArmorCooldownReduction>
-  <KRWF_RimKata_ResponseCooldownReduction>대응 성공 후 쿨다운 감소율</KRWF_RimKata_ResponseCooldownReduction>
+  <KRWF_RimKata_ResponseCooldownReduction>쳐내기 성공 후 쿨다운 감소율</KRWF_RimKata_ResponseCooldownReduction>
   <KRWF_RimKata_SerumHeader>감정 마비 혈청 효과</KRWF_RimKata_SerumHeader>
   <KRWF_RimKata_SerumDodgeMultiplier>원거리 회피 배율</KRWF_RimKata_SerumDodgeMultiplier>
-  <KRWF_RimKata_SerumResponseMultiplier>근거리 대응 배율</KRWF_RimKata_SerumResponseMultiplier>
+  <KRWF_RimKata_SerumResponseMultiplier>쳐내기 배율</KRWF_RimKata_SerumResponseMultiplier>
   <KRWF_RimKata_SerumInterceptionMultiplier>폭발 투사체 요격 배율</KRWF_RimKata_SerumInterceptionMultiplier>
   <KRWF_RimKata_SelectedCount>{0}개 선택됨</KRWF_RimKata_SelectedCount>
   <KRWF_RimKata_EditWeapons>허용 무기 편집</KRWF_RimKata_EditWeapons>
@@ -29,8 +29,8 @@
   <KRWF_RimKata_RangePresetUnlimited>제한 없음 (무기 사거리)</KRWF_RimKata_RangePresetUnlimited>
   <KRWF_RimKata_RangePresetCustom>직접 입력</KRWF_RimKata_RangePresetCustom>
   <KRWF_RimKata_CellUnit>칸</KRWF_RimKata_CellUnit>
-  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>대응 성공 시 무기 내구도 소모 확률</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
-  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>대응 성공 시 무기 내구도 소모 값</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>쳐내기 성공 시 무기 내구도 소모 확률</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>쳐내기 성공 시 무기 내구도 소모 값</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
   <KRWF_RimKata_CreepJoinerDependencyGeneChance>크립조이너 {0} 유전자 확률</KRWF_RimKata_CreepJoinerDependencyGeneChance>
   <KRWF_RimKata_AiSecondaryWeaponChance>AI 림 보조 무기 생성 확률</KRWF_RimKata_AiSecondaryWeaponChance>
   <KRWF_RimKata_VisualsHeader>연출</KRWF_RimKata_VisualsHeader>
@@ -41,7 +41,7 @@
   <KRWF_RimKata_GrowthLabel>{0} ×{1}Lv</KRWF_RimKata_GrowthLabel>
   <KRWF_RimKata_DurationGrowthLabel>{0} ×-{1}Lv</KRWF_RimKata_DurationGrowthLabel>
   <KRWF_RimKata_RangedDodgeDuration>기본 원거리 회피 연출 시간</KRWF_RimKata_RangedDodgeDuration>
-  <KRWF_RimKata_ResponseAccidentalFireChance>대응 성공 시 오사 확률</KRWF_RimKata_ResponseAccidentalFireChance>
+  <KRWF_RimKata_ResponseAccidentalFireChance>쳐내기 성공 시 오사 확률</KRWF_RimKata_ResponseAccidentalFireChance>
   <KRWF_RimKata_WeaponDialogTitle>RimKata 무기</KRWF_RimKata_WeaponDialogTitle>
   <KRWF_RimKata_ArmorDialogTitle>RimKata 방어구 및 의류</KRWF_RimKata_ArmorDialogTitle>
   <KRWF_RimKata_Search>검색</KRWF_RimKata_Search>
@@ -78,7 +78,7 @@
   <KRWF_RimKata_FeatureMovingFire>이동 사격</KRWF_RimKata_FeatureMovingFire>
   <KRWF_RimKata_FeatureCloseFire>근접 사격</KRWF_RimKata_FeatureCloseFire>
   <KRWF_RimKata_FeatureTargetRush>돌격</KRWF_RimKata_FeatureTargetRush>
-  <KRWF_RimKata_FeatureResponse>대응</KRWF_RimKata_FeatureResponse>
+  <KRWF_RimKata_FeatureResponse>쳐내기</KRWF_RimKata_FeatureResponse>
   <KRWF_RimKata_FeatureRangedDodge>원거리 회피</KRWF_RimKata_FeatureRangedDodge>
   <KRWF_RimKata_FeatureTumble>공중제비</KRWF_RimKata_FeatureTumble>
   <KRWF_RimKata_EnableFriendlyPawnEffects>아군에게 RimKata 효과 적용</KRWF_RimKata_EnableFriendlyPawnEffects>

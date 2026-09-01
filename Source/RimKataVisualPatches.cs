@@ -156,6 +156,13 @@ namespace KRWF.RimKata
                 return new Vector3(0f, 0f, hop * 0.2f);
             }
 
+            // The additional tumble is a rotation overlay.  It must not turn
+            // its 24 visual ticks into a second lateral cell-dodge motion.
+            if (snapshot.additionalTumbleActive)
+            {
+                return Vector3.zero;
+            }
+
             switch (snapshot.visualState)
             {
                 case RimKataVisualState.StandardDodge:
@@ -169,9 +176,9 @@ namespace KRWF.RimKata
 
         public static bool RequiresDynamicBodyRotation(RimKataVisualSnapshot snapshot)
         {
-            return (snapshot.visualActive
-                    && (snapshot.visualState == RimKataVisualState.AdditionalDodge
-                        || snapshot.visualState == RimKataVisualState.Tumble))
+            return snapshot.additionalTumbleActive
+                        || (snapshot.visualActive
+                            && snapshot.visualState == RimKataVisualState.Tumble)
                         || snapshot.closeDodgeActive
                         || (snapshot.responsePoseActive
                             && snapshot.responsePoseLookAtFocus);
@@ -1406,7 +1413,8 @@ namespace KRWF.RimKata
             }
 
             Action<LocalTargetInfo> originalAction = command.action;
-            if (originalAction != null)
+            if (originalAction != null
+                && RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 command.action = target =>
                     RimKataAttackGizmoTargetContext.Invoke(
@@ -1490,7 +1498,7 @@ namespace KRWF.RimKata
 
             drawLoc += RimKataVisualUtility.DrawOffset(snapshot);
             if (snapshot.dodgeMovementActive
-                && !snapshot.dodgeMovementTumbling
+                && !snapshot.additionalTumbleActive
                 && snapshot.dodgeMovementDirection != IntVec3.Zero)
             {
                 rotOverride = Rot4.FromIntVec3(
@@ -1538,7 +1546,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool additionalTumble = snapshot.visualActive && snapshot.visualState == RimKataVisualState.AdditionalDodge;
+            bool additionalTumble = snapshot.additionalTumbleActive;
             bool stationaryTumble = snapshot.visualActive  && snapshot.visualState == RimKataVisualState.Tumble;
             if (!additionalTumble && !stationaryTumble && !snapshot.closeDodgeActive)
             {
@@ -1546,8 +1554,11 @@ namespace KRWF.RimKata
             }
 
             float tumbleAngle = (additionalTumble || stationaryTumble)
-                ? snapshot.visualProgress
-                    * snapshot.visualTotalTicks
+                ? (additionalTumble
+                    ? snapshot.additionalTumbleProgress
+                        * snapshot.additionalTumbleTotalTicks
+                    : snapshot.visualProgress
+                        * snapshot.visualTotalTicks)
                     * RimKataCombatTuning.TumbleDegreesPerTick
                     * snapshot.tumbleSign
                 : 0f;
@@ -2021,7 +2032,9 @@ namespace KRWF.RimKata
             }
 
             Action<LocalTargetInfo> originalAction = command.action;
-            if (originalAction != null)
+            if (originalAction != null
+                && RimKataMultiSelectAttackGizmoUtility
+                    .HasSelectedPawnWithActiveRimKataAttack())
             {
                 command.action = target =>
                     RimKataAttackGizmoTargetContext.InvokeSquad(

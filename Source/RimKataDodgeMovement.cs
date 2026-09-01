@@ -136,10 +136,36 @@ namespace KRWF.RimKata
             RimKataMapComponent component,
             int dodgeWindowDurationTicks)
         {
-            bool inAdditionalWindow =
-                component?.IsStandardDodgeWindow(pawn) == true;
-            bool preserveCurrentVisual =
-                component?.IsDodgeVisualLocked(pawn) == true;
+            component?.BeginRangedDodgeWindow(
+                pawn,
+                dodgeWindowDurationTicks);
+
+            if (component?.IsDodgeMovementActive(pawn) == true)
+            {
+                TryGetCurrentMovementDirection(
+                    pawn,
+                    out IntVec3 existingDodgeDirection);
+                BeginStandardDodge(
+                    pawn,
+                    attacker,
+                    component,
+                    existingDodgeDirection,
+                    dodgeWindowDurationTicks);
+                return;
+            }
+
+            if (RimKataEligibility.IsWorkMovementDefenseException(pawn))
+            {
+                IntVec3 workDirection = MovementDirection(pawn);
+                BeginStandardDodge(
+                    pawn,
+                    attacker,
+                    component,
+                    workDirection,
+                    dodgeWindowDurationTicks);
+                return;
+            }
+
             bool hasActiveMovementPath = TryGetCurrentMovementDirection(
                 pawn,
                 out IntVec3 movementDirection);
@@ -150,28 +176,6 @@ namespace KRWF.RimKata
                 component.BeginCloseCombatDodge(
                     pawn,
                     dodgeWindowDurationTicks);
-                return;
-            }
-
-            if (RimKataMod.Settings?.tumbleEnabled != false)
-            {
-                if (inAdditionalWindow
-                    && component?.TryUpgradeDodgeMovementToTumble(pawn)
-                        == true)
-                {
-                    return;
-                }
-
-                if (inAdditionalWindow
-                    && component?.TryBeginStationaryAdditionalDodge(pawn)
-                        == true)
-                {
-                    return;
-                }
-            }
-
-            if (preserveCurrentVisual || inAdditionalWindow)
-            {
                 return;
             }
 
@@ -208,9 +212,8 @@ namespace KRWF.RimKata
             IntVec3 movementDirection,
             int durationTicks)
         {
-            component?.BeginVisualState(
+            component?.BeginOrRestartStandardDodgeVisual(
                 pawn,
-                RimKataVisualState.StandardDodge,
                 durationTicks,
                 DodgeDirection(pawn, attacker, movementDirection));
         }
@@ -354,7 +357,7 @@ namespace KRWF.RimKata
             PathEndMode resumeMode = resumeWasMoving && PathEndModeField != null
                 ? (PathEndMode)PathEndModeField.GetValue(pather)
                 : (resumeDestination.HasThing ? PathEndMode.Touch : PathEndMode.OnCell);
-            if (component.IsDodgeVisualLocked(pawn))
+            if (component.IsDodgeMovementStartBlocked(pawn))
             {
                 return false;
             }

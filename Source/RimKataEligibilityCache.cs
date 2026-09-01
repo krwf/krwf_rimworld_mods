@@ -8,10 +8,13 @@ namespace KRWF.RimKata
 {
     public static class RimKataEligibilityCache
     {
+        private const int AccessUnknown = 0;
+        private const int AccessDenied = 1;
+        private const int AccessGranted = 2;
+
         private sealed class Entry
         {
-            public bool accessKnown;
-            public bool hasAccess;
+            public volatile int accessState;
             public bool rimKataGeneKnown;
             public bool hasRimKataGene;
             public bool ampouleKnown;
@@ -56,16 +59,14 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            lock (entry)
+            int accessState = entry.accessState;
+            if (accessState == AccessUnknown)
             {
-                if (!entry.accessKnown)
-                {
-                    return false;
-                }
-
-                cachedAccess = entry.hasAccess;
-                return true;
+                return false;
             }
+
+            cachedAccess = accessState == AccessGranted;
+            return true;
         }
 
         // !!! Debug HUD !!!
@@ -129,12 +130,26 @@ namespace KRWF.RimKata
             }
 
             Entry entry = entries.GetValue(pawn, CreateEntry);
+            int accessState = entry.accessState;
+            if (accessState == AccessDenied)
+            {
+                return false;
+            }
+
+            if (accessState == AccessGranted)
+            {
+                UpdateRegisteredUser(pawn, true);
+                return true;
+            }
+
             lock (entry)
             {
-                if (entry.accessKnown)
+                accessState = entry.accessState;
+                if (accessState != AccessUnknown)
                 {
-                    UpdateRegisteredUser(pawn, entry.hasAccess);
-                    return entry.hasAccess;
+                    bool cachedAccess = accessState == AccessGranted;
+                    UpdateRegisteredUser(pawn, cachedAccess);
+                    return cachedAccess;
                 }
 
                 bool hasAccess = ResolveAccess(pawn, entry);
@@ -261,7 +276,7 @@ namespace KRWF.RimKata
             {
                 lock (entry)
                 {
-                    entry.accessKnown = false;
+                    entry.accessState = AccessUnknown;
                     entry.rimKataGeneKnown = false;
                     entry.dependencyGeneKnown = false;
                     entry.dependencyGene = null;
@@ -279,7 +294,7 @@ namespace KRWF.RimKata
             {
                 lock (entry)
                 {
-                    entry.accessKnown = false;
+                    entry.accessState = AccessUnknown;
                     entry.psycastKnown = false;
                 }
             }
@@ -295,7 +310,7 @@ namespace KRWF.RimKata
             {
                 lock (entry)
                 {
-                    entry.accessKnown = false;
+                    entry.accessState = AccessUnknown;
                     entry.roleKnown = false;
                 }
             }
@@ -332,7 +347,7 @@ namespace KRWF.RimKata
                 {
                     if (changedDef == RimKataDefOf.RimKata_A_Effect)
                     {
-                        entry.accessKnown = false;
+                        entry.accessState = AccessUnknown;
                         entry.ampouleKnown = false;
                     }
 
@@ -391,8 +406,9 @@ namespace KRWF.RimKata
 
         private static bool StoreAccess(Entry entry, bool value)
         {
-            entry.hasAccess = value;
-            entry.accessKnown = true;
+            entry.accessState = value
+                ? AccessGranted
+                : AccessDenied;
             return value;
         }
 

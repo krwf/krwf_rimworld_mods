@@ -115,7 +115,8 @@ namespace KRWF.RimKata
                 return vanillaChance;
             }
 
-            return Mathf.Clamp01(vanillaChance + ConfiguredChance(target, RimKataChanceKind.MeleeDodge));
+            float bonusMultiplier = RimKataMod.Settings?.GetMeleeDodgeBonusMultiplier(target) ?? 1f;
+            return Mathf.Clamp01(vanillaChance * bonusMultiplier);
         }
 
         public static float AddConfiguredMeleeDodgeBonusToVanilla(
@@ -150,6 +151,40 @@ namespace KRWF.RimKata
             }
 
             return chance;
+        }
+
+        public static bool RollMeleeParry(Pawn defender, Pawn attacker)
+        {
+            return Rand.Chance(MeleeParryChance(defender, attacker));
+        }
+
+        public static float MeleeParryChance(Pawn defender, Pawn attacker)
+        {
+            if (defender == null || attacker == null)
+            {
+                return 0f;
+            }
+
+            float chance = defender.GetStatValue(StatDefOf.MeleeHitChance);
+            if (ModsConfig.IdeologyActive)
+            {
+                chance += MeleeLightingOffset(
+                    defender,
+                    attacker,
+                    StatDefOf.MeleeHitChanceOutdoorsLitOffset,
+                    StatDefOf.MeleeHitChanceOutdoorsDarkOffset,
+                    StatDefOf.MeleeHitChanceIndoorsDarkOffset,
+                    StatDefOf.MeleeHitChanceIndoorsLitOffset);
+            }
+
+            RimKataSettings settings = RimKataMod.Settings;
+            chance *= settings?.GetMeleeResponseBonusMultiplier(defender) ?? 1f;
+            if (settings != null && RimKataSerumUtility.IsMindNumbed(defender))
+            {
+                chance *= settings.GetSerumResponseMultiplier(defender);
+            }
+
+            return Mathf.Clamp01(chance);
         }
 
         public static float CloseMeleeDodgeChance(Pawn target)

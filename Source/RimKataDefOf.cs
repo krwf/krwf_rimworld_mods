@@ -15,6 +15,7 @@ namespace KRWF.RimKata
         public static PreceptDef RimKata_I;
         public static JobDef RimKata_Attack;
         public static JobDef RimKata_EquipSecondary;
+        public static RulePackDef RimKata_ParryBattleLog;
 
         static RimKataDefOf()
         {

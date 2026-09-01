@@ -3,18 +3,18 @@
   <KRWF_RimKata_SettingsCategory>RimKata</KRWF_RimKata_SettingsCategory>
   <KRWF_RimKata_ChanceHeader>Combat</KRWF_RimKata_ChanceHeader>
   <KRWF_RimKata_RangedDodgeChance>Ranged dodge chance</KRWF_RimKata_RangedDodgeChance>
-  <KRWF_RimKata_MeleeResponseChance>Close-range response chance</KRWF_RimKata_MeleeResponseChance>
-  <KRWF_RimKata_ResponseDisarmChance>Weapon-disarm chance on response</KRWF_RimKata_ResponseDisarmChance>
+  <KRWF_RimKata_MeleeResponseChance>Parry chance bonus</KRWF_RimKata_MeleeResponseChance>
+  <KRWF_RimKata_ResponseDisarmChance>Disarm chance on parry</KRWF_RimKata_ResponseDisarmChance>
   <KRWF_RimKata_MeleeDodgeChance>Melee dodge chance bonus</KRWF_RimKata_MeleeDodgeChance>
   <KRWF_RimKata_InterceptionChance>Explosive interception chance</KRWF_RimKata_InterceptionChance>
   <KRWF_RimKata_InterceptionCriticalChance>Detonation chance on successful interception</KRWF_RimKata_InterceptionCriticalChance>
   <KRWF_RimKata_TimingHeader>Modifiers</KRWF_RimKata_TimingHeader>
   <KRWF_RimKata_MovingAccuracyMultiplier>Moving accuracy multiplier</KRWF_RimKata_MovingAccuracyMultiplier>
   <KRWF_RimKata_ArmorCooldownReduction>Enabled armor cooldown reduction</KRWF_RimKata_ArmorCooldownReduction>
-  <KRWF_RimKata_ResponseCooldownReduction>Cooldown reduction after a successful response</KRWF_RimKata_ResponseCooldownReduction>
+  <KRWF_RimKata_ResponseCooldownReduction>Cooldown reduction after a successful parry</KRWF_RimKata_ResponseCooldownReduction>
   <KRWF_RimKata_SerumHeader>Mind-numb serum effects</KRWF_RimKata_SerumHeader>
   <KRWF_RimKata_SerumDodgeMultiplier>Ranged dodge multiplier</KRWF_RimKata_SerumDodgeMultiplier>
-  <KRWF_RimKata_SerumResponseMultiplier>Close-range response multiplier</KRWF_RimKata_SerumResponseMultiplier>
+  <KRWF_RimKata_SerumResponseMultiplier>Parry multiplier</KRWF_RimKata_SerumResponseMultiplier>
   <KRWF_RimKata_SerumInterceptionMultiplier>Explosive interception multiplier</KRWF_RimKata_SerumInterceptionMultiplier>
   <KRWF_RimKata_SelectedCount>{0} selected</KRWF_RimKata_SelectedCount>
   <KRWF_RimKata_EditWeapons>Edit enabled weapons</KRWF_RimKata_EditWeapons>
@@ -29,8 +29,8 @@
   <KRWF_RimKata_RangePresetUnlimited>Unlimited (weapon range)</KRWF_RimKata_RangePresetUnlimited>
   <KRWF_RimKata_RangePresetCustom>Custom</KRWF_RimKata_RangePresetCustom>
   <KRWF_RimKata_CellUnit>cells</KRWF_RimKata_CellUnit>
-  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>Weapon durability-loss chance after a successful response</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
-  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>Weapon durability lost after a successful response</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossChance>Weapon durability-loss chance after a successful parry</KRWF_RimKata_ResponseWeaponDurabilityLossChance>
+  <KRWF_RimKata_ResponseWeaponDurabilityLossAmount>Weapon durability lost after a successful parry</KRWF_RimKata_ResponseWeaponDurabilityLossAmount>
   <KRWF_RimKata_CreepJoinerDependencyGeneChance>Creepjoiner {0} gene chance</KRWF_RimKata_CreepJoinerDependencyGeneChance>
   <KRWF_RimKata_AiSecondaryWeaponChance>AI pawn secondary weapon chance</KRWF_RimKata_AiSecondaryWeaponChance>
   <KRWF_RimKata_VisualsHeader>Visuals</KRWF_RimKata_VisualsHeader>
@@ -41,7 +41,7 @@
   <KRWF_RimKata_GrowthLabel>{0} ×{1}Lv</KRWF_RimKata_GrowthLabel>
   <KRWF_RimKata_DurationGrowthLabel>{0} ×-{1}Lv</KRWF_RimKata_DurationGrowthLabel>
   <KRWF_RimKata_RangedDodgeDuration>Standard ranged dodge animation time</KRWF_RimKata_RangedDodgeDuration>
-  <KRWF_RimKata_ResponseAccidentalFireChance>Stray-shot chance after a response</KRWF_RimKata_ResponseAccidentalFireChance>
+  <KRWF_RimKata_ResponseAccidentalFireChance>Stray-shot chance after a parry</KRWF_RimKata_ResponseAccidentalFireChance>
   <KRWF_RimKata_WeaponDialogTitle>RimKata weapons</KRWF_RimKata_WeaponDialogTitle>
   <KRWF_RimKata_ArmorDialogTitle>RimKata armor and apparel</KRWF_RimKata_ArmorDialogTitle>
   <KRWF_RimKata_Search>Search</KRWF_RimKata_Search>
@@ -78,7 +78,7 @@
   <KRWF_RimKata_FeatureMovingFire>Moving fire</KRWF_RimKata_FeatureMovingFire>
   <KRWF_RimKata_FeatureCloseFire>Close-range fire</KRWF_RimKata_FeatureCloseFire>
   <KRWF_RimKata_FeatureTargetRush>Charge</KRWF_RimKata_FeatureTargetRush>
-  <KRWF_RimKata_FeatureResponse>response</KRWF_RimKata_FeatureResponse>
+  <KRWF_RimKata_FeatureResponse>parrying</KRWF_RimKata_FeatureResponse>
   <KRWF_RimKata_FeatureRangedDodge>Ranged dodge</KRWF_RimKata_FeatureRangedDodge>
   <KRWF_RimKata_Featuretumble>somersault</KRWF_RimKata_Featuretumble>
   <KRWF_RimKata_EnableFriendlyPawnEffects>Apply RimKata effects to non-hostile pawns</KRWF_RimKata_EnableFriendlyPawnEffects>

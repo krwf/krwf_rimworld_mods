@@ -235,7 +235,7 @@ namespace KRWF.RimKata
                 ref settings.meleeResponseChanceFixed, ref settings.meleeResponseChancePercent, ref buffers.meleeResponseChance,
                 ref settings.meleeResponseChanceGrowthPerLevelPercent, ref buffers.meleeResponseChanceGrowth,
                 ref settings.meleeResponseChanceMinimumPercent, ref buffers.meleeResponseChanceMinimum,
-                100f, 100f, showMinimum);
+                float.MaxValue, float.MaxValue, showMinimum, float.MaxValue);
             DrawFloatRow(viewRect.width, ref y, "KRWF_RimKata_ResponseDisarmChance", SkillDefOf.Melee,
                 ref settings.responseDisarmChanceFixed, ref settings.responseDisarmChancePercent, ref buffers.responseDisarmChance,
                 ref settings.responseDisarmChanceGrowthPerLevelPercent, ref buffers.responseDisarmChanceGrowth,
@@ -245,7 +245,7 @@ namespace KRWF.RimKata
                 ref settings.meleeDodgeChanceFixed, ref settings.meleeDodgeChancePercent, ref buffers.meleeDodgeChance,
                 ref settings.meleeDodgeChanceGrowthPerLevelPercent, ref buffers.meleeDodgeChanceGrowth,
                 ref settings.meleeDodgeChanceMinimumPercent, ref buffers.meleeDodgeChanceMinimum,
-                100f, 100f, showMinimum);
+                float.MaxValue, float.MaxValue, showMinimum, float.MaxValue);
             DrawFloatRow(viewRect.width, ref y, "KRWF_RimKata_InterceptionChance", SkillDefOf.Shooting,
                 ref settings.interceptionChanceFixed, ref settings.interceptionChancePercent, ref buffers.interceptionChance,
                 ref settings.interceptionChanceGrowthPerLevelPercent, ref buffers.interceptionChanceGrowth,
@@ -644,7 +644,8 @@ namespace KRWF.RimKata
             ref string minimumBuffer,
             float fixedMaximum,
             float minimumMaximum,
-            bool showMinimum)
+            bool showMinimum,
+            float growthMaximum = MaximumMultiplierPercent)
         {
             Rect row = new Rect(0f, y, width, RowHeight);
             SplitRow(row, showMinimum, out Rect labelRect, out Rect valueRect, out Rect minimumRect, out Rect fixedRect);
@@ -661,7 +662,7 @@ namespace KRWF.RimKata
             }
             else
             {
-                DrawFloatField(valueRect, ref growthPercent, ref growthBuffer, 0f, MaximumMultiplierPercent, "%");
+                DrawFloatField(valueRect, ref growthPercent, ref growthBuffer, 0f, growthMaximum, "%");
                 DrawFloatField(minimumRect, ref minimumPercent, ref minimumBuffer, 0f, minimumMaximum, "%");
             }
 

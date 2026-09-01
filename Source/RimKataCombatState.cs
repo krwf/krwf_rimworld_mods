@@ -21,6 +21,9 @@ namespace KRWF.RimKata
         public RimKataVisualState visualState;
         public float visualProgress;
         public int visualTotalTicks;
+        public bool additionalTumbleActive;
+        public float additionalTumbleProgress;
+        public int additionalTumbleTotalTicks;
         public IntVec3 dodgeDirection;
         public bool dodgeMovementActive;
         public bool dodgeMovementTumbling;
@@ -41,6 +44,32 @@ namespace KRWF.RimKata
         public bool responsePoseLookAtFocus;
         public bool closeDodgeActive;
         public float closeDodgeAngle;
+    }
+
+    public sealed class RimKataTrackedRangedProjectile : IExposable
+    {
+        public Projectile projectile;
+        public Pawn target;
+        public bool avoided;
+
+        public RimKataTrackedRangedProjectile()
+        {
+        }
+
+        public RimKataTrackedRangedProjectile(
+            Projectile projectile,
+            Pawn target)
+        {
+            this.projectile = projectile;
+            this.target = target;
+        }
+
+        public void ExposeData()
+        {
+            Scribe_References.Look(ref projectile, "projectile");
+            Scribe_References.Look(ref target, "target");
+            Scribe_Values.Look(ref avoided, "avoided");
+        }
     }
 
     internal static class RimKataResponseVisualParticipantCache
@@ -232,7 +261,10 @@ namespace KRWF.RimKata
         public RimKataVisualState visualState;
         public int ticksRemaining;
         public int totalTicks;
+        public int rangedDodgeDelayTicksRemaining;
         public bool additionalDodgeUsed;
+        public int additionalTumbleTicksRemaining;
+        public int additionalTumbleTotalTicks;
         public IntVec3 dodgeDirection;
         public bool dodgeMovementActive;
         public IntVec3 dodgeMovementOrigin = IntVec3.Invalid;
@@ -312,21 +344,22 @@ namespace KRWF.RimKata
         public bool mentalStateOffenseSuppressed;
 
         public bool VisualActive => pawn != null
-            && visualState != RimKataVisualState.None
-            && (ticksRemaining > 0 || dodgeMovementActive);
+            && ((visualState != RimKataVisualState.None
+                    && (ticksRemaining > 0 || dodgeMovementActive))
+                || AdditionalTumbleActive);
         public bool DodgeMovementActive => pawn != null
-            && dodgeMovementActive
-            && (visualState == RimKataVisualState.StandardDodge
-                || visualState == RimKataVisualState.AdditionalDodge);
+            && dodgeMovementActive;
+        public bool RangedDodgeDelayActive => pawn != null
+            && rangedDodgeDelayTicksRemaining > 0;
+        public bool AdditionalDodgeAvailable => RangedDodgeDelayActive
+            && !additionalDodgeUsed;
+        public bool AdditionalTumbleActive => pawn != null
+            && additionalTumbleTicksRemaining > 0;
+        public bool DodgeMovementStartBlocked => DodgeMovementActive
+            || (VisualActive && visualState == RimKataVisualState.Tumble);
         public bool DodgeVisualLocked => DodgeMovementActive
-            || (VisualActive
-                && (visualState == RimKataVisualState.AdditionalDodge
-                    || visualState == RimKataVisualState.Tumble));
-        public bool AdditionalDodgeProtectionActive => pawn != null
-            && additionalDodgeUsed
-            && VisualActive
-            && (visualState == RimKataVisualState.AdditionalDodge
-                || visualState == RimKataVisualState.Tumble);
+            || AdditionalTumbleActive
+            || (VisualActive && visualState == RimKataVisualState.Tumble);
         public bool DodgeMovementWatchdogExpired => DodgeMovementActive
             && dodgeMovementElapsedTicks >= RimKataCombatTuning.AdditionalDodgeWatchdogTicks;
         public bool DodgeMotionBlocksJob => DodgeMovementActive;
@@ -366,6 +399,7 @@ namespace KRWF.RimKata
             automaticAttackRequestTarget != null
             && automaticAttackRequestTicksRemaining > 0;
         public bool Active => VisualActive
+            || RangedDodgeDelayActive
             || DeflectionActive
             || ResponsePoseActive
             || CloseDodgeActive
@@ -390,6 +424,11 @@ namespace KRWF.RimKata
             || dedicatedFollowupJobPending
             || weaponSwapPending;
         public float VisualProgress => totalTicks <= 0 ? 1f : 1f - ticksRemaining / (float)totalTicks;
+        public float AdditionalTumbleProgress =>
+            additionalTumbleTotalTicks <= 0
+                ? 1f
+                : 1f - additionalTumbleTicksRemaining
+                    / (float)additionalTumbleTotalTicks;
         public float DeflectionProgress => deflectionTotalTicks <= 0 ? 1f : 1f - deflectionTicksRemaining / (float)deflectionTotalTicks;
         public float ResponsePoseProgress => responsePoseTotalTicks <= 0
             ? 1f
@@ -425,7 +464,16 @@ namespace KRWF.RimKata
             Scribe_Values.Look(ref visualState, "visualState", RimKataVisualState.None);
             Scribe_Values.Look(ref ticksRemaining, "ticksRemaining");
             Scribe_Values.Look(ref totalTicks, "totalTicks");
+            Scribe_Values.Look(
+                ref rangedDodgeDelayTicksRemaining,
+                "rangedDodgeDelayTicksRemaining");
             Scribe_Values.Look(ref additionalDodgeUsed, "additionalDodgeUsed");
+            Scribe_Values.Look(
+                ref additionalTumbleTicksRemaining,
+                "additionalTumbleTicksRemaining");
+            Scribe_Values.Look(
+                ref additionalTumbleTotalTicks,
+                "additionalTumbleTotalTicks");
             Scribe_Values.Look(ref dodgeDirection, "dodgeDirection");
             Scribe_Values.Look(ref dodgeMovementActive, "dodgeMovementActive");
             Scribe_Values.Look(ref dodgeMovementTumbling, "dodgeMovementTumbling");
@@ -524,12 +572,57 @@ namespace KRWF.RimKata
                     dodgeMovementDirection = dodgeMovementDestination - dodgeMovementOrigin;
                 }
             }
+
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                if (additionalTumbleTicksRemaining <= 0
+                    && visualState == RimKataVisualState.AdditionalDodge)
+                {
+                    additionalTumbleTicksRemaining = Mathf.Max(0, ticksRemaining);
+                    additionalTumbleTotalTicks = Mathf.Max(
+                        additionalTumbleTicksRemaining,
+                        totalTicks);
+                    visualState = dodgeMovementActive
+                        ? RimKataVisualState.StandardDodge
+                        : RimKataVisualState.None;
+                    ticksRemaining = 0;
+                    totalTicks = 0;
+                }
+
+                additionalDodgeUsed = rangedDodgeDelayTicksRemaining > 0
+                    && additionalDodgeUsed;
+                dodgeMovementTumbling = dodgeMovementActive
+                    && additionalTumbleTicksRemaining > 0;
+            }
         }
 
         public void Tick()
         {
             UpdateDraftedCooldown();
             TickDraftedMeleeThreatClear();
+            if (rangedDodgeDelayTicksRemaining > 0)
+            {
+                rangedDodgeDelayTicksRemaining--;
+                if (rangedDodgeDelayTicksRemaining <= 0)
+                {
+                    rangedDodgeDelayTicksRemaining = 0;
+                    additionalDodgeUsed = false;
+                }
+            }
+
+            if (additionalTumbleTicksRemaining > 0)
+            {
+                additionalTumbleTicksRemaining--;
+                if (additionalTumbleTicksRemaining <= 0)
+                {
+                    additionalTumbleTicksRemaining = 0;
+                    additionalTumbleTotalTicks = 0;
+                    dodgeMovementTumbling = false;
+                    RimKataResponseVisualParticipantCache
+                        .RefreshBodyVisual(this);
+                }
+            }
+
             if (incomingThreatSource != null && !IsIncomingThreatActive())
             {
                 incomingThreatSource = null;
@@ -555,7 +648,7 @@ namespace KRWF.RimKata
                 && dodgeMovementJob != null
                 && dodgeMovementJob != pawn.CurJob)
             {
-                CancelVisual();
+                DetachDodgeMovementPreservingVisual();
             }
 
             if (DodgeMovementActive)
@@ -563,7 +656,7 @@ namespace KRWF.RimKata
                 bool pathWasReplaced = pawn.pather?.Destination.IsValid == true && pawn.pather.Destination.Cell != dodgeMovementDestination;
                 if (dodgeMovementJob != pawn.CurJob || pathWasReplaced)
                 {
-                    CancelVisual();
+                    DetachDodgeMovementPreservingVisual();
                 }
                 else
                 {
@@ -611,6 +704,7 @@ namespace KRWF.RimKata
                             this);
                     }
                 }
+
             }
 
             if (closeDodgeTicksRemaining > 0)
@@ -632,10 +726,12 @@ namespace KRWF.RimKata
             {
                 bool visualEnded = visualState != RimKataVisualState.None;
                 visualState = RimKataVisualState.None;
-                additionalDodgeUsed = false;
                 dodgeDirection = IntVec3.Zero;
                 totalTicks = 0;
-                tumbleSign = 1;
+                if (!AdditionalTumbleActive)
+                {
+                    tumbleSign = 1;
+                }
                 ClearDodgeMovementFields();
                 if (visualEnded)
                 {
@@ -678,7 +774,8 @@ namespace KRWF.RimKata
             visualState = RimKataVisualState.None;
             ticksRemaining = 0;
             totalTicks = 0;
-            additionalDodgeUsed = false;
+            additionalTumbleTicksRemaining = 0;
+            additionalTumbleTotalTicks = 0;
             dodgeDirection = IntVec3.Zero;
             ClearDodgeMovementFields();
             tumbleSign = 1;
@@ -686,25 +783,61 @@ namespace KRWF.RimKata
                 .RefreshBodyVisual(this);
         }
 
+        private void DetachDodgeMovementPreservingVisual()
+        {
+            bool baseVisualActive = visualState != RimKataVisualState.None
+                && ticksRemaining > 0;
+            ClearDodgeMovementFields();
+
+            if (!baseVisualActive)
+            {
+                visualState = RimKataVisualState.None;
+                ticksRemaining = 0;
+                totalTicks = 0;
+                dodgeDirection = IntVec3.Zero;
+                if (!AdditionalTumbleActive)
+                {
+                    tumbleSign = 1;
+                }
+            }
+
+            RimKataResponseVisualParticipantCache
+                .RefreshBodyVisual(this);
+        }
+
+        public void CancelFailedDodgeMovementStart()
+        {
+            visualState = RimKataVisualState.None;
+            ticksRemaining = 0;
+            totalTicks = 0;
+            dodgeDirection = IntVec3.Zero;
+            ClearDodgeMovementFields();
+            if (!AdditionalTumbleActive)
+            {
+                tumbleSign = 1;
+            }
+
+            RimKataResponseVisualParticipantCache
+                .RefreshBodyVisual(this);
+        }
+
         public void HoldDodgeLanding()
         {
-            int remainingTumbleTicks = ticksRemaining;
-            int tumbleTotalTicks = totalTicks;
-            visualState = RimKataVisualState.AdditionalDodge;
-            additionalDodgeUsed = true;
-            int landingSign = tumbleSign;
+            int remainingVisualTicks = ticksRemaining;
+            int visualTotalTicks = totalTicks;
             ClearDodgeMovementFields();
             dodgeMovementProgress = 1f;
-            tumbleSign = landingSign;
 
-            if (remainingTumbleTicks > 0)
+            if (remainingVisualTicks > 0)
             {
-                ticksRemaining = remainingTumbleTicks;
-                totalTicks = Mathf.Max(remainingTumbleTicks, tumbleTotalTicks);
+                visualState = RimKataVisualState.StandardDodge;
+                ticksRemaining = remainingVisualTicks;
+                totalTicks = Mathf.Max(remainingVisualTicks, visualTotalTicks);
             }
-            else
+            else if (!AdditionalTumbleActive)
             {
-                ticksRemaining = RimKataCombatTuning.AdditionalDodgeLandingTicks;
+                visualState = RimKataVisualState.None;
+                ticksRemaining = 0;
                 totalTicks = 0;
             }
         }
@@ -714,7 +847,6 @@ namespace KRWF.RimKata
             int remainingDodgeTicks = ticksRemaining;
             int dodgeTotalTicks = totalTicks;
             visualState = RimKataVisualState.StandardDodge;
-            additionalDodgeUsed = false;
             ClearDodgeMovementFields();
             dodgeMovementProgress = 1f;
 
@@ -730,29 +862,18 @@ namespace KRWF.RimKata
             }
         }
 
-        public void UpgradeDodgeMovementToTumble()
+        public void BeginAdditionalTumble()
         {
-            if (!DodgeMovementActive || dodgeMovementTumbling)
+            tumbleSign = Rand.Bool ? 1 : -1;
+            additionalTumbleTicksRemaining =
+                RimKataCombatTuning.AdditionalDodgeTumbleDurationTicks;
+            additionalTumbleTotalTicks = additionalTumbleTicksRemaining;
+            if (DodgeMovementActive)
             {
-                return;
+                dodgeMovementTumbling = true;
+                dodgeTumbleStartProgress = Mathf.Clamp01(
+                    dodgeMovementProgress);
             }
-
-            dodgeMovementTumbling = true;
-            dodgeTumbleStartProgress = Mathf.Clamp01(dodgeMovementProgress);
-            visualState = RimKataVisualState.AdditionalDodge;
-            additionalDodgeUsed = true;
-            tumbleSign = Rand.Bool ? 1 : -1;
-            ticksRemaining = RimKataCombatTuning.AdditionalDodgeTumbleDurationTicks;
-            totalTicks = ticksRemaining;
-        }
-
-        public void BeginStationaryAdditionalDodge()
-        {
-            visualState = RimKataVisualState.AdditionalDodge;
-            additionalDodgeUsed = true;
-            tumbleSign = Rand.Bool ? 1 : -1;
-            ticksRemaining = RimKataCombatTuning.AdditionalDodgeTumbleDurationTicks;
-            totalTicks = ticksRemaining;
         }
 
         public void ConvertDodgeMovementToTumble()
@@ -763,7 +884,6 @@ namespace KRWF.RimKata
             visualState = RimKataVisualState.Tumble;
             ticksRemaining = RimKataCombatTuning.TumbleDurationTicks;
             totalTicks = ticksRemaining;
-            additionalDodgeUsed = true;
             dodgeDirection = tumbleDirection;
             tumbleSign = currentTumbleSign;
         }
@@ -915,6 +1035,10 @@ namespace KRWF.RimKata
                 visualState = visualState,
                 visualProgress = Mathf.Clamp01(VisualProgress),
                 visualTotalTicks = totalTicks,
+                additionalTumbleActive = AdditionalTumbleActive,
+                additionalTumbleProgress = Mathf.Clamp01(
+                    AdditionalTumbleProgress),
+                additionalTumbleTotalTicks = additionalTumbleTotalTicks,
                 dodgeDirection = dodgeDirection,
                 dodgeMovementActive = DodgeMovementActive,
                 dodgeMovementProgress = Mathf.Clamp01(dodgeMovementProgress),
@@ -1291,20 +1415,16 @@ namespace KRWF.RimKata
 
         public void CancelOffenseForFire()
         {
-            bool clearResponseCooldownStance = ResponsePoseActive
-                && pawn?.stances?.curStance is Stance_Cooldown responseCooldown
-                && responseCooldown.focusTarg.Equals(responsePoseFocus)
-                && (responseCooldown.verb == null || responseCooldown.verb == RimKataWeaponSlotUtility.CombatVerb(pawn, responsePoseWeapon));
-
             dodgeResumeWasMoving = false;
             dodgeResumeDestination = LocalTargetInfo.Invalid;
             dodgeResumePathEndMode = PathEndMode.OnCell;
             CancelDraftedFire();
             CancelWeaponCycles();
-            CancelResponsePose();
 
-            if (clearResponseCooldownStance
-                || pawn?.stances?.curStance is Stance_RimKataAim)
+            // A completed defense result keeps its remaining visual pose.  Fire
+            // blocks new RimKata work, but does not retroactively cancel an
+            // already-started parry or dodge presentation.
+            if (pawn?.stances?.curStance is Stance_RimKataAim)
             {
                 pawn.stances.SetStance(new Stance_Mobile());
             }
@@ -1324,6 +1444,12 @@ namespace KRWF.RimKata
         private List<RimKataPawnCombatState> states = new List<RimKataPawnCombatState>();
         private readonly Dictionary<Pawn, RimKataPawnCombatState> statesByPawn =
             new Dictionary<Pawn, RimKataPawnCombatState>();
+        private List<RimKataTrackedRangedProjectile>
+            trackedRangedProjectiles =
+                new List<RimKataTrackedRangedProjectile>();
+        private readonly Dictionary<Projectile, RimKataTrackedRangedProjectile>
+            trackedRangedProjectilesByProjectile =
+                new Dictionary<Projectile, RimKataTrackedRangedProjectile>();
         private readonly Dictionary<Projectile, PendingProjectileValidation>
             pendingProjectileValidations =
                 new Dictionary<Projectile, PendingProjectileValidation>();
@@ -1367,6 +1493,7 @@ namespace KRWF.RimKata
             lock (statesLock)
             {
                 RebuildStateIndex();
+                RebuildTrackedRangedProjectileIndex(true);
             }
             SubscribeProjectileEvents();
             projectileInitialRefreshPending = true;
@@ -1383,6 +1510,8 @@ namespace KRWF.RimKata
             }
             UnsubscribeProjectileEvents();
             ClearProjectileScheduler();
+            trackedRangedProjectiles.Clear();
+            trackedRangedProjectilesByProjectile.Clear();
             RimKataResponseVisualParticipantCache.ClearForMap(map);
             base.MapRemoved();
         }
@@ -1393,9 +1522,20 @@ namespace KRWF.RimKata
             lock (statesLock)
             {
                 Scribe_Collections.Look(ref states, "rimKataPawnStates", LookMode.Deep);
+                Scribe_Collections.Look(
+                    ref trackedRangedProjectiles,
+                    "rimKataTrackedRangedProjectiles",
+                    LookMode.Deep);
                 if (Scribe.mode == LoadSaveMode.PostLoadInit && states == null)
                 {
                     states = new List<RimKataPawnCombatState>();
+                }
+
+                if (Scribe.mode == LoadSaveMode.PostLoadInit
+                    && trackedRangedProjectiles == null)
+                {
+                    trackedRangedProjectiles =
+                        new List<RimKataTrackedRangedProjectile>();
                 }
 
                 if (Scribe.mode == LoadSaveMode.PostLoadInit)
@@ -1405,6 +1545,7 @@ namespace KRWF.RimKata
                     weatherRangeRevision = 0;
                     lastWeatherRangeCheckTick = int.MinValue;
                     RebuildStateIndex();
+                    RebuildTrackedRangedProjectileIndex(false);
                 }
             }
         }
@@ -1456,7 +1597,8 @@ namespace KRWF.RimKata
                         state.ClearDraftedMovementSearchTracking();
                         state.CancelWeaponCycles();
                     }
-                    else if (state.pawn.InMentalState)
+                    else if (RimKataTemporaryInactivity.IsInactive(
+                        state.pawn))
                     {
                         RimKataDualWeaponController
                             .CancelOffenseForMentalState(state.pawn);
@@ -1527,6 +1669,186 @@ namespace KRWF.RimKata
             }
         }
 
+        internal void RegisterLaunchedRangedProjectile(
+            Projectile projectile,
+            Pawn target)
+        {
+            if (projectile == null
+                || target == null
+                || map == null
+                || map.Disposed
+                || projectile.Map != map
+                || target.Map != map)
+            {
+                return;
+            }
+
+            lock (statesLock)
+            {
+                if (trackedRangedProjectilesByProjectile.TryGetValue(
+                        projectile,
+                        out RimKataTrackedRangedProjectile existing))
+                {
+                    existing.target = target;
+                    return;
+                }
+
+                RimKataTrackedRangedProjectile tracked =
+                    new RimKataTrackedRangedProjectile(projectile, target);
+                trackedRangedProjectiles.Add(tracked);
+                trackedRangedProjectilesByProjectile[projectile] = tracked;
+            }
+        }
+
+        internal bool MarkCurrentRangedProjectilesAvoided(Pawn target)
+        {
+            if (target == null)
+            {
+                return false;
+            }
+
+            bool marked = false;
+            lock (statesLock)
+            {
+                Projectile current =
+                    RimKataProjectileImpactContext.CurrentProjectile;
+                for (int i = trackedRangedProjectiles.Count - 1;
+                    i >= 0;
+                    i--)
+                {
+                    RimKataTrackedRangedProjectile tracked =
+                        trackedRangedProjectiles[i];
+                    Projectile projectile = tracked?.projectile;
+                    bool live = projectile != null
+                        && (projectile == current
+                            || (!projectile.Destroyed
+                                && projectile.Spawned
+                                && projectile.Map == map));
+                    if (!live
+                        || tracked.target == null
+                        || tracked.target.Destroyed
+                        || tracked.target.Map != map)
+                    {
+                        RemoveTrackedRangedProjectileAt(i);
+                        continue;
+                    }
+
+                    if (tracked.target == target)
+                    {
+                        tracked.avoided = true;
+                        marked = true;
+                    }
+                }
+            }
+
+            return marked;
+        }
+
+        internal bool TryConsumeAvoidedRangedProjectile(
+            Projectile projectile,
+            Pawn target)
+        {
+            if (projectile == null || target == null)
+            {
+                return false;
+            }
+
+            lock (statesLock)
+            {
+                if (!trackedRangedProjectilesByProjectile.TryGetValue(
+                        projectile,
+                        out RimKataTrackedRangedProjectile tracked)
+                    || tracked.target != target
+                    || !tracked.avoided)
+                {
+                    return false;
+                }
+
+                RemoveTrackedRangedProjectile(tracked);
+                return true;
+            }
+        }
+
+        internal void NotifyRangedProjectileImpactFinished(
+            Projectile projectile)
+        {
+            if (projectile == null)
+            {
+                return;
+            }
+
+            lock (statesLock)
+            {
+                if (trackedRangedProjectilesByProjectile.TryGetValue(
+                        projectile,
+                        out RimKataTrackedRangedProjectile tracked))
+                {
+                    RemoveTrackedRangedProjectile(tracked);
+                }
+            }
+        }
+
+        private void RebuildTrackedRangedProjectileIndex(bool pruneInvalid)
+        {
+            trackedRangedProjectilesByProjectile.Clear();
+            if (trackedRangedProjectiles == null)
+            {
+                trackedRangedProjectiles =
+                    new List<RimKataTrackedRangedProjectile>();
+                return;
+            }
+
+            for (int i = trackedRangedProjectiles.Count - 1;
+                i >= 0;
+                i--)
+            {
+                RimKataTrackedRangedProjectile tracked =
+                    trackedRangedProjectiles[i];
+                Projectile projectile = tracked?.projectile;
+                Pawn target = tracked?.target;
+                if (projectile == null
+                    || target == null
+                    || (pruneInvalid
+                        && (projectile.Destroyed
+                            || !projectile.Spawned
+                            || projectile.Map != map
+                            || target.Destroyed
+                            || target.Map != map))
+                    || trackedRangedProjectilesByProjectile.ContainsKey(
+                        projectile))
+                {
+                    trackedRangedProjectiles.RemoveAt(i);
+                    continue;
+                }
+
+                trackedRangedProjectilesByProjectile[projectile] = tracked;
+            }
+        }
+
+        private void RemoveTrackedRangedProjectile(
+            RimKataTrackedRangedProjectile tracked)
+        {
+            if (tracked == null)
+            {
+                return;
+            }
+
+            trackedRangedProjectilesByProjectile.Remove(tracked.projectile);
+            trackedRangedProjectiles.Remove(tracked);
+        }
+
+        private void RemoveTrackedRangedProjectileAt(int index)
+        {
+            RimKataTrackedRangedProjectile tracked =
+                trackedRangedProjectiles[index];
+            trackedRangedProjectiles.RemoveAt(index);
+            if (tracked?.projectile != null)
+            {
+                trackedRangedProjectilesByProjectile.Remove(
+                    tracked.projectile);
+            }
+        }
+
         private void SubscribeProjectileEvents()
         {
             if (projectileEventsSubscribed || map?.events == null)
@@ -1581,6 +1903,10 @@ namespace KRWF.RimKata
             pendingProjectileValidations.Remove(projectile);
             activeExplosiveProjectiles.Remove(projectile);
             activeExplosiveProjectileCells.Remove(projectile);
+            if (RimKataProjectileImpactContext.CurrentProjectile != projectile)
+            {
+                NotifyRangedProjectileImpactFinished(projectile);
+            }
         }
 
         internal void RegisterLaunchedExplosiveProjectile(
@@ -2012,11 +2338,43 @@ namespace KRWF.RimKata
                 state.ticksRemaining = Mathf.Max(1, durationTicks);
                 state.totalTicks = state.ticksRemaining;
                 state.dodgeDirection = dodgeDirection;
-                state.tumbleSign = Rand.Bool ? 1 : -1;
-                state.additionalDodgeUsed = visualState == RimKataVisualState.AdditionalDodge || visualState == RimKataVisualState.Tumble;
+                if (!state.AdditionalTumbleActive)
+                {
+                    state.tumbleSign = Rand.Bool ? 1 : -1;
+                }
                 RimKataResponseVisualParticipantCache
                     .RefreshBodyVisual(state);
 
+                return true;
+            }
+        }
+
+        public void BeginRangedDodgeWindow(Pawn pawn, int durationTicks)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                state.rangedDodgeDelayTicksRemaining = Mathf.Max(
+                    1,
+                    durationTicks);
+                state.additionalDodgeUsed = false;
+            }
+        }
+
+        public bool BeginOrRestartStandardDodgeVisual(
+            Pawn pawn,
+            int durationTicks,
+            IntVec3 dodgeDirection)
+        {
+            lock (statesLock)
+            {
+                RimKataPawnCombatState state = GetState(pawn, true);
+                state.visualState = RimKataVisualState.StandardDodge;
+                state.ticksRemaining = Mathf.Max(1, durationTicks);
+                state.totalTicks = state.ticksRemaining;
+                state.dodgeDirection = dodgeDirection;
+                RimKataResponseVisualParticipantCache
+                    .RefreshBodyVisual(state);
                 return true;
             }
         }
@@ -2036,7 +2394,7 @@ namespace KRWF.RimKata
             lock (statesLock)
             {
                 RimKataPawnCombatState state = GetState(pawn, true);
-                if (state.DodgeVisualLocked)
+                if (state.DodgeMovementStartBlocked)
                 {
                     return false;
                 }
@@ -2044,7 +2402,6 @@ namespace KRWF.RimKata
                 state.visualState = RimKataVisualState.StandardDodge;
                 state.ticksRemaining = Mathf.Max(1, dodgeWindowDurationTicks);
                 state.totalTicks = state.ticksRemaining;
-                state.additionalDodgeUsed = false;
                 state.dodgeDirection = combatDirection;
                 state.dodgeMovementActive = true;
                 state.dodgeMovementTumbling = false;
@@ -2061,7 +2418,10 @@ namespace KRWF.RimKata
                 state.dodgeMovementJob = movementJob;
                 state.dodgeFailureStaggerTicks = Mathf.Max(0, failureStaggerTicks);
                 state.dodgeFailureStaggerSpeedFactor = Mathf.Max(0f, failureStaggerSpeedFactor);
-                state.tumbleSign = Rand.Bool ? 1 : -1;
+                if (!state.AdditionalTumbleActive)
+                {
+                    state.tumbleSign = Rand.Bool ? 1 : -1;
+                }
                 RimKataResponseVisualParticipantCache
                     .RefreshBodyVisual(state);
             }
@@ -2163,7 +2523,7 @@ namespace KRWF.RimKata
         {
             lock (statesLock)
             {
-                GetState(pawn, false)?.CancelVisual();
+                GetState(pawn, false)?.CancelFailedDodgeMovementStart();
             }
         }
 
@@ -2222,55 +2582,48 @@ namespace KRWF.RimKata
             }
         }
 
-        public bool IsStandardDodgeWindow(Pawn pawn)
+        public bool IsDodgeMovementStartBlocked(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.DodgeMovementStartBlocked == true;
+            }
+        }
+
+        public bool IsRangedDodgeDelayActive(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.RangedDodgeDelayActive == true;
+            }
+        }
+
+        public bool CanTryAdditionalDodge(Pawn pawn)
+        {
+            lock (statesLock)
+            {
+                return GetState(pawn, false)?.AdditionalDodgeAvailable == true;
+            }
+        }
+
+        public bool TryBeginAdditionalDodge(Pawn pawn, bool playTumble)
         {
             lock (statesLock)
             {
                 RimKataPawnCombatState state = GetState(pawn, false);
-                return state?.VisualActive == true
-                    && state.visualState == RimKataVisualState.StandardDodge
-                    && !state.additionalDodgeUsed;
-            }
-        }
-
-        public bool IsAdditionalDodgeProtectionActive(Pawn pawn)
-        {
-            lock (statesLock)
-            {
-                return GetState(pawn, false)?.AdditionalDodgeProtectionActive == true;
-            }
-        }
-
-        public bool TryUpgradeDodgeMovementToTumble(Pawn pawn)
-        {
-            lock (statesLock)
-            {
-                RimKataPawnCombatState state = GetState(pawn, false);
-                if (state?.DodgeMovementActive != true
-                    || state.visualState != RimKataVisualState.StandardDodge
-                    || state.dodgeMovementTumbling)
+                if (state?.AdditionalDodgeAvailable != true)
                 {
                     return false;
                 }
 
-                state.UpgradeDodgeMovementToTumble();
-                return true;
-            }
-        }
-
-        public bool TryBeginStationaryAdditionalDodge(Pawn pawn)
-        {
-            lock (statesLock)
-            {
-                RimKataPawnCombatState state = GetState(pawn, false);
-                if (state?.VisualActive != true
-                    || state.visualState != RimKataVisualState.StandardDodge
-                    || state.additionalDodgeUsed)
+                state.additionalDodgeUsed = true;
+                if (playTumble)
                 {
-                    return false;
+                    state.BeginAdditionalTumble();
+                    RimKataResponseVisualParticipantCache
+                        .RefreshBodyVisual(state);
                 }
 
-                state.BeginStationaryAdditionalDodge();
                 return true;
             }
         }

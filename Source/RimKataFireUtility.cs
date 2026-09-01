@@ -334,13 +334,23 @@ namespace KRWF.RimKata
 
     public static class RimKataProjectileImpactContext
     {
-        [ThreadStatic] private static Stack<Projectile> projectileStack;
+        private struct ImpactScope
+        {
+            public Projectile previousProjectile;
+            public Map impactMap;
+        }
+
+        [ThreadStatic] private static Stack<ImpactScope> projectileStack;
         [ThreadStatic] public static Projectile CurrentProjectile;
 
         public static void Enter(Projectile projectile)
         {
-            projectileStack ??= new Stack<Projectile>();
-            projectileStack.Push(CurrentProjectile);
+            projectileStack ??= new Stack<ImpactScope>();
+            projectileStack.Push(new ImpactScope
+            {
+                previousProjectile = CurrentProjectile,
+                impactMap = projectile?.Map
+            });
             CurrentProjectile = projectile;
             RimKataDefenseUtility.EnterProjectileImpact();
         }
@@ -348,9 +358,23 @@ namespace KRWF.RimKata
         public static void Exit()
         {
             RimKataDefenseUtility.ExitProjectileImpact();
-            CurrentProjectile = projectileStack != null && projectileStack.Count > 0
-                ? projectileStack.Pop()
-                : null;
+            Projectile exitingProjectile = CurrentProjectile;
+            ImpactScope scope = projectileStack != null
+                && projectileStack.Count > 0
+                    ? projectileStack.Pop()
+                    : default(ImpactScope);
+            CurrentProjectile = scope.previousProjectile;
+
+            // Projectile.Impact can be entered once by an override and again
+            // by its base implementation.  Keep the tracked result until the
+            // outermost scope for that projectile has completed; the
+            // projectile may already be despawned before damage is applied.
+            if (exitingProjectile != null
+                && exitingProjectile != CurrentProjectile)
+            {
+                scope.impactMap?.GetComponent<RimKataMapComponent>()?
+                    .NotifyRangedProjectileImpactFinished(exitingProjectile);
+            }
         }
     }
 
@@ -965,8 +989,25 @@ namespace KRWF.RimKata
             LocalTargetInfo intendedTarget)
         {
             Map launchMap = __instance?.Map ?? launcher?.Map;
-            launchMap?.GetComponent<RimKataMapComponent>()?
-                .RegisterLaunchedExplosiveProjectile(__instance);
+            RimKataMapComponent component =
+                launchMap?.GetComponent<RimKataMapComponent>();
+            component?.RegisterLaunchedExplosiveProjectile(__instance);
+
+            Pawn usedPawn = usedTarget.Pawn;
+            Pawn intendedPawn = intendedTarget.Pawn;
+            if (usedPawn != null
+                && usedPawn == intendedPawn
+                && IsTrackableOrdinaryRangedProjectile(__instance)
+                && RimKataEligibility.HasRimKataAccess(usedPawn)
+                && launcher != usedPawn
+                && (launcher?.Faction == null
+                    || usedPawn.Faction == null
+                    || launcher.Faction != usedPawn.Faction))
+            {
+                component?.RegisterLaunchedRangedProjectile(
+                    __instance,
+                    usedPawn);
+            }
 
             if (launcher != RimKataFireContext.Shooter
                 || equipment != RimKataFireContext.ActiveVerb?.EquipmentSource)
@@ -994,6 +1035,22 @@ namespace KRWF.RimKata
             }
 
             RimKataFireContext.QueueCloseImpact(__instance, usedTarget);
+        }
+
+        private static bool IsTrackableOrdinaryRangedProjectile(
+            Projectile projectile)
+        {
+            if (projectile == null
+                || projectile.Destroyed
+                || projectile.def?.projectile == null
+                || projectile.def.projectile.explosionRadius > 0f)
+            {
+                return false;
+            }
+
+            DamageDef damageDef = projectile.damageDefOverride
+                ?? projectile.def.projectile.damageDef;
+            return damageDef?.isRanged == true && !damageDef.isExplosive;
         }
 
         private static bool IntendedForCloseTarget(LocalTargetInfo intendedTarget)

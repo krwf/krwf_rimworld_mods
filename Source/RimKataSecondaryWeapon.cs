@@ -1527,6 +1527,16 @@ namespace KRWF.RimKata
 
         private static IEnumerable<Gizmo> MarkSecondaryWeaponGizmos(Pawn pawn, IEnumerable<Gizmo> gizmos)
         {
+            if (!RimKataEligibility.CanBeginGunKataAttack(pawn))
+            {
+                foreach (Gizmo gizmo in gizmos)
+                {
+                    yield return gizmo;
+                }
+
+                yield break;
+            }
+
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
 
             ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
@@ -1646,10 +1656,18 @@ namespace KRWF.RimKata
 
         public static bool Prefix(Command_VerbTarget __instance)
         {
-            return replayingAttack || !IsRimKataSecondaryCommand(__instance);
+            return replayingAttack || !IsTaggedRimKataSecondaryCommand(__instance);
         }
 
         public static bool IsRimKataSecondaryCommand(
+            Command_VerbTarget command)
+        {
+            Pawn pawn = command?.verb?.CasterPawn;
+            return IsTaggedRimKataSecondaryCommand(command)
+                && RimKataEligibility.CanBeginGunKataAttack(pawn);
+        }
+
+        private static bool IsTaggedRimKataSecondaryCommand(
             Command_VerbTarget command)
         {
             Verb verb = command?.verb;
@@ -1811,7 +1829,8 @@ namespace KRWF.RimKata
             {
                 Pawn pawn = pawns[i];
                 if (pawn?.Spawned != true
-                    || !pawn.IsPlayerControlled)
+                    || !pawn.IsPlayerControlled
+                    || !RimKataEligibility.CanBeginGunKataAttack(pawn))
                 {
                     continue;
                 }
@@ -1927,6 +1946,7 @@ namespace KRWF.RimKata
                 && pendingMeleeVerb.CasterPawn == pawn
                 && pendingMeleeVerb.IsMeleeAttack
                 && pawn?.Drafted != true
+                && RimKataEligibility.CanBeginGunKataAttack(pawn)
                 && job?.def == JobDefOf.AttackMelee
                 && job.playerForced
                 && job.targetA.HasThing
@@ -2020,7 +2040,11 @@ namespace KRWF.RimKata
             Pawn pawn = verb.CasterPawn;
             ThingWithComps weapon = verb.EquipmentSource;
 
-            if (pawn == null || weapon == null || pawn.Drafted || !RimKataEligibility.HasRimKataAccess(pawn) || !RimKataWeaponSlotUtility.IsSecondaryWeapon(pawn, weapon))
+            if (pawn == null
+                || weapon == null
+                || pawn.Drafted
+                || !RimKataEligibility.CanBeginGunKataAttack(pawn)
+                || !RimKataWeaponSlotUtility.IsSecondaryWeapon(pawn, weapon))
             {
                 return;
             }
@@ -2071,7 +2095,9 @@ namespace KRWF.RimKata
             Pawn pawn,
             ref bool __result)
         {
-            if (pawn != null && RimKataMod.Settings?.targetRushEnabled == true && RimKataEligibility.HasRimKataAccess(pawn) && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn))
+            if (pawn != null
+                && RimKataMod.Settings?.targetRushEnabled == true
+                && RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 __result = false;
                 return false;
@@ -2085,7 +2111,7 @@ namespace KRWF.RimKata
             ref bool __result)
         {
             if (pawn?.Drafted == true
-                && RimKataEligibility.HasRimKataAccess(pawn))
+                && RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 __result = true;
             }
@@ -2115,6 +2141,7 @@ namespace KRWF.RimKata
 
                 selectedPlayerPawns++;
                 if (!hasUsableSecondary
+                    && RimKataEligibility.CanBeginGunKataAttack(pawn)
                     && RimKataAutomaticRangeVisualUtility
                         .CanDrawAutomaticSearchRange(pawn)
                     && RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
@@ -2142,6 +2169,28 @@ namespace KRWF.RimKata
                     && pawn.IsPlayerControlled
                     && RimKataAutomaticRangeVisualUtility
                         .CanDrawAutomaticSearchRange(pawn))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static bool HasSelectedPawnWithActiveRimKataAttack()
+        {
+            List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
+            if (selectedPawns == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < selectedPawns.Count; i++)
+            {
+                Pawn pawn = selectedPawns[i];
+                if (pawn?.Spawned == true
+                    && pawn.IsPlayerControlled
+                    && RimKataEligibility.CanBeginGunKataAttack(pawn))
                 {
                     return true;
                 }
@@ -2186,7 +2235,8 @@ namespace KRWF.RimKata
 
                 ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
 
-                if (secondary?.def?.IsRangedWeapon == true)
+                if (secondary?.def?.IsRangedWeapon == true
+                    && RimKataEligibility.CanBeginGunKataAttack(pawn))
                 {
                     __result = true;
                     return;

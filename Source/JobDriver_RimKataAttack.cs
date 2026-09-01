@@ -274,6 +274,14 @@ namespace KRWF.RimKata
                 return;
             }
 
+            if (RimKataTemporaryInactivity.IsInactive(pawn))
+            {
+                RimKataDualWeaponController
+                    .CancelOffenseForMentalState(pawn);
+                EndRimKataJobWith(JobCondition.InterruptForced);
+                return;
+            }
+
             Thing assignedTarget = AssignedTarget;
             bool weaponScopedFocusJob =
                 RimKataDualWeaponController.IsWeaponScopedFocusJob(
@@ -852,6 +860,14 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            if (newJob?.def == RimKataDefOf.RimKata_Attack
+                && !RimKataEligibility.CanBeginGunKataAttack(___pawn))
+            {
+                JobMaker.ReturnToPool(newJob);
+                newJob = null;
+                return false;
+            }
+
             Job counterattackOpeningJob = newJob;
             RimKataCounterattackOpeningResult counterattackOpeningResult =
                 RimKataDualWeaponController.HandleCounterattackOpening(
@@ -1206,7 +1222,10 @@ namespace KRWF.RimKata
             ref string failStr,
             ref bool __state)
         {
-            __state = !RimKataAttackGizmoTargetContext.Active
+            bool activeRimKataAttack =
+                RimKataEligibility.CanBeginGunKataAttack(pawn);
+            __state = activeRimKataAttack
+                && !RimKataAttackGizmoTargetContext.Active
                 && IsSelectedPlayerPawnInGroup(pawn);
             if (RimKataAttackGizmoTargetContext.Active || __state)
             {
@@ -1309,12 +1328,16 @@ namespace KRWF.RimKata
             ref string failStr,
             bool __state)
         {
-            bool squadContext = RimKataAttackGizmoTargetContext.SquadActive
+            bool activeRimKataAttack =
+                RimKataEligibility.CanBeginGunKataAttack(pawn);
+            bool squadContext = (activeRimKataAttack
+                    && RimKataAttackGizmoTargetContext.SquadActive)
                 || __state;
             bool explicitIncapacitatedOrder = pawn?.Drafted == true
-                && RimKataEligibility.CanBeginGunKataAttack(pawn)
+                && activeRimKataAttack
                 && RimKataTargeting.IsIncapacitatedTarget(target.Pawn);
-            bool attackContext = RimKataAttackGizmoTargetContext.Active
+            bool attackContext = (activeRimKataAttack
+                    && RimKataAttackGizmoTargetContext.Active)
                 || __state
                 || explicitIncapacitatedOrder;
             if (__result == null
@@ -1460,7 +1483,7 @@ namespace KRWF.RimKata
         {
             Thing threat = pawn?.mindState?.meleeThreat;
             if (pawn?.Map == null
-                || !RimKataEligibility.HasRimKataAccess(pawn)
+                || !RimKataEligibility.HasActiveRimKataAccess(pawn)
                 || RimKataDualWeaponController.CounterattackControlEnabled(pawn)
                 || pawn.Drafted
                 || pawn.InMentalState
