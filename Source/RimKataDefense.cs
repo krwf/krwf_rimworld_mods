@@ -365,10 +365,17 @@ namespace KRWF.RimKata
                     return false;
                 }
 
-                bool playTumble = RimKataMod.Settings?.tumbleEnabled != false;
+                bool closeCombatDodge = component.IsCloseCombatActive(defender);
+                bool playTumble = !closeCombatDodge
+                    && RimKataMod.Settings?.tumbleEnabled != false;
                 if (!component.TryBeginAdditionalDodge(defender, playTumble))
                 {
                     return false;
+                }
+
+                if (closeCombatDodge)
+                {
+                    component.BeginCloseCombatDodge(defender, dodgeDurationTicks);
                 }
 
                 component.MarkCurrentRangedProjectilesAvoided(defender);

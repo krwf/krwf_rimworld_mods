@@ -267,6 +267,7 @@ namespace KRWF.RimKata
         public int additionalTumbleTotalTicks;
         public IntVec3 dodgeDirection;
         public bool dodgeMovementActive;
+        public bool dodgeMovementStartedInCloseCombat;
         public IntVec3 dodgeMovementOrigin = IntVec3.Invalid;
         public IntVec3 dodgeMovementDestination = IntVec3.Invalid;
         public float dodgeMovementProgress;
@@ -476,6 +477,9 @@ namespace KRWF.RimKata
                 "additionalTumbleTotalTicks");
             Scribe_Values.Look(ref dodgeDirection, "dodgeDirection");
             Scribe_Values.Look(ref dodgeMovementActive, "dodgeMovementActive");
+            Scribe_Values.Look(
+                ref dodgeMovementStartedInCloseCombat,
+                "dodgeMovementStartedInCloseCombat");
             Scribe_Values.Look(ref dodgeMovementTumbling, "dodgeMovementTumbling");
             Scribe_Values.Look(ref dodgeMovementOrigin, "dodgeMovementOrigin", IntVec3.Invalid);
             Scribe_Values.Look(ref dodgeMovementDestination, "dodgeMovementDestination", IntVec3.Invalid);
@@ -876,16 +880,15 @@ namespace KRWF.RimKata
             }
         }
 
-        public void ConvertDodgeMovementToTumble()
+        public void ConvertDodgeMovementToCloseDodge()
         {
-            IntVec3 tumbleDirection = dodgeDirection;
-            int currentTumbleSign = tumbleSign;
+            int closeDodgeDurationTicks = Mathf.Max(1, totalTicks);
             ClearDodgeMovementCoreFields();
-            visualState = RimKataVisualState.Tumble;
-            ticksRemaining = RimKataCombatTuning.TumbleDurationTicks;
-            totalTicks = ticksRemaining;
-            dodgeDirection = tumbleDirection;
-            tumbleSign = currentTumbleSign;
+            visualState = RimKataVisualState.None;
+            ticksRemaining = 0;
+            totalTicks = 0;
+            dodgeDirection = IntVec3.Zero;
+            BeginCloseDodge(closeDodgeDurationTicks);
         }
 
         private void ClearDodgeMovementFields()
@@ -900,6 +903,7 @@ namespace KRWF.RimKata
         private void ClearDodgeMovementCoreFields()
         {
             dodgeMovementActive = false;
+            dodgeMovementStartedInCloseCombat = false;
             dodgeMovementTumbling = false;
             dodgeMovementOrigin = IntVec3.Invalid;
             dodgeMovementDestination = IntVec3.Invalid;
@@ -2404,6 +2408,7 @@ namespace KRWF.RimKata
                 state.totalTicks = state.ticksRemaining;
                 state.dodgeDirection = combatDirection;
                 state.dodgeMovementActive = true;
+                state.dodgeMovementStartedInCloseCombat = state.CloseCombatActive;
                 state.dodgeMovementTumbling = false;
                 state.dodgeMovementOrigin = pawn.Position;
                 state.dodgeMovementDestination = destination;
@@ -2490,7 +2495,19 @@ namespace KRWF.RimKata
                             || !state.dodgeResumeDestination.ThingDestroyed);
                     resumeDestination = state.dodgeResumeDestination;
                     resumePathEndMode = state.dodgeResumePathEndMode;
-                    state.ConvertDodgeMovementToTumble();
+                    if (!synchronousStartFailure
+                        && state.dodgeMovementStartedInCloseCombat)
+                    {
+                        state.ConvertDodgeMovementToCloseDodge();
+                    }
+                    else if (wasTumbling)
+                    {
+                        state.HoldDodgeLanding();
+                    }
+                    else
+                    {
+                        state.HoldStandardDodgeLanding();
+                    }
                     state.dodgeResumeWasMoving = false;
                     state.dodgeResumeDestination = LocalTargetInfo.Invalid;
                     state.dodgeMovementJob = null;

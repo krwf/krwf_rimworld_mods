@@ -317,7 +317,6 @@ namespace KRWF.RimKata
     {
         public const int StandardDodgeDurationTicks = 30;
         public const int AdditionalDodgeTumbleDurationTicks = 24;
-        public const int TumbleDurationTicks = 48;
         public const int AdditionalDodgeWatchdogTicks = 180;
         public const int AdditionalDodgeLandingTicks = 2;
         public const int CombatRequestGraceTicks = 20;

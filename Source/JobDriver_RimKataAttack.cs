@@ -635,9 +635,13 @@ namespace KRWF.RimKata
                     || pawn?.CurJobDef != RimKataDefOf.RimKata_Attack;
             }
 
+            bool directIncapacitatedOrder =
+                RimKataTargeting.IsIncapacitatedTarget(target.Pawn);
             if (!target.HasThing
                 || (target.Pawn != null
-                    && !RimKataTargeting.IsPawnTargetStateValid(target.Pawn)))
+                    && !RimKataTargeting.IsPawnTargetStateValid(
+                        target.Pawn,
+                        directIncapacitatedOrder)))
             {
                 return true;
             }
@@ -647,6 +651,30 @@ namespace KRWF.RimKata
                 __instance))
             {
                 return true;
+            }
+
+            if (directIncapacitatedOrder)
+            {
+                if (pawn.IsBurning()
+                    || !RimKataWeaponSlotUtility
+                        .CanWeaponAttackTargetWithoutRushing(
+                            pawn,
+                            __instance.EquipmentSource as ThingWithComps,
+                            target.Thing))
+                {
+                    return true;
+                }
+
+                Job incapacitatedTargetJob = JobMaker.MakeJob(
+                    RimKataDefOf.RimKata_Attack,
+                    target);
+                incapacitatedTargetJob.playerForced = true;
+                incapacitatedTargetJob.killIncappedTarget = true;
+                incapacitatedTargetJob.verbToUse = __instance;
+                pawn.jobs.TryTakeOrderedJob(
+                    incapacitatedTargetJob,
+                    JobTag.Misc);
+                return false;
             }
 
             bool fixedWeaponTarget =

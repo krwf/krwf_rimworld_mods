@@ -2832,7 +2832,14 @@ namespace KRWF.RimKata
                     false,
                     false)
                 ?? target;
-            if (!TargetWithinAutomaticSearchRange(
+            bool meleeOnlyCounterattackRush =
+                openingJobTarget == target
+                && IsMeleeOnlyCounterattackRushOpening(
+                    pawn,
+                    sourceJob,
+                    jobGiver);
+            if (!meleeOnlyCounterattackRush
+                && !TargetWithinAutomaticSearchRange(
                     pawn,
                     openingJobTarget)
                 && !RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
@@ -2890,6 +2897,7 @@ namespace KRWF.RimKata
                 openingJobTarget);
             rimKataJob.playerForced = false;
             rimKataJob.killIncappedTarget = false;
+            rimKataJob.jobGiver = jobGiver;
             rimKataJob.verbToUse = ownerVerb
                 ?? RimKataWeaponSlotUtility.CombatVerb(
                     pawn,
@@ -2920,6 +2928,64 @@ namespace KRWF.RimKata
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && (!(target is Pawn targetPawn)
                     || RimKataTargeting.IsPawnTargetStateValid(targetPawn));
+        }
+
+        private static bool IsMeleeOnlyCounterattackRushOpening(
+            Pawn pawn,
+            Job sourceJob,
+            ThinkNode jobGiver)
+        {
+            return RimKataMod.Settings?.targetRushEnabled != false
+                && sourceJob?.def == JobDefOf.AttackMelee
+                && sourceJob.playerForced != true
+                && IsCounterattackJobGiver(jobGiver)
+                && HasOnlyMeleeCombatWeapons(pawn);
+        }
+
+        private static bool IsConvertedMeleeCounterattackRushJob(
+            Pawn pawn,
+            Thing target)
+        {
+            Job job = pawn?.CurJob;
+            return RimKataMod.Settings?.targetRushEnabled != false
+                && job?.def == RimKataDefOf.RimKata_Attack
+                && job.playerForced != true
+                && job.targetA.Thing == target
+                && job.verbToUse?.IsMeleeAttack == true
+                && IsCounterattackJobGiver(job.jobGiver)
+                && pawn.Drafted != true
+                && pawn.playerSettings?.UsesConfigurableHostilityResponse == true
+                && pawn.playerSettings.hostilityResponse
+                    == HostilityResponseMode.Attack;
+        }
+
+        private static bool IsCounterattackJobGiver(ThinkNode jobGiver)
+        {
+            return jobGiver is JobGiver_ConfigurableHostilityResponse
+                || jobGiver is JobGiver_ReactToCloseMeleeThreat;
+        }
+
+        private static bool HasOnlyMeleeCombatWeapons(Pawn pawn)
+        {
+            ThingWithComps primary =
+                RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            Verb primaryVerb =
+                RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
+            if (primary == null || primaryVerb?.IsMeleeAttack != true)
+            {
+                return false;
+            }
+
+            if (!RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn))
+            {
+                return true;
+            }
+
+            ThingWithComps secondary =
+                RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
+            Verb secondaryVerb =
+                RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
+            return secondaryVerb == null || secondaryVerb.IsMeleeAttack;
         }
 
         public static bool CanRushTarget(Pawn pawn, Thing target)
@@ -2957,7 +3023,8 @@ namespace KRWF.RimKata
 
             return RimKataMod.Settings?.targetRushEnabled != false
                 && pawn?.CurJob?.playerForced != true
-                && TargetWithinAutomaticSearchRange(pawn, target)
+                && (TargetWithinAutomaticSearchRange(pawn, target)
+                    || IsConvertedMeleeCounterattackRushJob(pawn, target))
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && (!(target is Pawn automaticTargetPawn)
                     || RimKataTargeting.IsPawnTargetStateValid(
