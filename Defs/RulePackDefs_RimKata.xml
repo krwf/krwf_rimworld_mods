@@ -4,7 +4,7 @@
     <defName>RimKata_ParryBattleLog</defName>
     <rulePack>
       <rulesStrings>
-        <li>r_logentry->[INITIATOR_nameDef] parried [RECIPIENT_nameDef]'s attack.</li>
+        <li>r_logentry->[SUBJECT_nameDef] parried [INITIATOR_nameDef]'s attack.</li>
       </rulesStrings>
     </rulePack>
   </RulePackDef>

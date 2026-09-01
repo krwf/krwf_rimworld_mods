@@ -1596,14 +1596,24 @@ namespace KRWF.RimKata
     {
         public static void Postfix(Pawn pawn, ref Job __result)
         {
-            if (pawn == null
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+            if (pawn == null)
+            {
+                return;
+            }
+
+            Thing meleeThreat = pawn.mindState?.meleeThreat;
+            if (__result == null && meleeThreat == null)
+            {
+                return;
+            }
+
+            if (!RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 return;
             }
 
             Thing threat = __result?.targetA.Thing
-                ?? pawn.mindState?.meleeThreat;
+                ?? meleeThreat;
             if (threat == null
                 || RimKataTargeting.IsAutomaticEnemy(pawn, threat))
             {

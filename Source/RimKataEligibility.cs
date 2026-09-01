@@ -69,25 +69,61 @@ namespace KRWF.RimKata
 
         public static bool IsWorkMovementDefenseException(Pawn pawn)
         {
-            return IsWorking(pawn)
+            return IsWorkMovementDefenseExceptionCore(pawn, IsWorking(pawn));
+        }
+
+        private static bool IsWorkMovementDefenseExceptionCore(
+            Pawn pawn,
+            bool isWorking)
+        {
+            return isWorking
                 && pawn.pather?.MovingNow == true
                 && pawn.carryTracker?.CarriedThing == null;
         }
 
         public static bool CanUseDefense(Pawn pawn)
         {
-            return HasActiveRimKataAccess(pawn)
-                && IsConsciousAndMobile(pawn)
-                && (!IsWorking(pawn)
-                    || IsWorkMovementDefenseException(pawn))
-                && pawn.health.capacities.CapableOf(PawnCapacityDefOf.Moving);
+            return TryGetDefenseEligibility(pawn, out _);
+        }
+
+        internal static bool TryGetDefenseEligibility(
+            Pawn pawn,
+            out bool workMovementDefenseException)
+        {
+            workMovementDefenseException = false;
+            if (!HasActiveRimKataAccess(pawn)
+                || !IsConsciousAndMobile(pawn))
+            {
+                return false;
+            }
+
+            bool isWorking = IsWorking(pawn);
+            if (isWorking)
+            {
+                workMovementDefenseException =
+                    IsWorkMovementDefenseExceptionCore(pawn, true);
+                if (!workMovementDefenseException)
+                {
+                    return false;
+                }
+            }
+
+            return pawn.health.capacities.CapableOf(PawnCapacityDefOf.Moving);
         }
 
         public static bool CanRollRangedDodge(Pawn pawn, bool shieldAbsorbed)
         {
-            return RimKataMod.Settings?.rangedDodgeEnabled != false
-                && !shieldAbsorbed
+            return CanRollRangedDodgeVerified(pawn, shieldAbsorbed)
                 && CanUseDefense(pawn);
+        }
+
+        internal static bool CanRollRangedDodgeVerified(
+            Pawn pawn,
+            bool shieldAbsorbed)
+        {
+            return pawn != null
+                && RimKataMod.Settings?.rangedDodgeEnabled != false
+                && !shieldAbsorbed;
         }
 
         public static bool CanRollMeleeDodge(Pawn pawn)

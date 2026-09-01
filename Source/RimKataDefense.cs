@@ -27,7 +27,6 @@ namespace KRWF.RimKata
         {
             internal Pawn previousDefender;
             internal Thing previousAttacker;
-            internal bool previousDamageConfirmed;
             internal bool active;
         }
 
@@ -52,24 +51,20 @@ namespace KRWF.RimKata
         [ThreadStatic] private static bool closeDefenseAvoided;
         [ThreadStatic] private static Pawn currentDamageStaggerDefender;
         [ThreadStatic] private static Thing currentDamageStaggerAttacker;
-        [ThreadStatic] private static bool currentDamageStaggerConfirmed;
 
         public static DamageStaggerContextState EnterDamageStaggerContext(
             Pawn defender,
-            Thing attacker,
-            bool damageConfirmed)
+            Thing attacker)
         {
             DamageStaggerContextState state = new DamageStaggerContextState
             {
                 previousDefender = currentDamageStaggerDefender,
                 previousAttacker = currentDamageStaggerAttacker,
-                previousDamageConfirmed = currentDamageStaggerConfirmed,
                 active = true
             };
 
             currentDamageStaggerDefender = defender;
             currentDamageStaggerAttacker = attacker;
-            currentDamageStaggerConfirmed = damageConfirmed;
             return state;
         }
 
@@ -82,22 +77,6 @@ namespace KRWF.RimKata
 
             currentDamageStaggerDefender = state.previousDefender;
             currentDamageStaggerAttacker = state.previousAttacker;
-            currentDamageStaggerConfirmed = state.previousDamageConfirmed;
-        }
-
-        public static void ConfirmAppliedDamage(
-            Pawn defender,
-            DamageInfo dinfo,
-            bool absorbed)
-        {
-            if (!absorbed
-                && defender != null
-                && defender == currentDamageStaggerDefender
-                && dinfo.Instigator != null
-                && dinfo.Instigator == currentDamageStaggerAttacker)
-            {
-                currentDamageStaggerConfirmed = true;
-            }
         }
 
         public static void NotifyAppliedDamageStagger(Pawn defender)
@@ -121,6 +100,21 @@ namespace KRWF.RimKata
             }
 
             RimKataDualWeaponController.NotifyDefensiveCombatEvent(defender, attacker);
+        }
+
+        private static void NotifyAbsorbedRangedDamageForJob(
+            Pawn defender,
+            DamageInfo dinfo,
+            bool suppressJobNotification)
+        {
+            if (defender?.Spawned != true
+                || !dinfo.CheckForJobOverride
+                || suppressJobNotification)
+            {
+                return;
+            }
+
+            defender.jobs?.Notify_DamageTaken(dinfo);
         }
 
         public static void ResetCloseAttackResolution()
@@ -192,10 +186,24 @@ namespace KRWF.RimKata
             Pawn attacker,
             Verb attackingVerb = null)
         {
+            return ResolveCloseDefenseCore(
+                defender,
+                attacker,
+                attackingVerb,
+                false);
+        }
+
+        private static RimKataDefenseOutcome ResolveCloseDefenseCore(
+            Pawn defender,
+            Pawn attacker,
+            Verb attackingVerb,
+            bool defenseEligibilityVerified)
+        {
             if (defender?.Map == null
                 || attacker == null
                 || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
-                || !RimKataEligibility.CanUseDefense(defender))
+                || (!defenseEligibilityVerified
+                    && !RimKataEligibility.CanUseDefense(defender)))
             {
                 return RimKataDefenseOutcome.None;
             }
@@ -229,21 +237,24 @@ namespace KRWF.RimKata
                 || attackingVerb == null
                 || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
                 || !RimKataEligibility.HasRimKataAccess(attacker)
-                || !RimKataEligibility.HasRimKataAccess(defender)
                 || !RimKataEligibility.CanUseDefense(defender)
                 || HasActiveApparelShield(defender))
             {
                 return RimKataCloseDefensePrecheck.None;
             }
 
-            float dodgeChance = RimKataCombatMath.CloseMeleeDodgeChance(defender);
+            float dodgeChance =
+                RimKataCombatMath.CloseMeleeDodgeChanceVerified(defender);
             if (Rand.Chance(dodgeChance))
             {
-                NotifyDefensiveCombatEvent(defender, attacker);
                 return RimKataCloseDefensePrecheck.FirstDodgeSucceeded;
             }
 
-            if (ResolveCloseDefense(defender, attacker, attackingVerb)
+            if (ResolveCloseDefenseCore(
+                    defender,
+                    attacker,
+                    attackingVerb,
+                    true)
                 == RimKataDefenseOutcome.Response)
             {
                 float accidentalFireChance = RimKataMod.Settings?.GetResponseAccidentalFireChance(defender) ?? 0.2f;
@@ -379,11 +390,6 @@ namespace KRWF.RimKata
                 }
 
                 component.MarkCurrentRangedProjectilesAvoided(defender);
-                if (!RimKataEligibility.IsWorkMovementDefenseException(defender))
-                {
-                    NotifyDefensiveCombatEvent(defender, attacker);
-                }
-
                 return true;
             }
 
@@ -392,10 +398,6 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (!RimKataEligibility.IsWorkMovementDefenseException(defender))
-            {
-                NotifyDefensiveCombatEvent(defender, attacker);
-            }
             RimKataDodgeMovementUtility.ApplySuccessfulRangedDodge(
                 defender,
                 attacker,
@@ -482,10 +484,15 @@ namespace KRWF.RimKata
             if (!closeAttack
                 && component?.TryConsumeAvoidedRangedProjectile(
                     projectile,
-                    defender) == true)
+                    defender,
+                    out bool suppressJobNotification) == true)
             {
                 RecordProjectileDefense(defender, true);
                 MarkProjectileAvoided(defender);
+                NotifyAbsorbedRangedDamageForJob(
+                    defender,
+                    dinfo,
+                    suppressJobNotification);
                 return true;
             }
 
@@ -506,11 +513,6 @@ namespace KRWF.RimKata
                     || (defenderFaction != null
                         && attackerFaction != null
                         && defenderFaction == attackerFaction)))
-            {
-                return false;
-            }
-
-            if (!closeAttack && !RimKataEligibility.CanUseDefense(defender))
             {
                 return false;
             }
@@ -536,10 +538,21 @@ namespace KRWF.RimKata
                     RecordCloseAttackResolution(defender, true);
                     RecordProjectileDefense(defender, true);
                     MarkProjectileAvoided(defender);
+                    if (precheck == RimKataCloseDefensePrecheck.FirstDodgeSucceeded)
+                    {
+                        NotifyAbsorbedRangedDamageForJob(
+                            defender,
+                            dinfo,
+                            RimKataEligibility
+                                .IsWorkMovementDefenseException(defender));
+                    }
+
                     return true;
                 }
 
-                if (!RimKataEligibility.CanUseDefense(defender))
+                if (!RimKataEligibility.TryGetDefenseEligibility(
+                        defender,
+                        out bool workMovementDefenseException))
                 {
                     RecordCloseAttackResolution(defender, false);
                     RecordProjectileDefense(defender, false);
@@ -548,49 +561,54 @@ namespace KRWF.RimKata
 
                 bool firstDodgeAndResponseAlreadyFailed = precheck == RimKataCloseDefensePrecheck.FirstDodgeAndResponseFailed;
                 float closeDodgeChance = RimKataFireContext.CloseMeleeResolution
-                    ? RimKataCombatMath.CloseMeleeDodgeChance(defender)
+                    ? RimKataCombatMath.CloseMeleeDodgeChanceVerified(
+                        defender)
                     : 0f;
                 if (!firstDodgeAndResponseAlreadyFailed
                     && RimKataFireContext.CloseMeleeResolution
                     && Rand.Chance(closeDodgeChance))
                 {
-                    NotifyDefensiveCombatEvent(defender, attacker);
+                    RecordCloseAttackResolution(defender, true);
+                    RecordProjectileDefense(defender, true);
+                    MarkProjectileAvoided(defender);
+                    NotifyAbsorbedRangedDamageForJob(
+                        defender,
+                        dinfo,
+                        workMovementDefenseException);
+                    return true;
+                }
+
+                RimKataDefenseOutcome outcome = firstDodgeAndResponseAlreadyFailed
+                    ? RimKataDefenseOutcome.None
+                    : ResolveCloseDefenseCore(
+                        defender,
+                        RimKataFireContext.Shooter,
+                        RimKataFireContext.ActiveVerb,
+                        true);
+                if (outcome != RimKataDefenseOutcome.None)
+                {
                     RecordCloseAttackResolution(defender, true);
                     RecordProjectileDefense(defender, true);
                     MarkProjectileAvoided(defender);
                     return true;
                 }
 
-                if (RimKataEligibility.CanUseDefense(defender))
+                if (RimKataFireContext.CloseMeleeResolution
+                    && Rand.Chance(closeDodgeChance))
                 {
-                    RimKataDefenseOutcome outcome = firstDodgeAndResponseAlreadyFailed
-                        ? RimKataDefenseOutcome.None
-                        : ResolveCloseDefense(
-                            defender,
-                            RimKataFireContext.Shooter,
-                            RimKataFireContext.ActiveVerb);
-                    if (outcome != RimKataDefenseOutcome.None)
-                    {
-                        RecordCloseAttackResolution(defender, true);
-                        RecordProjectileDefense(defender, true);
-                        MarkProjectileAvoided(defender);
-                        return true;
-                    }
-
-                    if (RimKataFireContext.CloseMeleeResolution
-                        && Rand.Chance(closeDodgeChance))
-                    {
-                        NotifyDefensiveCombatEvent(defender, attacker);
-                        RecordCloseAttackResolution(defender, true);
-                        RecordProjectileDefense(defender, true);
-                        MarkProjectileAvoided(defender);
-                        RimKataProjectileUtility.SpawnDeflectedMiss(
-                            RimKataProjectileImpactContext.CurrentProjectile,
-                            RimKataFireContext.Shooter,
-                            defender,
-                            RimKataFireContext.ActiveVerb);
-                        return true;
-                    }
+                    RecordCloseAttackResolution(defender, true);
+                    RecordProjectileDefense(defender, true);
+                    MarkProjectileAvoided(defender);
+                    RimKataProjectileUtility.SpawnDeflectedMiss(
+                        RimKataProjectileImpactContext.CurrentProjectile,
+                        RimKataFireContext.Shooter,
+                        defender,
+                        RimKataFireContext.ActiveVerb);
+                    NotifyAbsorbedRangedDamageForJob(
+                        defender,
+                        dinfo,
+                        workMovementDefenseException);
+                    return true;
                 }
 
                 RecordCloseAttackResolution(defender, false);
@@ -598,7 +616,16 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (RimKataEligibility.CanRollRangedDodge(defender, false)
+            if (!RimKataEligibility.TryGetDefenseEligibility(
+                    defender,
+                    out bool rangedWorkMovementDefenseException))
+            {
+                return false;
+            }
+
+            if (RimKataEligibility.CanRollRangedDodgeVerified(
+                    defender,
+                    false)
                 && TryRangedDodge(
                     defender,
                     attacker,
@@ -606,6 +633,10 @@ namespace KRWF.RimKata
             {
                 RecordProjectileDefense(defender, true);
                 MarkProjectileAvoided(defender);
+                NotifyAbsorbedRangedDamageForJob(
+                    defender,
+                    dinfo,
+                    rangedWorkMovementDefenseException);
                 return true;
             }
 
@@ -870,14 +901,13 @@ namespace KRWF.RimKata
             ref DamageInfo dinfo,
             ref bool absorbed)
         {
-            RimKataDefenseUtility.ConfirmAppliedDamage(__instance, dinfo, absorbed);
-
             bool closeMeleeTarget = RimKataFireContext.CloseShot
                 && RimKataFireContext.CloseMeleeResolution
                 && RimKataFireContext.CloseTarget == __instance;
             if (absorbed
-                && (RimKataEligibility.HasRimKataAccess(__instance) || closeMeleeTarget)
-                && !RimKataDefenseUtility.TryGetResolvedProjectileDefense(__instance, out _))
+                && !RimKataDefenseUtility.TryGetResolvedProjectileDefense(__instance, out _)
+                && (closeMeleeTarget
+                    || RimKataEligibility.HasRimKataAccess(__instance)))
             {
                 RimKataDefenseUtility.RecordProjectileDefense(__instance, false);
             }
@@ -967,8 +997,7 @@ namespace KRWF.RimKata
 
             __state = RimKataDefenseUtility.EnterDamageStaggerContext(
                 __instance.parent,
-                bullet?.Launcher,
-                true);
+                bullet?.Launcher);
             return true;
         }
 
@@ -1025,8 +1054,7 @@ namespace KRWF.RimKata
             {
                 damageStaggerContext = RimKataDefenseUtility.EnterDamageStaggerContext(
                     __instance?.CurrentTarget.Pawn,
-                    __instance?.CasterPawn,
-                    false),
+                    __instance?.CasterPawn),
                 active = true
             };
             bool rimKataCycleAttack = RimKataFireContext.ActiveVerb == __instance;

@@ -115,6 +115,13 @@ namespace KRWF.RimKata
                 return vanillaChance;
             }
 
+            return ApplyConfiguredMeleeDodgeBonus(target, vanillaChance);
+        }
+
+        private static float ApplyConfiguredMeleeDodgeBonus(
+            Pawn target,
+            float vanillaChance)
+        {
             float bonusMultiplier = RimKataMod.Settings?.GetMeleeDodgeBonusMultiplier(target) ?? 1f;
             return Mathf.Clamp01(vanillaChance * bonusMultiplier);
         }
@@ -189,6 +196,18 @@ namespace KRWF.RimKata
 
         public static float CloseMeleeDodgeChance(Pawn target)
         {
+            return CloseMeleeDodgeChanceCore(target, false);
+        }
+
+        internal static float CloseMeleeDodgeChanceVerified(Pawn target)
+        {
+            return CloseMeleeDodgeChanceCore(target, true);
+        }
+
+        private static float CloseMeleeDodgeChanceCore(
+            Pawn target,
+            bool defenseEligibilityVerified)
+        {
             if (target == null || IsMeleeTargetImmobile(target))
             {
                 return 0f;
@@ -211,7 +230,9 @@ namespace KRWF.RimKata
                     StatDefOf.MeleeDodgeChanceIndoorsLitOffset);
             }
 
-            return AddConfiguredMeleeDodgeBonus(target, chance);
+            return defenseEligibilityVerified
+                ? ApplyConfiguredMeleeDodgeBonus(target, chance)
+                : AddConfiguredMeleeDodgeBonus(target, chance);
         }
 
         private static bool IsMeleeTargetImmobile(Thing target)

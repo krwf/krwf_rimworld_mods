@@ -51,6 +51,7 @@ namespace KRWF.RimKata
         public Projectile projectile;
         public Pawn target;
         public bool avoided;
+        public bool suppressJobNotification;
 
         public RimKataTrackedRangedProjectile()
         {
@@ -69,6 +70,9 @@ namespace KRWF.RimKata
             Scribe_References.Look(ref projectile, "projectile");
             Scribe_References.Look(ref target, "target");
             Scribe_Values.Look(ref avoided, "avoided");
+            Scribe_Values.Look(
+                ref suppressJobNotification,
+                "suppressJobNotification");
         }
     }
 
@@ -1712,6 +1716,8 @@ namespace KRWF.RimKata
             }
 
             bool marked = false;
+            bool suppressJobNotification =
+                RimKataEligibility.IsWorkMovementDefenseException(target);
             lock (statesLock)
             {
                 Projectile current =
@@ -1739,7 +1745,13 @@ namespace KRWF.RimKata
 
                     if (tracked.target == target)
                     {
-                        tracked.avoided = true;
+                        if (!tracked.avoided)
+                        {
+                            tracked.avoided = true;
+                            tracked.suppressJobNotification =
+                                suppressJobNotification;
+                        }
+
                         marked = true;
                     }
                 }
@@ -1750,8 +1762,10 @@ namespace KRWF.RimKata
 
         internal bool TryConsumeAvoidedRangedProjectile(
             Projectile projectile,
-            Pawn target)
+            Pawn target,
+            out bool suppressJobNotification)
         {
+            suppressJobNotification = false;
             if (projectile == null || target == null)
             {
                 return false;
@@ -1768,6 +1782,7 @@ namespace KRWF.RimKata
                     return false;
                 }
 
+                suppressJobNotification = tracked.suppressJobNotification;
                 RemoveTrackedRangedProjectile(tracked);
                 return true;
             }
