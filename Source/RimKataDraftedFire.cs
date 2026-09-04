@@ -160,21 +160,29 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!RimKataEligibility.CanBeginGunKataAttack(pawn))
+            bool ordinaryAttackAllowed =
+                RimKataEligibility.CanBeginGunKataAttack(pawn);
+            if (!ordinaryAttackAllowed)
             {
                 if (!existingStateKnown)
                 {
                     state = StateFor(pawn, false);
+                    existingStateKnown = true;
                 }
-                ResetIfActive(pawn, state);
-                return;
+                if (!RimKataDualWeaponController.CanContinueProjectileInterception(
+                        pawn,
+                        state))
+                {
+                    ResetIfActive(pawn, state);
+                    return;
+                }
             }
 
             bool randomAttackEnabled =
                 RimKataMod.Settings?.randomAttackEnabled != false;
 
             bool movementSearch = false;
-            if (automaticRangedFireAllowed)
+            if (automaticRangedFireAllowed && ordinaryAttackAllowed)
             {
                 state ??= StateFor(pawn, true);
                 movementSearch = RimKataDualWeaponController
@@ -202,7 +210,7 @@ namespace KRWF.RimKata
             }
 
             Thing requestedCloseTarget =
-                state.CloseAttackRequestActive
+                ordinaryAttackAllowed && state.CloseAttackRequestActive
                     ? state.closeAttackRequestTarget
                     : null;
             bool closePlayerForced = false;
@@ -216,12 +224,14 @@ namespace KRWF.RimKata
             }
 
             Thing immediateCloseTarget =
-                RimKataDualWeaponController.ResolveImmediateCloseTarget(
-                    pawn,
-                    state,
-                    requestedCloseTarget,
-                    closePlayerForced,
-                    closeKillIncappedTarget);
+                ordinaryAttackAllowed
+                    ? RimKataDualWeaponController.ResolveImmediateCloseTarget(
+                        pawn,
+                        state,
+                        requestedCloseTarget,
+                        closePlayerForced,
+                        closeKillIncappedTarget)
+                    : null;
             bool closeContext = immediateCloseTarget != null;
 
             if (!RimKataDualWeaponController.HasUsableWeapon(
@@ -409,9 +419,6 @@ namespace KRWF.RimKata
 
             if (state.DebugIncomingThreatStored)
                 reasons += "I";
-
-            if (state.DebugAutomaticAttackRequestStored)
-                reasons += "A";
 
             if (state.DebugCloseAttackRequestStored)
                 reasons += "C";

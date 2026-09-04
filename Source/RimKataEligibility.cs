@@ -161,10 +161,21 @@ namespace KRWF.RimKata
 
         public static bool CanBeginGunKataAttack(Pawn pawn)
         {
+            return CanOperateCombatWeapon(pawn)
+                && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn);
+        }
+
+        internal static bool CanUseProjectileInterception(Pawn pawn)
+        {
+            return RimKataMod.Settings?.explosiveInterceptionEnabled != false
+                && CanOperateCombatWeapon(pawn);
+        }
+
+        private static bool CanOperateCombatWeapon(Pawn pawn)
+        {
             return HasActiveRimKataAccess(pawn)
                 && IsConsciousAndMobile(pawn)
-                && !pawn.WorkTagIsDisabled(WorkTags.Violent)
-                && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn);
+                && !pawn.WorkTagIsDisabled(WorkTags.Violent);
         }
 
         public static bool TryGetEnabledCombatVerb(Pawn pawn, out Verb verb)

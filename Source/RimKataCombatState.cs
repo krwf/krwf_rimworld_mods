@@ -368,8 +368,6 @@ namespace KRWF.RimKata
         public int pendingMeleeThreatClearTick = -1;
         public Thing closeAttackRequestTarget;
         public bool closeAttackRequestFromAttackGizmo;
-        public Thing automaticAttackRequestTarget;
-        public int automaticAttackRequestTicksRemaining;
         internal bool temporaryInactive;
         internal bool temporaryInactivityCleanupPending;
 
@@ -421,13 +419,9 @@ namespace KRWF.RimKata
         public bool IncomingThreatActive => IsIncomingThreatActive();
         public bool MeleeThreatClearPending => pendingMeleeThreatClearTick >= 0;
         public bool CloseAttackRequestActive => IsCloseAttackRequestActive();
-        public bool AutomaticAttackRequestActive => IsAutomaticAttackRequestActive();
         public bool DebugIncomingThreatStored => incomingThreatSource != null;
         public bool DebugCloseAttackRequestStored =>
             closeAttackRequestTarget != null;
-        public bool DebugAutomaticAttackRequestStored =>
-            automaticAttackRequestTarget != null
-            && automaticAttackRequestTicksRemaining > 0;
         public bool Active => VisualActive
             || RangedDodgeDelayActive
             || DeflectionActive
@@ -449,7 +443,6 @@ namespace KRWF.RimKata
             || IncomingThreatActive
             || MeleeThreatClearPending
             || CloseAttackRequestActive
-            || AutomaticAttackRequestActive
             || sharedTargetSearch?.KeepsCombatAlive == true
             || dedicatedFollowupJobPending
             || weaponSwapPending;
@@ -577,8 +570,6 @@ namespace KRWF.RimKata
             Scribe_Values.Look(
                 ref closeAttackRequestFromAttackGizmo,
                 "closeAttackRequestFromAttackGizmo");
-            Scribe_References.Look(ref automaticAttackRequestTarget, "automaticAttackRequestTarget");
-            Scribe_Values.Look(ref automaticAttackRequestTicksRemaining, "automaticAttackRequestTicksRemaining");
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
@@ -664,16 +655,6 @@ namespace KRWF.RimKata
             if (closeAttackRequestTarget != null && !IsCloseAttackRequestActive())
             {
                 ClearCloseAttackRequest();
-            }
-
-            if (automaticAttackRequestTarget != null && !IsAutomaticAttackRequestActive())
-            {
-                automaticAttackRequestTarget = null;
-                automaticAttackRequestTicksRemaining = 0;
-            }
-            else if (automaticAttackRequestTicksRemaining > 0)
-            {
-                automaticAttackRequestTicksRemaining--;
             }
 
             if (visualState == RimKataVisualState.Tumble
@@ -1095,25 +1076,6 @@ namespace KRWF.RimKata
             };
         }
 
-        public void SetDraftedCooldown(int ticks, bool keepLonger = false)
-        {
-            UpdateDraftedCooldown();
-            int newTicks = Mathf.Max(0, ticks);
-            draftedCooldownTicksRemaining = keepLonger
-                ? Mathf.Max(draftedCooldownTicksRemaining, newTicks)
-                : newTicks;
-            draftedCooldownLastTick = CurrentGameTick;
-        }
-
-        public int TakeDraftedCooldown()
-        {
-            UpdateDraftedCooldown();
-            int ticks = draftedCooldownTicksRemaining;
-            draftedCooldownTicksRemaining = 0;
-            draftedCooldownLastTick = CurrentGameTick;
-            return ticks;
-        }
-
         public void UpdateDraftedCooldown()
         {
             int currentTick = CurrentGameTick;
@@ -1217,8 +1179,6 @@ namespace KRWF.RimKata
             dualCloseTarget = null;
             engagementOwnerWeapon = null;
             ClearCloseAttackRequest();
-            automaticAttackRequestTarget = null;
-            automaticAttackRequestTicksRemaining = 0;
             ClearDedicatedFollowupJobRequest();
             dedicatedContinuityTarget = null;
             dedicatedContinuityUntilTick = -1;
@@ -1352,15 +1312,6 @@ namespace KRWF.RimKata
             closeAttackRequestFromAttackGizmo = false;
         }
 
-        public void RequestAutomaticAttack(Thing target)
-        {
-            if (target != null)
-            {
-                automaticAttackRequestTarget = target;
-                automaticAttackRequestTicksRemaining = RimKataCombatTuning.CombatRequestGraceTicks;
-            }
-
-        }
         private bool IsIncomingThreatActive()
         {
             Pawn attacker = incomingThreatSource;
@@ -1422,28 +1373,6 @@ namespace KRWF.RimKata
                     || ((RimKataTargeting.IsAutomaticEnemy(pawn, target)
                             || forcedAttackRequest)
                         && pawn.CanReachImmediate(target, PathEndMode.Touch)));
-        }
-
-        private bool IsAutomaticAttackRequestActive()
-        {
-            Thing target = automaticAttackRequestTarget;
-
-            if (target is Pawn targetPawn
-                && !RimKataTargeting.IsPawnTargetStateValid(targetPawn))
-            {
-                return false;
-            }
-            return pawn != null
-                && target != null
-                && automaticAttackRequestTicksRemaining > 0
-                && !pawn.Dead
-                && !target.Destroyed
-                && pawn.Spawned
-                && target.Spawned
-                && pawn.Map == target.Map
-                && (RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                    || (pawn.CurJob?.playerForced == true
-                        && pawn.CurJob.targetA.Thing == target));
         }
 
         public void CancelOffenseForFire()
@@ -1513,6 +1442,9 @@ namespace KRWF.RimKata
         private float observedWeatherMaxRangeCap;
         private int weatherRangeRevision;
         private int lastWeatherRangeCheckTick = int.MinValue;
+
+        internal bool HasActiveExplosiveProjectiles =>
+            activeExplosiveProjectiles.Count > 0;
 
         internal int WeatherRangeRevision
         {
@@ -2237,7 +2169,7 @@ namespace KRWF.RimKata
             {
                 Pawn pawn = projectileWakeTraversal[
                     projectileWakeTraversalIndex++];
-                bool hostileProjectile = pawn?.IsPlayerControlled == true
+                bool hostileProjectile = pawn != null
                     && HasHostileExplosiveProjectileOnMapFor(pawn);
                 if (hostileProjectile)
                 {
@@ -2385,7 +2317,7 @@ namespace KRWF.RimKata
             for (int i = 0; i < pawns.Count; i++)
             {
                 Pawn pawn = pawns[i];
-                if (pawn?.IsPlayerControlled == true
+                if (RimKataDualWeaponController.CanReceiveProjectileWake(pawn)
                     && RimKataEligibility.HasRimKataAccess(pawn))
                 {
                     projectileWakeTraversal.Add(pawn);
@@ -2599,31 +2531,6 @@ namespace KRWF.RimKata
                 && indexed == state)
             {
                 statesByPawn.Remove(state.pawn);
-            }
-        }
-
-        public bool BeginVisualState(Pawn pawn, RimKataVisualState visualState, int durationTicks, IntVec3 dodgeDirection)
-        {
-            lock (statesLock)
-            {
-                RimKataPawnCombatState state = GetState(pawn, true);
-                if (state.DodgeVisualLocked)
-                {
-                    return false;
-                }
-
-                state.visualState = visualState;
-                state.ticksRemaining = Mathf.Max(1, durationTicks);
-                state.totalTicks = state.ticksRemaining;
-                state.dodgeDirection = dodgeDirection;
-                if (!state.AdditionalTumbleActive)
-                {
-                    state.tumbleSign = Rand.Bool ? 1 : -1;
-                }
-                RimKataResponseVisualParticipantCache
-                    .RefreshBodyVisual(state);
-
-                return true;
             }
         }
 
@@ -3203,27 +3110,11 @@ namespace KRWF.RimKata
             }
         }
 
-        public void ExitCloseCombat(Pawn pawn)
-        {
-            lock (statesLock)
-            {
-                GetState(pawn, false)?.CancelCloseCombat();
-            }
-        }
-
         public bool IsCloseCombatActive(Pawn pawn)
         {
             lock (statesLock)
             {
                 return GetState(pawn, false)?.CloseCombatActive == true;
-            }
-        }
-
-        public int DeflectionTicksRemaining(Pawn pawn)
-        {
-            lock (statesLock)
-            {
-                return GetState(pawn, false)?.deflectionTicksRemaining ?? 0;
             }
         }
     }

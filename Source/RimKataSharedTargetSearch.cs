@@ -271,9 +271,13 @@ namespace KRWF.RimKata
             bool randomAttack = RandomAttackEnabled(pawn);
             bool idleProjectilePriority = !randomAttack
                 && combatState.idleProjectileSearchTriggerPending;
+            bool ordinaryWeaponEnabled = !idleProjectilePriority
+                && cycle.weapon != null
+                && RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def);
             if (!randomAttack && !idleProjectilePriority)
             {
-                if (preferredTarget != null
+                if (ordinaryWeaponEnabled
+                    && preferredTarget != null
                     && !(preferredTarget is Projectile))
                 {
                     target = preferredTarget;
@@ -284,7 +288,7 @@ namespace KRWF.RimKata
             }
 
             EligibleCandidates.Clear();
-            if (!idleProjectilePriority)
+            if (!idleProjectilePriority && ordinaryWeaponEnabled)
             {
                 List<Thing> ordinary = cycle.automaticCandidates;
                 for (int i = 0;
@@ -304,16 +308,20 @@ namespace KRWF.RimKata
             if (includeProjectiles
                 && RimKataMod.Settings?.explosiveInterceptionEnabled != false)
             {
-                float projectileRange = ProjectileRangeForCycle(
-                    pawn,
-                    cycle,
-                    verb);
-                pawn.Map.GetComponent<RimKataMapComponent>()?
-                    .AppendValidHostileProjectiles(
+                RimKataMapComponent mapComponent =
+                    pawn.Map.GetComponent<RimKataMapComponent>();
+                if (mapComponent?.HasActiveExplosiveProjectiles == true)
+                {
+                    float projectileRange = ProjectileRangeForCycle(
+                        pawn,
+                        cycle,
+                        verb);
+                    mapComponent.AppendValidHostileProjectiles(
                         pawn,
                         verb,
                         projectileRange * projectileRange,
                         EligibleCandidates);
+                }
             }
 
             if (EligibleCandidates.Count == 0)
@@ -1337,7 +1345,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.Map == null
                 || cycle?.weapon == null
-                || !RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def)
                 || verb == null
                 || verb.IsMeleeAttack
                 || !RimKataDualWeaponController.VerbUsable(

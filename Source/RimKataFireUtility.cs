@@ -1098,10 +1098,11 @@ namespace KRWF.RimKata
                 throw new ArgumentNullException(nameof(harmony));
             }
 
+            // Prefix rewrites the argument by ref; vanilla Impact stays by value.
             MethodInfo prefixMethod = AccessTools.Method(
                 typeof(Patch_Projectile_Impact_Context),
                 nameof(Prefix),
-                new[] { typeof(Projectile), typeof(Thing), typeof(bool) });
+                new[] { typeof(Projectile), typeof(Thing).MakeByRefType(), typeof(bool) });
             MethodInfo finalizerMethod = AccessTools.Method(
                 typeof(Patch_Projectile_Impact_Context),
                 nameof(Finalizer),

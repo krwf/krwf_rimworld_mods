@@ -292,7 +292,7 @@ namespace KRWF.RimKata
                     assignedTarget);
             }
             RimKataDualWeaponController.NotifyDraftedMovementCell(pawn);
-            if (!RimKataEligibility.CanBeginGunKataAttack(pawn))
+            if (!RimKataDualWeaponController.CanContinueWeaponCycles(pawn))
             {
                 EndRimKataJobWith(JobCondition.Succeeded);
                 return;
@@ -884,7 +884,7 @@ namespace KRWF.RimKata
             }
 
             if (newJob?.def == RimKataDefOf.RimKata_Attack
-                && !RimKataEligibility.CanBeginGunKataAttack(___pawn))
+                && !RimKataDualWeaponController.CanContinueWeaponCycles(___pawn))
             {
                 JobMaker.ReturnToPool(newJob);
                 newJob = null;
