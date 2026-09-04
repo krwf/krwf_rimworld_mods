@@ -519,7 +519,7 @@ namespace KRWF.RimKata
             Stance newStance)
         {
             if (!(newStance is Stance_Warmup)
-                && !(newStance is Stance_RimKataLeaningAim))
+                && !(newStance is Stance_RimKataAim))
             {
                 return;
             }

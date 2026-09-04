@@ -1489,6 +1489,22 @@ namespace KRWF.RimKata
                 return;
             }
 
+            if (___pawn?.stances?.curStance
+                    is Stance_RimKataAim movingAim
+                && movingAim.TryGetCachedMovementDirection(
+                    out IntVec3 movementDirection))
+            {
+                Vector3 forward = movementDirection.ToVector3();
+                PawnLeaner leaner = ___pawn.Drawer?.leaner;
+                if (forward.sqrMagnitude > 0.001f && leaner != null)
+                {
+                    forward.Normalize();
+                    Vector3 leanOffset = leaner.LeanOffset;
+                    drawLoc -= forward
+                        * Vector3.Dot(leanOffset, forward);
+                }
+            }
+
             if (!RimKataVisualUtility.TryGetCachedActiveSnapshot(
                     ___pawn,
                     out RimKataVisualSnapshot snapshot))

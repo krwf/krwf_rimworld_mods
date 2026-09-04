@@ -146,8 +146,18 @@ namespace KRWF.RimKata
         }
     }
 
-    public sealed class Stance_RimKataAim : Stance_RimKataLeaningAim
+    public sealed class Stance_RimKataAim : Stance_Busy
     {
+        private bool leanCacheInitialized;
+        private IntVec3 lastLeanRoot = IntVec3.Invalid;
+        private IntVec3 lastLeanTargetCell = IntVec3.Invalid;
+        private Thing lastLeanTargetThing;
+        private Verb lastLeanVerb;
+        private bool lastLeanTargetUsable;
+        private volatile int cachedMovementDirectionCode;
+
+        public override bool StanceBusy => false;
+
         public Stance_RimKataAim()
         {
         }
@@ -157,6 +167,93 @@ namespace KRWF.RimKata
         {
         }
 
+        public override void StanceTick()
+        {
+            RefreshLeanNow();
+            base.StanceTick();
+        }
+
+        internal bool TryGetCachedMovementDirection(out IntVec3 direction)
+        {
+            int code = cachedMovementDirectionCode;
+            if (code == 0)
+            {
+                direction = IntVec3.Invalid;
+                return false;
+            }
+
+            int packed = code - 1;
+            direction = new IntVec3(
+                packed / 3 - 1,
+                0,
+                packed % 3 - 1);
+            return direction != IntVec3.Zero;
+        }
+
+        public void RefreshLeanNow()
+        {
+            Pawn pawn = Pawn;
+            int movementDirectionCode = 0;
+            if (pawn?.Spawned == true
+                && RimKataDodgeMovementUtility.TryGetCurrentMovementDirection(
+                    pawn,
+                    out IntVec3 movementDirection)
+                && movementDirection != IntVec3.Zero)
+            {
+                movementDirectionCode = (movementDirection.x + 1) * 3
+                    + movementDirection.z
+                    + 2;
+            }
+
+            cachedMovementDirectionCode = movementDirectionCode;
+            IntVec3 root = pawn?.Spawned == true
+                ? pawn.Position
+                : IntVec3.Invalid;
+            IntVec3 targetCell = focusTarg.IsValid
+                ? focusTarg.Cell
+                : IntVec3.Invalid;
+            Thing targetThing = focusTarg.HasThing
+                ? focusTarg.Thing
+                : null;
+            bool targetUsable = targetThing == null
+                || (targetThing.Spawned && targetThing.Map == pawn?.Map);
+            bool targetCellChanged = targetThing == null
+                && targetCell != lastLeanTargetCell;
+            if (leanCacheInitialized
+                && root == lastLeanRoot
+                && !targetCellChanged
+                && targetThing == lastLeanTargetThing
+                && verb == lastLeanVerb
+                && targetUsable == lastLeanTargetUsable)
+            {
+                return;
+            }
+
+            leanCacheInitialized = true;
+            lastLeanRoot = root;
+            lastLeanTargetCell = targetCell;
+            lastLeanTargetThing = targetThing;
+            lastLeanVerb = verb;
+            lastLeanTargetUsable = targetUsable;
+
+            if (pawn?.Spawned != true || pawn.Drawer == null)
+            {
+                return;
+            }
+
+            if (!targetUsable
+                || verb == null
+                || !focusTarg.IsValid
+                || !verb.TryFindShootLineFromTo(
+                    root,
+                    focusTarg,
+                    out ShootLine line))
+            {
+                line = new ShootLine(root, root);
+            }
+
+            pawn.Drawer.Notify_WarmingCastAlongLine(line, root);
+        }
     }
 
     public sealed class JobDriver_RimKataAttack : JobDriver, IRimKataResponseCooldown

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Defs>
   <GeneDef MayRequire="Ludeon.RimWorld.Biotech">
-    <defName>RimKata_Gene</defName>
+    <defName>RimKata_G</defName>
     <label>RimKata-G</label>
     <labelShortAdj>RimKata-G</labelShortAdj>
     <description>Predicts and responds to close-range gunfights. Enables the use of RimKata.</description>

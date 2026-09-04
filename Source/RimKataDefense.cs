@@ -682,7 +682,7 @@ namespace KRWF.RimKata
             {
                 if (defender.Spawned)
                 {
-                    if (defender.stances?.curStance is Stance_RimKataLeaningAim)
+                    if (defender.stances?.curStance is Stance_RimKataAim)
                     {
                         defender.stances.SetStance(new Stance_Mobile());
                     }
