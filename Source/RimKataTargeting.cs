@@ -6,6 +6,7 @@ using RimWorld;
 using UnityEngine;
 using Verse;
 using Verse.AI;
+using Verse.Sound;
 
 namespace KRWF.RimKata
 {
@@ -26,11 +27,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Faction pawnFaction = pawn.Faction;
-            Faction targetFaction = target.Faction;
-            return pawnFaction == null
-                || targetFaction == null
-                || pawnFaction.HostileTo(targetFaction);
+            return true;
         }
 
         public static bool IsCombatCapableCrawling(Pawn pawn)
@@ -140,17 +137,9 @@ namespace KRWF.RimKata
             IntVec3 cell = projectile.ExactPosition.ToIntVec3();
             if (!cell.InBounds(pawn.Map)
                 || pawn.Position.DistanceToSquared(cell) > rangeSquared
-                || !verb.TryFindShootLineFromTo(pawn.Position, cell, out ShootLine line))
+                || !verb.TryFindShootLineFromTo(pawn.Position, cell, out _))
             {
                 return false;
-            }
-
-            foreach (IntVec3 point in line.Points())
-            {
-                if (point.AnyGas(pawn.Map, GasType.BlindSmoke))
-                {
-                    return false;
-                }
             }
 
             return true;
@@ -222,51 +211,91 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (!RimKataCombatMath.RollConfiguredChance(pawn, RimKataChanceKind.ExplosiveInterception))
+            Map impactMap = projectile.Map;
+            Vector3 impactPosition = projectile.ExactPosition;
+            float impactAngle = projectile.ExactRotation.eulerAngles.y;
+            IntVec3 currentCell = impactPosition.ToIntVec3();
+            if (impactMap == null || !currentCell.InBounds(impactMap))
             {
                 return false;
             }
 
-            bool detonateAtCurrentPosition = Rand.Chance(RimKataMod.Settings?.GetInterceptionCriticalChance(pawn) ?? 0f);
+            bool critical = Rand.Chance(
+                RimKataMod.Settings?.GetInterceptionCriticalChance(pawn) ?? 0f);
+            bool isGrenade = RimKataDefOf.Grenades != null
+                && projectile.EquipmentDef?.IsWithinCategory(RimKataDefOf.Grenades) == true;
+            IntVec3 impactCell = currentCell;
 
-            IntVec3 currentCell = projectile.ExactPosition.ToIntVec3();
-            if (!currentCell.InBounds(projectile.Map))
+            if (!critical)
             {
-                return false;
-            }
+                List<IntVec3> cells = GenAdj.AdjacentCellsAndInside
+                    .Select(offset => currentCell + offset)
+                    .Where(cell => cell.InBounds(impactMap))
+                    .ToList();
 
-            if (detonateAtCurrentPosition)
-            {
-                if (!RimKataProjectileUtility.PrepareImmediateImpact(
-                        projectile,
-                        currentCell))
+                if (cells.Count == 0)
                 {
                     return false;
                 }
 
-                RimKataProjectileUtility.DetonateNow(projectile);
-                return true;
+                impactCell = cells.RandomElement();
             }
 
-            List<IntVec3> cells = GenAdj.AdjacentCellsAndInside
-                .Select(offset => currentCell + offset)
-                .Where(cell => cell.InBounds(projectile.Map))
-                .ToList();
-
-            if (cells.Count == 0)
+            if (critical && !isGrenade)
             {
-                return false;
+                projectile.Destroy(DestroyMode.Vanish);
+                if (!projectile.Destroyed)
+                {
+                    return false;
+                }
             }
-
-            IntVec3 impactCell = cells.RandomElement();
-
-            if (!RimKataProjectileUtility.PrepareImmediateImpact(projectile, impactCell))
+            else
             {
-                return false;
+                if (!RimKataProjectileUtility.PrepareImmediateImpact(
+                        projectile,
+                        impactCell))
+                {
+                    return false;
+                }
+
+                if (critical)
+                {
+                    RimKataProjectileUtility.DetonateNow(projectile);
+                }
+                else
+                {
+                    RimKataProjectileUtility.Impact(projectile, null);
+                }
             }
 
-            RimKataProjectileUtility.Impact(projectile, null);
+            PlaySuccessEffect(impactMap, impactPosition, impactAngle);
             return true;
+        }
+
+        private static void PlaySuccessEffect(
+            Map map,
+            Vector3 position,
+            float velocityAngle)
+        {
+            Rand.PushState();
+            try
+            {
+                RimKataDefOf.BulletImpact_Metal.PlayOneShot(
+                    new TargetInfo(position.ToIntVec3(), map));
+
+                FleckCreationData data = FleckMaker.GetDataStatic(
+                    position,
+                    map,
+                    FleckDefOf.MicroSparksFast,
+                    1f);
+                data.velocityAngle = velocityAngle;
+                data.velocitySpeed = 0.8f;
+                map.flecks.CreateFleck(data);
+            }
+            finally
+            {
+                Rand.PopState();
+            }
         }
     }
 }

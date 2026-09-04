@@ -428,7 +428,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.InMentalState == true)
             {
-                CancelOffenseForMentalState(pawn);
                 return;
             }
 
@@ -1181,12 +1180,69 @@ namespace KRWF.RimKata
 
         public static void QueueIdleProjectileSearch(Pawn pawn)
         {
-            if (!CanAcceptIdleProjectileSearch(pawn))
+            if (pawn?.Map == null
+                || !pawn.Spawned
+                || pawn.Dead
+                || pawn.Downed
+                || !pawn.Awake()
+                || pawn.InMentalState
+                || pawn.IsBurning()
+                || !pawn.IsPlayerControlled
+                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
             {
                 return;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
+            bool moving = pawn.pather?.MovingNow == true;
+            Job currentJob = pawn.CurJob;
+            if (pawn.Drafted)
+            {
+                if (pawn.drafter?.FireAtWill != true || moving)
+                {
+                    return;
+                }
+            }
+            else if (currentJob?.playerForced == true
+                || pawn.carryTracker?.CarriedThing != null)
+            {
+                return;
+            }
+
+            JobDef jobDef = pawn.CurJobDef;
+            if (!moving
+                && jobDef != JobDefOf.Wait
+                && jobDef != JobDefOf.Wait_Combat
+                && jobDef?.defName != "Wait_MaintainPosture"
+                && jobDef?.defName != "GotoWander"
+                && jobDef?.defName != "Wait_Wander")
+            {
+                return;
+            }
+
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state != null)
+            {
+                NormalizeInvalidInterceptionState(pawn, state);
+            }
+            if (HasCombatContinuity(pawn, state))
+            {
+                return;
+            }
+
+            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            ThingWithComps secondary =
+                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
+                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
+                    : null;
+            Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
+            Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
+            if (!(primaryVerb is Verb_LaunchProjectile)
+                && !(secondaryVerb is Verb_LaunchProjectile))
+            {
+                return;
+            }
+
+            state ??= StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
             state.QueueIdleProjectileSearchTrigger();
             TryCacheSharedCandidate(
@@ -1222,68 +1278,6 @@ namespace KRWF.RimKata
             {
                 state.projectileWakeResumeJob = null;
             }
-        }
-
-        public static bool CanAcceptIdleProjectileSearch(Pawn pawn)
-        {
-            if (pawn?.Map == null
-                || !pawn.Spawned
-                || pawn.Dead
-                || pawn.Downed
-                || !pawn.Awake()
-                || pawn.InMentalState
-                || pawn.IsBurning()
-                || !pawn.IsPlayerControlled
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
-            {
-                return false;
-            }
-
-            bool moving = pawn.pather?.MovingNow == true;
-            Job currentJob = pawn.CurJob;
-            if (pawn.Drafted)
-            {
-                if (pawn.drafter?.FireAtWill != true || moving)
-                {
-                    return false;
-                }
-            }
-            else if (currentJob?.playerForced == true
-                || pawn.carryTracker?.CarriedThing != null)
-            {
-                return false;
-            }
-
-            JobDef jobDef = pawn.CurJobDef;
-            if (!moving
-                && jobDef != JobDefOf.Wait
-                && jobDef != JobDefOf.Wait_Combat
-                && jobDef?.defName != "Wait_MaintainPosture"
-                && jobDef?.defName != "GotoWander"
-                && jobDef?.defName != "Wait_Wander")
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state != null)
-            {
-                NormalizeInvalidInterceptionState(pawn, state);
-            }
-            if (HasCombatContinuity(pawn))
-            {
-                return false;
-            }
-
-            ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
-            ThingWithComps secondary =
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
-                    : null;
-            Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
-            Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
-            return primaryVerb is Verb_LaunchProjectile
-                || secondaryVerb is Verb_LaunchProjectile;
         }
 
         private static bool MovementSearchInProgress(RimKataPawnCombatState state)
@@ -1655,10 +1649,6 @@ namespace KRWF.RimKata
                 || attempt.weapon == null
                 || attempt.target == null)
             {
-                if (pawn?.InMentalState == true)
-                {
-                    CancelOffenseForMentalState(pawn);
-                }
                 return;
             }
 
@@ -2471,7 +2461,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.InMentalState == true)
             {
-                CancelOffenseForMentalState(pawn);
                 return;
             }
 
@@ -2588,7 +2577,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.InMentalState == true)
             {
-                CancelOffenseForMentalState(pawn);
                 return;
             }
 
@@ -2628,7 +2616,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.InMentalState == true)
             {
-                CancelOffenseForMentalState(pawn);
                 return;
             }
 
@@ -3754,15 +3741,15 @@ namespace KRWF.RimKata
             RearmOpeningOwnerIfBothWaiting(state);
         }
 
-        public static void CancelOffenseForMentalState(Pawn pawn)
+        public static void CancelOffenseForMentalState(
+            Pawn pawn,
+            RimKataPawnCombatState state)
         {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (state == null || state.mentalStateOffenseSuppressed)
+            if (state == null)
             {
                 return;
             }
 
-            state.mentalStateOffenseSuppressed = true;
             state.CancelDraftedFire(false);
             state.ClearDraftedMovementSearchTracking();
             state.CancelCloseCombat();
@@ -5708,7 +5695,7 @@ namespace KRWF.RimKata
         {
             if (cycle.plannedInterception && cycle.plannedTarget is Projectile projectile)
             {
-                return new LocalTargetInfo(projectile.ExactPosition.ToIntVec3());
+                return new LocalTargetInfo(projectile);
             }
 
             return cycle.plannedTarget != null

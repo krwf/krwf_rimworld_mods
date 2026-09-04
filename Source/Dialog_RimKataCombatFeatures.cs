@@ -156,7 +156,7 @@ namespace KRWF.RimKata
 
             if (changed)
             {
-                RimKataWeaponSlotUtility.NotifyCombatFeaturesChanged();
+                RimKataMod.ApplyCombatFeatureSettingsChange();
             }
         }
 
@@ -186,7 +186,7 @@ namespace KRWF.RimKata
                 : "KRWF_RimKata_RestoreRestrictionsConfirmation").Translate();
             Find.WindowStack.Add(Dialog_MessageBox.CreateConfirmation(
                 message,
-                delegate{ settings.accessRestrictionsDisabled = disableRestrictions; RimKataWeaponSlotUtility.NotifyCombatFeaturesChanged();}, false, null, WindowLayer.Dialog));
+                delegate{ settings.accessRestrictionsDisabled = disableRestrictions; RimKataMod.ApplyEligibilitySettingsChange();}, false, null, WindowLayer.Dialog));
         }
     }
 }

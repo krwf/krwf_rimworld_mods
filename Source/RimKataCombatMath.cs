@@ -8,8 +8,7 @@ namespace KRWF.RimKata
     {
         RangedDodge,
         MeleeResponse,
-        MeleeDodge,
-        ExplosiveInterception
+        MeleeDodge
     }
 
     public static class RimKataCombatMath
@@ -33,9 +32,6 @@ namespace KRWF.RimKata
                     break;
                 case RimKataChanceKind.MeleeDodge:
                     baseChance = settings.GetMeleeDodgeChance(pawn);
-                    break;
-                case RimKataChanceKind.ExplosiveInterception:
-                    baseChance = settings.GetInterceptionChance(pawn);
                     break;
                 default:
                     baseChance = 0f;
@@ -64,24 +60,10 @@ namespace KRWF.RimKata
                     case RimKataChanceKind.MeleeResponse:
                         multiplier = settings.GetSerumResponseMultiplier(pawn);
                         break;
-                    case RimKataChanceKind.ExplosiveInterception:
-                        multiplier = settings.GetSerumInterceptionMultiplier(pawn);
-                        break;
                 }
             }
 
             return Mathf.Clamp01(baseChance * multiplier);
-        }
-
-        public static float MovingHitChance(Pawn pawn, float vanillaFinalHitChance)
-        {
-            float multiplier = RimKataMod.Settings?.GetMovingAccuracyMultiplier(pawn) ?? 1f;
-            return Mathf.Clamp01(vanillaFinalHitChance * multiplier);
-        }
-
-        public static bool MovingAccuracyIsModified(Pawn pawn)
-        {
-            return !Mathf.Approximately(RimKataMod.Settings?.GetMovingAccuracyMultiplier(pawn) ?? 1f, 1f);
         }
 
         public static bool RollCloseMeleeNonMiss(Pawn attacker, Thing target)

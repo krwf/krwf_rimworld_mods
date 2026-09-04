@@ -966,11 +966,7 @@ namespace KRWF.RimKata
                 IReadOnlyList<Pawn> pawns = maps[mapIndex].mapPawns.AllPawnsSpawned;
                 for (int pawnIndex = pawns.Count - 1; pawnIndex >= 0; pawnIndex--)
                 {
-                    Pawn pawn = pawns[pawnIndex];
-                    if (RimKataEligibilityCache.IsRegisteredUser(pawn))
-                    {
-                        ValidateLoadout(pawn);
-                    }
+                    ValidateLoadout(pawns[pawnIndex]);
                 }
             }
         }
@@ -989,11 +985,6 @@ namespace KRWF.RimKata
                 for (int pawnIndex = pawns.Count - 1; pawnIndex >= 0; pawnIndex--)
                 {
                     Pawn pawn = pawns[pawnIndex];
-                    if (!RimKataEligibilityCache.IsRegisteredUser(pawn))
-                    {
-                        continue;
-                    }
-
                     ValidateLoadout(pawn);
                     RimKataDualWeaponController.Reset(pawn, true);
                 }
@@ -2405,6 +2396,7 @@ namespace KRWF.RimKata
                     option.method = WrapPrimaryWeaponOption(
                         pawn,
                         option.method);
+                    __result[i] = option;
                 }
             }
 

@@ -126,7 +126,10 @@ namespace KRWF.RimKata
                 pawn,
                 combatState,
                 combatState.secondaryWeaponCycle);
-            RimKataDebugHUD.RecordSearchIndicator(pawn);
+            if (Prefs.DevMode && RimKataDebugHUD.Enabled)
+            {
+                RimKataDebugHUD.RecordSearchIndicator(pawn);
+            }
             return true;
         }
 
@@ -209,12 +212,15 @@ namespace KRWF.RimKata
                 innerRadius,
                 outerRadius,
                 outerRing);
-            RimKataDebugHUD.RecordActualSearchRing(
-                pawn,
-                pawn.Map,
-                center,
-                innerRadius,
-                outerRadius);
+            if (Prefs.DevMode && RimKataDebugHUD.SearchRangeEnabled)
+            {
+                RimKataDebugHUD.RecordActualSearchRing(
+                    pawn,
+                    pawn.Map,
+                    center,
+                    innerRadius,
+                    outerRadius);
+            }
 
             search.completedRing = outerRing;
             UpdateCollectionClosure(

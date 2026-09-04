@@ -16,6 +16,8 @@ namespace KRWF.RimKata
         public static JobDef RimKata_Attack;
         public static JobDef RimKata_EquipSecondary;
         public static RulePackDef RimKata_ParryBattleLog;
+        public static ThingCategoryDef Grenades;
+        public static SoundDef BulletImpact_Metal;
 
         static RimKataDefOf()
         {

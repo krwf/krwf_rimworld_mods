@@ -1,5 +1,7 @@
 using System;
 using System.Runtime.CompilerServices;
+using HarmonyLib;
+using RimWorld;
 using UnityEngine;
 using Verse;
 
@@ -405,6 +407,16 @@ namespace KRWF.RimKata
         private static float NormalizeBoundary(float value)
         {
             return Mathf.Round(value * 1000f) / 1000f;
+        }
+    }
+
+    [HarmonyPatch(typeof(WeatherManager), nameof(WeatherManager.TransitionTo), new[] { typeof(WeatherDef) })]
+    public static class Patch_WeatherManager_RimKataRangeRevision
+    {
+        public static void Postfix(WeatherManager __instance)
+        {
+            __instance?.map?.GetComponent<RimKataMapComponent>()?
+                .RefreshWeatherRangeRevision(true);
         }
     }
 }

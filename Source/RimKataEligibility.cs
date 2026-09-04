@@ -7,12 +7,28 @@ namespace KRWF.RimKata
     {
         public static bool HasRimKataAccess(Pawn pawn)
         {
-            if (pawn == null || !FactionEffectsEnabled(pawn))
+            if (pawn == null)
             {
                 return false;
             }
 
-            if (RimKataMod.Settings?.accessRestrictionsDisabled == true)
+            bool accessRestrictionsDisabled =
+                RimKataMod.Settings?.accessRestrictionsDisabled == true;
+            if (!accessRestrictionsDisabled
+                && RimKataEligibilityCache.TryGetCachedAccess(
+                    pawn,
+                    out bool cachedAccess)
+                && !cachedAccess)
+            {
+                return false;
+            }
+
+            if (!FactionEffectsEnabled(pawn))
+            {
+                return false;
+            }
+
+            if (accessRestrictionsDisabled)
             {
                 return true;
             }
@@ -44,6 +60,12 @@ namespace KRWF.RimKata
             if (settings == null)
             {
                 return true;
+            }
+
+            if (settings.enableFriendlyPawnEffects
+                == settings.enableHostilePawnEffects)
+            {
+                return settings.enableFriendlyPawnEffects;
             }
 
             bool hostileToPlayer = IsHostileToPlayerFaction(pawn);

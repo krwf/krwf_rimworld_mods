@@ -47,7 +47,7 @@ namespace KRWF.RimKata
         private static HediffDef psychicBondDef;
         private static bool anomalyDefsResolved;
 
-        // !!! Debug HUD !!!
+        // Read-only cache probe. A miss must not resolve a previously unseen Pawn.
         public static bool TryGetCachedAccess(
             Pawn pawn,
             out bool cachedAccess)

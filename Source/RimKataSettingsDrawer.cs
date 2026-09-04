@@ -250,7 +250,7 @@ namespace KRWF.RimKata
                 ref settings.interceptionChanceFixed, ref settings.interceptionChancePercent, ref buffers.interceptionChance,
                 ref settings.interceptionChanceGrowthPerLevelPercent, ref buffers.interceptionChanceGrowth,
                 ref settings.interceptionChanceMinimumPercent, ref buffers.interceptionChanceMinimum,
-                100f, 100f, showMinimum);
+                float.MaxValue, float.MaxValue, showMinimum, float.MaxValue);
             DrawFloatRow(viewRect.width, ref y, "KRWF_RimKata_InterceptionCriticalChance", SkillDefOf.Shooting,
                 ref settings.interceptionCriticalChanceFixed, ref settings.interceptionCriticalChancePercent, ref buffers.interceptionCriticalChance,
                 ref settings.interceptionCriticalChanceGrowthPerLevelPercent, ref buffers.interceptionCriticalChanceGrowth,
@@ -295,7 +295,7 @@ namespace KRWF.RimKata
                 ref settings.serumResponseMultiplierGrowthPerLevelPercent, ref buffers.serumResponseMultiplierGrowth,
                 ref settings.serumResponseMultiplierMinimumPercent, ref buffers.serumResponseMultiplierMinimum,
                 MaximumMultiplierPercent, MaximumMultiplierPercent, showMinimum);
-            DrawFloatRow(viewRect.width, ref y, "KRWF_RimKata_SerumInterceptionMultiplier", SkillDefOf.Melee,
+            DrawFloatRow(viewRect.width, ref y, "KRWF_RimKata_SerumInterceptionMultiplier", SkillDefOf.Shooting,
                 ref settings.serumInterceptionMultiplierFixed, ref settings.serumInterceptionMultiplierPercent, ref buffers.serumInterceptionMultiplier,
                 ref settings.serumInterceptionMultiplierGrowthPerLevelPercent, ref buffers.serumInterceptionMultiplierGrowth,
                 ref settings.serumInterceptionMultiplierMinimumPercent, ref buffers.serumInterceptionMultiplierMinimum,
@@ -308,7 +308,7 @@ namespace KRWF.RimKata
             {
                 settings.ResetNumericDefaults();
                 buffers.SyncFrom(settings);
-                RimKataWeaponSlotUtility.NotifyCombatFeaturesChanged();
+                RimKataMod.ApplyCombatFeatureSettingsChange();
             }
             string opButtonLabel = settings.OpProfileActive
                 ? "KRWF_RimKata_OpOff".Translate()
@@ -319,7 +319,7 @@ namespace KRWF.RimKata
             {
                 settings.ToggleOpProfile();
                 buffers.SyncFrom(settings);
-                RimKataWeaponSlotUtility.NotifyCombatFeaturesChanged();
+                RimKataMod.ApplyCombatFeatureSettingsChange();
             }
 
             Widgets.EndScrollView();

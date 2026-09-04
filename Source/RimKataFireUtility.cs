@@ -3,7 +3,6 @@ using RimWorld;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using UnityEngine;
 using Verse;
 
@@ -114,49 +113,50 @@ namespace KRWF.RimKata
 
     public static class RimKataInterceptionShotRegistry
     {
-        private sealed class Entry
-        {
-            public Pawn shooter;
-            public Projectile targetProjectile;
-        }
-
-        private static readonly ConditionalWeakTable<Projectile, Entry> entries = new ConditionalWeakTable<Projectile, Entry>();
-
         public static void Register(
             Projectile shot,
-            Pawn shooter,
             Projectile targetProjectile)
         {
             if (shot == null
-                || shooter == null
-                || targetProjectile == null)
+                || targetProjectile == null
+                || shot.Map == null)
             {
                 return;
             }
 
-            entries.Remove(shot);
-            entries.Add(shot, new Entry{shooter = shooter, targetProjectile = targetProjectile});
+            shot.Map.GetComponent<RimKataMapComponent>()?
+                .RegisterInterceptionShot(shot, targetProjectile);
         }
 
-        public static bool TryResolve(Projectile shot)
+        public static bool TryResolve(
+            Projectile shot,
+            Thing hitThing,
+            bool blockedByShield)
         {
-            if (shot == null
-                || !entries.TryGetValue(shot, out Entry entry))
+            RimKataMapComponent component =
+                shot?.Map?.GetComponent<RimKataMapComponent>();
+            if (component == null
+                || !component.TryTakeInterceptionTarget(
+                    shot,
+                    out Projectile target))
             {
                 return false;
             }
 
-            entries.Remove(shot);
+            if (blockedByShield || hitThing != target)
+            {
+                return false;
+            }
 
-            Projectile target = entry.targetProjectile;
-            if (entry.shooter?.Map == null
-                || target?.Map != entry.shooter.Map
+            Pawn shooter = shot.Launcher as Pawn;
+            if (shooter?.Map == null
+                || target?.Map != shooter.Map
                 || !RimKataTargeting.IsInterceptionTargetActive(target))
             {
                 return false;
             }
 
-            return RimKataInterceptionUtility.Resolve(entry.shooter, target);
+            return RimKataInterceptionUtility.Resolve(shooter, target);
         }
     }
 
@@ -174,15 +174,16 @@ namespace KRWF.RimKata
             private Verb activeVerb;
             private Pawn shooter;
             private Thing closeTarget;
-            private bool movingShot;
             private bool closeShot;
             private bool closeMeleeResolution;
             private bool closeMeleeHit;
             private bool interceptionShot;
             private Projectile interceptionTarget;
+            private float movingAccuracyMultiplier;
+            private float interceptionAccuracyBonusMultiplier;
+            private float serumInterceptionMultiplier;
             private int originalBurstCount;
             private bool shotFired;
-            private bool computingMovingFinalChance;
             private bool suppressCloseLaunch;
             private RimKataCloseDefensePrecheck closeDefensePrecheck;
             private RimKataDefenseUtility.CloseAttackResolutionState defenseState;
@@ -195,15 +196,16 @@ namespace KRWF.RimKata
                     activeVerb = ActiveVerb,
                     shooter = Shooter,
                     closeTarget = CloseTarget,
-                    movingShot = MovingShot,
                     closeShot = CloseShot,
                     closeMeleeResolution = CloseMeleeResolution,
                     closeMeleeHit = CloseMeleeHit,
                     interceptionShot = InterceptionShot,
                     interceptionTarget = InterceptionTarget,
+                    movingAccuracyMultiplier = MovingAccuracyMultiplier,
+                    interceptionAccuracyBonusMultiplier = InterceptionAccuracyBonusMultiplier,
+                    serumInterceptionMultiplier = SerumInterceptionMultiplier,
                     originalBurstCount = OriginalBurstCount,
                     shotFired = ShotFired,
-                    computingMovingFinalChance = ComputingMovingFinalChance,
                     suppressCloseLaunch = SuppressCloseLaunch,
                     closeDefensePrecheck = CloseDefensePrecheck,
                     defenseState = RimKataDefenseUtility.PushCloseAttackResolution()
@@ -216,15 +218,16 @@ namespace KRWF.RimKata
                 ActiveVerb = activeVerb;
                 Shooter = shooter;
                 CloseTarget = closeTarget;
-                MovingShot = movingShot;
                 CloseShot = closeShot;
                 CloseMeleeResolution = closeMeleeResolution;
                 CloseMeleeHit = closeMeleeHit;
                 InterceptionShot = interceptionShot;
                 InterceptionTarget = interceptionTarget;
+                MovingAccuracyMultiplier = movingAccuracyMultiplier;
+                InterceptionAccuracyBonusMultiplier = interceptionAccuracyBonusMultiplier;
+                SerumInterceptionMultiplier = serumInterceptionMultiplier;
                 OriginalBurstCount = originalBurstCount;
                 ShotFired = shotFired;
-                ComputingMovingFinalChance = computingMovingFinalChance;
                 SuppressCloseLaunch = suppressCloseLaunch;
                 CloseDefensePrecheck = closeDefensePrecheck;
                 RimKataDefenseUtility.PopCloseAttackResolution(defenseState);
@@ -235,15 +238,16 @@ namespace KRWF.RimKata
         [ThreadStatic] public static Verb ActiveVerb;
         [ThreadStatic] public static Pawn Shooter;
         [ThreadStatic] public static Thing CloseTarget;
-        [ThreadStatic] public static bool MovingShot;
         [ThreadStatic] public static bool CloseShot;
         [ThreadStatic] public static bool CloseMeleeResolution;
         [ThreadStatic] public static bool CloseMeleeHit;
         [ThreadStatic] public static bool InterceptionShot;
         [ThreadStatic] public static Projectile InterceptionTarget;
+        [ThreadStatic] public static float MovingAccuracyMultiplier;
+        [ThreadStatic] public static float InterceptionAccuracyBonusMultiplier;
+        [ThreadStatic] public static float SerumInterceptionMultiplier;
         [ThreadStatic] public static int OriginalBurstCount;
         [ThreadStatic] public static bool ShotFired;
-        [ThreadStatic] public static bool ComputingMovingFinalChance;
         [ThreadStatic] public static bool SuppressCloseLaunch;
         [ThreadStatic] public static RimKataCloseDefensePrecheck CloseDefensePrecheck;
 
@@ -259,6 +263,18 @@ namespace KRWF.RimKata
             bool closeMeleeHit,
             RimKataCloseDefensePrecheck closeDefensePrecheck)
         {
+            RimKataSettings settings = RimKataMod.Settings;
+            float nextMovingAccuracyMultiplier = movingShot
+                ? settings?.GetMovingAccuracyMultiplier(shooter) ?? 1f
+                : 1f;
+            float nextInterceptionAccuracyBonusMultiplier = interceptionShot
+                ? settings?.GetInterceptionAccuracyBonusMultiplier(shooter) ?? 1f
+                : 1f;
+            float nextSerumInterceptionMultiplier = interceptionShot
+                && settings != null
+                && RimKataSerumUtility.IsMindNumbed(shooter)
+                    ? settings.GetSerumInterceptionMultiplier(shooter)
+                    : 1f;
             int nextOriginalBurstCount = ActiveVerb == verb
                 ? OriginalBurstCount
                 : Mathf.Max(1, verb?.BurstShotCount ?? 1);
@@ -268,14 +284,15 @@ namespace KRWF.RimKata
             ActiveVerb = verb;
             Shooter = shooter;
             CloseTarget = closeTarget;
-            MovingShot = movingShot;
             CloseShot = closeShot;
             CloseMeleeResolution = closeMeleeResolution;
             CloseMeleeHit = closeMeleeHit;
             InterceptionShot = interceptionShot;
             InterceptionTarget = interceptionTarget;
+            MovingAccuracyMultiplier = nextMovingAccuracyMultiplier;
+            InterceptionAccuracyBonusMultiplier = nextInterceptionAccuracyBonusMultiplier;
+            SerumInterceptionMultiplier = nextSerumInterceptionMultiplier;
             ShotFired = false;
-            ComputingMovingFinalChance = false;
             SuppressCloseLaunch = false;
             CloseDefensePrecheck = closeDefensePrecheck;
             return previous;
@@ -900,7 +917,7 @@ namespace KRWF.RimKata
     [HarmonyPatch(typeof(ShotReport), nameof(ShotReport.AimOnTargetChance_IgnoringPosture), MethodType.Getter)]
     public static class Patch_ShotReport_MovingAccuracy_RimKata
     {
-        public static void Postfix(ShotReport __instance, ref float __result)
+        public static void Postfix(ref float __result)
         {
             if (RimKataFireContext.ActiveVerb != null && RimKataFireContext.CloseMeleeResolution)
             {
@@ -908,22 +925,13 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (RimKataFireContext.ActiveVerb != null
-                && RimKataFireContext.MovingShot
-                && RimKataCombatMath.MovingAccuracyIsModified(RimKataFireContext.Shooter))
+            if (RimKataFireContext.ActiveVerb != null)
             {
-                RimKataFireContext.ComputingMovingFinalChance = true;
-                float coverChance;
-                try
-                {
-                    coverChance = __instance.PassCoverChance;
-                }
-                finally
-                {
-                    RimKataFireContext.ComputingMovingFinalChance = false;
-                }
-
-                __result = RimKataCombatMath.MovingHitChance(RimKataFireContext.Shooter, __result * coverChance);
+                __result = Mathf.Clamp01(
+                    __result
+                    * RimKataFireContext.InterceptionAccuracyBonusMultiplier
+                    * RimKataFireContext.MovingAccuracyMultiplier
+                    * RimKataFireContext.SerumInterceptionMultiplier);
             }
         }
     }
@@ -934,15 +942,6 @@ namespace KRWF.RimKata
         public static void Postfix(ref float __result)
         {
             if (RimKataFireContext.ActiveVerb != null && RimKataFireContext.CloseMeleeResolution)
-            {
-                __result = 1f;
-                return;
-            }
-
-            if (RimKataFireContext.ActiveVerb != null
-                && RimKataFireContext.MovingShot
-                && RimKataCombatMath.MovingAccuracyIsModified(RimKataFireContext.Shooter)
-                && !RimKataFireContext.ComputingMovingFinalChance)
             {
                 __result = 1f;
             }
@@ -1015,13 +1014,20 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (RimKataFireContext.InterceptionShot
-                && !__instance.Destroyed)
+            if (RimKataFireContext.InterceptionShot)
             {
-                RimKataInterceptionShotRegistry.Register(
-                    __instance,
-                    RimKataFireContext.Shooter,
-                    RimKataFireContext.InterceptionTarget);
+                Projectile interceptionTarget = RimKataFireContext.InterceptionTarget;
+                if (!__instance.Destroyed
+                    && interceptionTarget != null
+                    && usedTarget.HasThing
+                    && usedTarget.Thing == interceptionTarget
+                    && intendedTarget.HasThing
+                    && intendedTarget.Thing == interceptionTarget)
+                {
+                    RimKataInterceptionShotRegistry.Register(
+                        __instance,
+                        interceptionTarget);
+                }
 
                 return;
             }
@@ -1079,7 +1085,7 @@ namespace KRWF.RimKata
             MethodInfo prefixMethod = AccessTools.Method(
                 typeof(Patch_Projectile_Impact_Context),
                 nameof(Prefix),
-                new[] { typeof(Projectile) });
+                new[] { typeof(Projectile), typeof(Thing), typeof(bool) });
             MethodInfo finalizerMethod = AccessTools.Method(
                 typeof(Patch_Projectile_Impact_Context),
                 nameof(Finalizer),
@@ -1186,14 +1192,27 @@ namespace KRWF.RimKata
             return false;
         }
 
-        public static bool Prefix(Projectile __instance)
+        public static bool Prefix(
+            Projectile __instance,
+            Thing __0,
+            bool __1)
         {
             RimKataProjectileImpactContext.Enter(__instance);
 
-            if (RimKataInterceptionShotRegistry.TryResolve(__instance))
+            if (RimKataInterceptionShotRegistry.TryResolve(
+                    __instance,
+                    __0,
+                    __1))
             {
                 if (!__instance.Destroyed)
                 {
+                    // Keep the interceptor's own impact/fuse independent of
+                    // the target projectile's interception result.
+                    if (__instance.def?.projectile?.explosionRadius > 0f)
+                    {
+                        return __instance.Spawned && __instance.Map != null;
+                    }
+
                     __instance.Destroy(DestroyMode.Vanish);
                 }
 

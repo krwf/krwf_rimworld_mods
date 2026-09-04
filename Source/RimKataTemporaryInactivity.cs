@@ -27,6 +27,7 @@ namespace KRWF.RimKata
         private static readonly object inactivePawnsLock = new object();
         private static readonly Predicate<Pawn> RemoveRecoveredPawn =
             ShouldRemoveRecoveredPawn;
+        private static readonly List<Pawn> recoveredPawns = new List<Pawn>();
         private static Game trackedGame;
         private static volatile int inactivePawnCount;
 
@@ -37,20 +38,26 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            Entry entry = entries.GetValue(pawn, CreateEntry);
-            if (entry.state != Inactive)
+            if (entries.TryGetValue(pawn, out Entry entry))
             {
-                return false;
+                return entry.state == Inactive;
             }
 
-            TrackInactive(pawn);
-            return true;
+            entry = entries.GetValue(pawn, CreateEntry);
+            if (entry.state == Inactive)
+            {
+                TrackInactive(pawn);
+                return true;
+            }
+
+            return false;
         }
 
         public static void NotifyPotentiallyInactive(Pawn pawn)
         {
             if (pawn == null
                 || !entries.TryGetValue(pawn, out Entry entry)
+                || entry.state == Inactive
                 || !LiveInactive(pawn))
             {
                 return;
@@ -67,7 +74,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            SetInactive(pawn, entry, LiveInactive(pawn));
+            SetInactive(pawn, entry, LiveInactive(pawn), true);
         }
 
         public static void TickInactivePawns()
@@ -77,6 +84,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            recoveredPawns.Clear();
             lock (inactivePawnsLock)
             {
                 RefreshGameScopeNoLock();
@@ -86,6 +94,14 @@ namespace KRWF.RimKata
                     inactivePawnCount = inactivePawns.Count;
                 }
             }
+
+            // Notify after RemoveWhere and outside the tracking lock.  The map
+            // records a request; it does not reset combat from this callback.
+            for (int i = 0; i < recoveredPawns.Count; i++)
+            {
+                NotifyMap(recoveredPawns[i], false);
+            }
+            recoveredPawns.Clear();
         }
 
         private static Entry CreateEntryForPawn(Pawn pawn)
@@ -109,9 +125,12 @@ namespace KRWF.RimKata
         private static void SetInactive(
             Pawn pawn,
             Entry entry,
-            bool inactive)
+            bool inactive,
+            bool synchronizeMap = false)
         {
-            entry.state = inactive ? Inactive : Active;
+            int nextState = inactive ? Inactive : Active;
+            bool changed = entry.state != nextState;
+            entry.state = nextState;
             lock (inactivePawnsLock)
             {
                 RefreshGameScopeNoLock();
@@ -126,6 +145,17 @@ namespace KRWF.RimKata
 
                 inactivePawnCount = inactivePawns.Count;
             }
+
+            if (changed || synchronizeMap)
+            {
+                NotifyMap(pawn, inactive);
+            }
+        }
+
+        private static void NotifyMap(Pawn pawn, bool inactive)
+        {
+            pawn?.Map?.GetComponent<RimKataMapComponent>()?
+                .RequestTemporaryInactivityUpdate(pawn, inactive);
         }
 
         private static void TrackInactive(Pawn pawn)
@@ -156,6 +186,7 @@ namespace KRWF.RimKata
             }
 
             entry.state = Active;
+            recoveredPawns.Add(pawn);
             return true;
         }
 

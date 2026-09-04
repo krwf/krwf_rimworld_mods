@@ -6,8 +6,8 @@
   <KRWF_RimKata_MeleeResponseChance>쳐내기 확률 보너스</KRWF_RimKata_MeleeResponseChance>
   <KRWF_RimKata_ResponseDisarmChance>쳐내기 시 무장 해제 확률</KRWF_RimKata_ResponseDisarmChance>
   <KRWF_RimKata_MeleeDodgeChance>근접 회피 확률 보너스</KRWF_RimKata_MeleeDodgeChance>
-  <KRWF_RimKata_InterceptionChance>폭발 투사체 요격 확률</KRWF_RimKata_InterceptionChance>
-  <KRWF_RimKata_InterceptionCriticalChance>요격 성공 시 폭발 확률</KRWF_RimKata_InterceptionCriticalChance>
+  <KRWF_RimKata_InterceptionChance>폭발물 요격 확률 보너스</KRWF_RimKata_InterceptionChance>
+  <KRWF_RimKata_InterceptionCriticalChance>폭발물 즉시 처리 확률</KRWF_RimKata_InterceptionCriticalChance>
   <KRWF_RimKata_TimingHeader>보정값</KRWF_RimKata_TimingHeader>
   <KRWF_RimKata_MovingAccuracyMultiplier>이동 중 명중률 배율</KRWF_RimKata_MovingAccuracyMultiplier>
   <KRWF_RimKata_ArmorCooldownReduction>허용 방어구 쿨다운 감소율</KRWF_RimKata_ArmorCooldownReduction>

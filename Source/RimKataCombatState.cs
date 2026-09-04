@@ -76,6 +76,30 @@ namespace KRWF.RimKata
         }
     }
 
+    public sealed class RimKataInterceptionShotLink : IExposable
+    {
+        public Projectile shot;
+        public Projectile target;
+
+        public RimKataInterceptionShotLink()
+        {
+        }
+
+        public RimKataInterceptionShotLink(
+            Projectile shot,
+            Projectile target)
+        {
+            this.shot = shot;
+            this.target = target;
+        }
+
+        public void ExposeData()
+        {
+            Scribe_References.Look(ref shot, "shot");
+            Scribe_References.Look(ref target, "target");
+        }
+    }
+
     internal static class RimKataResponseVisualParticipantCache
     {
         private sealed class Entry
@@ -346,7 +370,8 @@ namespace KRWF.RimKata
         public bool closeAttackRequestFromAttackGizmo;
         public Thing automaticAttackRequestTarget;
         public int automaticAttackRequestTicksRemaining;
-        public bool mentalStateOffenseSuppressed;
+        internal bool temporaryInactive;
+        internal bool temporaryInactivityCleanupPending;
 
         public bool VisualActive => pawn != null
             && ((visualState != RimKataVisualState.None
@@ -1458,6 +1483,14 @@ namespace KRWF.RimKata
         private readonly Dictionary<Projectile, RimKataTrackedRangedProjectile>
             trackedRangedProjectilesByProjectile =
                 new Dictionary<Projectile, RimKataTrackedRangedProjectile>();
+        private List<RimKataInterceptionShotLink> interceptionShotLinks =
+            new List<RimKataInterceptionShotLink>();
+        private readonly Dictionary<Projectile, RimKataInterceptionShotLink>
+            interceptionShotLinksByShot =
+                new Dictionary<Projectile, RimKataInterceptionShotLink>();
+        private readonly Dictionary<Projectile, List<RimKataInterceptionShotLink>>
+            interceptionShotLinksByTarget =
+                new Dictionary<Projectile, List<RimKataInterceptionShotLink>>();
         private readonly Dictionary<Projectile, PendingProjectileValidation>
             pendingProjectileValidations =
                 new Dictionary<Projectile, PendingProjectileValidation>();
@@ -1502,6 +1535,17 @@ namespace KRWF.RimKata
             {
                 RebuildStateIndex();
                 RebuildTrackedRangedProjectileIndex(true);
+                RebuildInterceptionShotLinkIndex(true);
+                for (int i = 0; i < states.Count; i++)
+                {
+                    RimKataPawnCombatState state = states[i];
+                    if (state?.pawn != null)
+                    {
+                        state.temporaryInactive =
+                            RimKataTemporaryInactivity.IsInactive(state.pawn);
+                        state.temporaryInactivityCleanupPending = state.temporaryInactive;
+                    }
+                }
             }
             SubscribeProjectileEvents();
             projectileInitialRefreshPending = true;
@@ -1520,6 +1564,9 @@ namespace KRWF.RimKata
             ClearProjectileScheduler();
             trackedRangedProjectiles.Clear();
             trackedRangedProjectilesByProjectile.Clear();
+            interceptionShotLinks.Clear();
+            interceptionShotLinksByShot.Clear();
+            interceptionShotLinksByTarget.Clear();
             RimKataResponseVisualParticipantCache.ClearForMap(map);
             base.MapRemoved();
         }
@@ -1534,6 +1581,10 @@ namespace KRWF.RimKata
                     ref trackedRangedProjectiles,
                     "rimKataTrackedRangedProjectiles",
                     LookMode.Deep);
+                Scribe_Collections.Look(
+                    ref interceptionShotLinks,
+                    "rimKataInterceptionShotLinks",
+                    LookMode.Deep);
                 if (Scribe.mode == LoadSaveMode.PostLoadInit && states == null)
                 {
                     states = new List<RimKataPawnCombatState>();
@@ -1546,6 +1597,13 @@ namespace KRWF.RimKata
                         new List<RimKataTrackedRangedProjectile>();
                 }
 
+                if (Scribe.mode == LoadSaveMode.PostLoadInit
+                    && interceptionShotLinks == null)
+                {
+                    interceptionShotLinks =
+                        new List<RimKataInterceptionShotLink>();
+                }
+
                 if (Scribe.mode == LoadSaveMode.PostLoadInit)
                 {
                     weatherRangeCapInitialized = false;
@@ -1554,13 +1612,13 @@ namespace KRWF.RimKata
                     lastWeatherRangeCheckTick = int.MinValue;
                     RebuildStateIndex();
                     RebuildTrackedRangedProjectileIndex(false);
+                    RebuildInterceptionShotLinkIndex(false);
                 }
             }
         }
 
         public override void MapComponentTick()
         {
-            RefreshWeatherRangeRevision();
             TickProjectileScheduler();
             lock (statesLock)
             {
@@ -1605,15 +1663,14 @@ namespace KRWF.RimKata
                         state.ClearDraftedMovementSearchTracking();
                         state.CancelWeaponCycles();
                     }
-                    else if (RimKataTemporaryInactivity.IsInactive(
-                        state.pawn))
+                    else if (state.temporaryInactivityCleanupPending)
                     {
+                        state.temporaryInactivityCleanupPending = false;
                         RimKataDualWeaponController
-                            .CancelOffenseForMentalState(state.pawn);
+                            .CancelOffenseForMentalState(state.pawn, state);
                     }
-                    else
+                    else if (!state.temporaryInactive)
                     {
-                        state.mentalStateOffenseSuppressed = false;
                         if (!state.pawn.Drafted)
                         {
                             state.CancelDraftedFire(false);
@@ -1868,6 +1925,177 @@ namespace KRWF.RimKata
             }
         }
 
+        internal void RegisterInterceptionShot(
+            Projectile shot,
+            Projectile target)
+        {
+            if (shot == null
+                || target == null
+                || shot.Destroyed
+                || target.Destroyed
+                || !shot.Spawned
+                || !target.Spawned
+                || shot.Map != map
+                || target.Map != map)
+            {
+                return;
+            }
+
+            lock (statesLock)
+            {
+                if (interceptionShotLinksByShot.TryGetValue(
+                        shot,
+                        out RimKataInterceptionShotLink existing))
+                {
+                    RemoveInterceptionShotLink(existing);
+                }
+
+                RimKataInterceptionShotLink link =
+                    new RimKataInterceptionShotLink(shot, target);
+                interceptionShotLinks.Add(link);
+                interceptionShotLinksByShot[shot] = link;
+                AddInterceptionTargetIndex(link);
+            }
+        }
+
+        internal bool TryTakeInterceptionTarget(
+            Projectile shot,
+            out Projectile target)
+        {
+            target = null;
+            if (shot == null)
+            {
+                return false;
+            }
+
+            lock (statesLock)
+            {
+                if (!interceptionShotLinksByShot.TryGetValue(
+                        shot,
+                        out RimKataInterceptionShotLink link))
+                {
+                    return false;
+                }
+
+                target = link?.target;
+                RemoveInterceptionShotLink(link);
+                return target != null;
+            }
+        }
+
+        private void RebuildInterceptionShotLinkIndex(bool pruneInvalid)
+        {
+            interceptionShotLinksByShot.Clear();
+            interceptionShotLinksByTarget.Clear();
+            if (interceptionShotLinks == null)
+            {
+                interceptionShotLinks =
+                    new List<RimKataInterceptionShotLink>();
+                return;
+            }
+
+            for (int i = interceptionShotLinks.Count - 1;
+                i >= 0;
+                i--)
+            {
+                RimKataInterceptionShotLink link =
+                    interceptionShotLinks[i];
+                Projectile shot = link?.shot;
+                Projectile target = link?.target;
+                if (shot == null
+                    || target == null
+                    || (pruneInvalid
+                        && (shot.Destroyed
+                            || target.Destroyed
+                            || !shot.Spawned
+                            || !target.Spawned
+                            || shot.Map != map
+                            || target.Map != map))
+                    || interceptionShotLinksByShot.ContainsKey(shot))
+                {
+                    interceptionShotLinks.RemoveAt(i);
+                    continue;
+                }
+
+                interceptionShotLinksByShot[shot] = link;
+                AddInterceptionTargetIndex(link);
+            }
+        }
+
+        private void RemoveInterceptionShotLink(Projectile shot)
+        {
+            if (shot == null
+                || !interceptionShotLinksByShot.TryGetValue(
+                    shot,
+                    out RimKataInterceptionShotLink link))
+            {
+                return;
+            }
+
+            RemoveInterceptionShotLink(link);
+        }
+
+        private void RemoveInterceptionShotLink(
+            RimKataInterceptionShotLink link)
+        {
+            if (link == null)
+            {
+                return;
+            }
+
+            interceptionShotLinksByShot.Remove(link.shot);
+            interceptionShotLinks.Remove(link);
+            Projectile target = link.target;
+            if (target != null
+                && interceptionShotLinksByTarget.TryGetValue(
+                    target,
+                    out List<RimKataInterceptionShotLink> targetLinks))
+            {
+                targetLinks.Remove(link);
+                if (targetLinks.Count == 0)
+                {
+                    interceptionShotLinksByTarget.Remove(target);
+                }
+            }
+        }
+
+        private void RemoveInterceptionLinksForTarget(Projectile target)
+        {
+            if (target == null
+                || !interceptionShotLinksByTarget.TryGetValue(
+                    target,
+                    out List<RimKataInterceptionShotLink> targetLinks))
+            {
+                return;
+            }
+
+            while (targetLinks.Count > 0)
+            {
+                RemoveInterceptionShotLink(
+                    targetLinks[targetLinks.Count - 1]);
+            }
+        }
+
+        private void AddInterceptionTargetIndex(
+            RimKataInterceptionShotLink link)
+        {
+            Projectile target = link?.target;
+            if (target == null)
+            {
+                return;
+            }
+
+            if (!interceptionShotLinksByTarget.TryGetValue(
+                    target,
+                    out List<RimKataInterceptionShotLink> targetLinks))
+            {
+                targetLinks = new List<RimKataInterceptionShotLink>();
+                interceptionShotLinksByTarget[target] = targetLinks;
+            }
+
+            targetLinks.Add(link);
+        }
+
         private void SubscribeProjectileEvents()
         {
             if (projectileEventsSubscribed || map?.events == null)
@@ -1917,6 +2145,12 @@ namespace KRWF.RimKata
             if (projectile == null)
             {
                 return;
+            }
+
+            lock (statesLock)
+            {
+                RemoveInterceptionShotLink(projectile);
+                RemoveInterceptionLinksForTarget(projectile);
             }
 
             pendingProjectileValidations.Remove(projectile);
@@ -2005,9 +2239,7 @@ namespace KRWF.RimKata
                     projectileWakeTraversalIndex++];
                 bool hostileProjectile = pawn?.IsPlayerControlled == true
                     && HasHostileExplosiveProjectileOnMapFor(pawn);
-                if (hostileProjectile
-                    && RimKataDualWeaponController
-                        .CanAcceptIdleProjectileSearch(pawn))
+                if (hostileProjectile)
                 {
                     RimKataDualWeaponController.QueueIdleProjectileSearch(
                         pawn);
@@ -2153,7 +2385,8 @@ namespace KRWF.RimKata
             for (int i = 0; i < pawns.Count; i++)
             {
                 Pawn pawn = pawns[i];
-                if (pawn?.IsPlayerControlled == true)
+                if (pawn?.IsPlayerControlled == true
+                    && RimKataEligibility.HasRimKataAccess(pawn))
                 {
                     projectileWakeTraversal.Add(pawn);
                 }
@@ -2229,7 +2462,7 @@ namespace KRWF.RimKata
             projectileWakeTraversalIndex = 0;
         }
 
-        private void RefreshWeatherRangeRevision(bool force = false)
+        internal void RefreshWeatherRangeRevision(bool force = false)
         {
             int currentTick = Find.TickManager?.TicksGame ?? -1;
             if (!force && lastWeatherRangeCheckTick == currentTick)
@@ -2274,6 +2507,28 @@ namespace KRWF.RimKata
             GetState(pawn, true)?.ScheduleDraftedMeleeThreatClear();
         }
 
+        internal void RequestTemporaryInactivityUpdate(Pawn pawn, bool inactive)
+        {
+            if (pawn?.Map != map)
+            {
+                return;
+            }
+
+            lock (statesLock)
+            {
+                if (!statesByPawn.TryGetValue(pawn, out RimKataPawnCombatState state))
+                {
+                    return;
+                }
+
+                if (inactive && !state.temporaryInactive)
+                {
+                    state.temporaryInactivityCleanupPending = true;
+                }
+                state.temporaryInactive = inactive;
+            }
+        }
+
         public RimKataPawnCombatState GetState(Pawn pawn, bool createIfMissing)
         {
             lock (statesLock)
@@ -2298,6 +2553,8 @@ namespace KRWF.RimKata
                 RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
                 states.Add(state);
                 statesByPawn[pawn] = state;
+                state.temporaryInactive = RimKataTemporaryInactivity.IsInactive(pawn);
+                state.temporaryInactivityCleanupPending = state.temporaryInactive;
                 return state;
             }
         }
@@ -2810,7 +3067,9 @@ namespace KRWF.RimKata
         public override void MapComponentUpdate()
         {
             base.MapComponentUpdate();
-            if (Find.CurrentMap == map)
+            if (Prefs.DevMode
+                && RimKataDebugHUD.SearchRangeEnabled
+                && Find.CurrentMap == map)
             {
                 RimKataDebugHUD.DrawSearchPulses(map);
             }
@@ -2919,7 +3178,10 @@ namespace KRWF.RimKata
                 RimKataResponseVisualParticipantCache.Refresh(state);
             }
 
-            RimKataDebugHUD.RecordResponseIndicator(pawn, weapon);
+            if (Prefs.DevMode && RimKataDebugHUD.Enabled)
+            {
+                RimKataDebugHUD.RecordResponseIndicator(pawn, weapon);
+            }
         }
 
         public void BeginCloseCombatDodge(Pawn pawn, int durationTicks)

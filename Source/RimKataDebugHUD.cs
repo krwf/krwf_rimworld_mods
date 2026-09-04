@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using HarmonyLib;
 using RimWorld;
 using UnityEngine;
@@ -7,16 +8,36 @@ using Verse;
 
 namespace KRWF.RimKata
 {
-    [StaticConstructorOnStartup]
     public class RimKataDebugHUD : GameComponent
     {
         public static bool Enabled = false;
         public static bool SearchRangeEnabled = false;
 
         private const int EntryPopupTicks = 45;
-        private static readonly Material SearchCellMaterial =
-            SolidColorMaterials.SimpleSolidColorMaterial(
-                new Color(0f, 0f, 0f, 0.3f));
+        private sealed class GuiRegistration
+        {
+            public RimKataDebugHUD component;
+            public int index = -1;
+        }
+
+        private static readonly ConditionalWeakTable<Game, GuiRegistration> GuiRegistrations =
+            new ConditionalWeakTable<Game, GuiRegistration>();
+
+        private sealed class SearchGraphics
+        {
+            internal readonly Material CellMaterial;
+            internal readonly Mesh Mesh;
+
+            // Created by the enabled map-update renderer, never by the loading thread.
+            internal SearchGraphics()
+            {
+                CellMaterial = SolidColorMaterials.SimpleSolidColorMaterial(
+                    new Color(0f, 0f, 0f, 0.3f));
+                Mesh = CreateSearchMesh();
+            }
+        }
+
+        private static SearchGraphics searchGraphics;
         private static readonly List<Pawn> DebugPawns = new List<Pawn>();
         private static readonly List<IntVec3> SearchCells = new List<IntVec3>();
         private static readonly HashSet<IntVec3> UniqueSearchCells =
@@ -25,7 +46,6 @@ namespace KRWF.RimKata
             new List<Vector3>();
         private static readonly List<int> SearchMeshTriangles =
             new List<int>();
-        private static readonly Mesh SearchMesh = CreateSearchMesh();
         private static Map searchMeshMap;
         private static int searchMeshTick = -1;
 
@@ -202,17 +222,59 @@ namespace KRWF.RimKata
         {
         }
 
+        internal static void RefreshGuiRegistration(Game game)
+        {
+            if (game == null)
+            {
+                return;
+            }
+
+            GuiRegistration registration = GuiRegistrations.GetValue(
+                game, _ => new GuiRegistration());
+            int index = game.components.FindIndex(component => component is RimKataDebugHUD);
+            if (index >= 0)
+            {
+                // Loading replaces the list, so prefer its newly deserialized instance.
+                registration.component = (RimKataDebugHUD)game.components[index];
+                registration.index = index;
+                if (!Prefs.DevMode || !Enabled)
+                {
+                    game.components.RemoveAt(index);
+                }
+            }
+            else if (Prefs.DevMode && Enabled)
+            {
+                if (registration.component == null)
+                {
+                    registration.component = new RimKataDebugHUD(game);
+                }
+
+                int insertIndex = registration.index < 0
+                    ? game.components.Count
+                    : System.Math.Min(registration.index, game.components.Count);
+                game.components.Insert(insertIndex, registration.component);
+            }
+        }
+
         public static void SetHudEnabled(bool enabled)
         {
             Enabled = enabled && Prefs.DevMode;
             if (!Enabled)
             {
-                previousCombatState.Clear();
-                combatPopups.Clear();
-                previousUsingState.Clear();
-                usingPopups.Clear();
-                lowerPopups.Clear();
+                ClearHudData();
             }
+
+            RefreshGuiRegistration(Current.Game);
+        }
+
+        private static void ClearHudData()
+        {
+            previousCombatState.Clear();
+            combatPopups.Clear();
+            previousUsingState.Clear();
+            usingPopups.Clear();
+            lowerPopups.Clear();
+            DebugPawns.Clear();
         }
 
         public static void SetSearchRangeEnabled(bool enabled)
@@ -220,22 +282,27 @@ namespace KRWF.RimKata
             SearchRangeEnabled = enabled && Prefs.DevMode;
             if (!SearchRangeEnabled)
             {
-                ActualSearchRings.Clear();
-                SearchCells.Clear();
-                UniqueSearchCells.Clear();
-                SearchMeshVertices.Clear();
-                SearchMeshTriangles.Clear();
-                SearchMesh.Clear();
-                searchMeshMap = null;
-                searchMeshTick = -1;
+                ClearSearchRangeData();
             }
         }
 
-        public static void RecordSearchPulse(
-            Map map,
-            IntVec3 origin,
-            int maximumRadius)
+        private static void ClearSearchRangeData()
         {
+            ActualSearchRings.Clear();
+            SearchCells.Clear();
+            UniqueSearchCells.Clear();
+            SearchMeshVertices.Clear();
+            SearchMeshTriangles.Clear();
+            // The next enabled draw rebuilds the mesh. Game changes can run off the main thread.
+            searchMeshMap = null;
+            searchMeshTick = -1;
+        }
+
+        internal static void NotifyGameChanged()
+        {
+            ClearHudData();
+            ClearSearchRangeData();
+            RefreshGuiRegistration(Current.Game);
         }
 
         public static void RecordActualSearchRing(
@@ -275,28 +342,16 @@ namespace KRWF.RimKata
             searchMeshTick = -1;
         }
 
-        private static void DisableForDeveloperMode()
+        internal static void DisableForDeveloperMode()
         {
             SetHudEnabled(false);
             SetSearchRangeEnabled(false);
-            DebugPawns.Clear();
         }
 
         public override void GameComponentOnGUI()
         {
-            base.GameComponentOnGUI();
-
-            if (!Prefs.DevMode)
-            {
-                if (Enabled || SearchRangeEnabled)
-                {
-                    DisableForDeveloperMode();
-                }
-
-                return;
-            }
-
-            if (!Enabled)
+            // Registration changes occur at events, not while this list is being dispatched.
+            if (!Prefs.DevMode || !Enabled)
             {
                 return;
             }
@@ -513,6 +568,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            SearchGraphics graphics = searchGraphics ?? (searchGraphics = new SearchGraphics());
             int currentTick = Find.TickManager?.TicksGame ?? -1;
             if (searchMeshMap != map || searchMeshTick != currentTick)
             {
@@ -536,7 +592,7 @@ namespace KRWF.RimKata
                         ring.outerRadius);
                 }
 
-                BuildSearchMesh(SearchMesh, SearchCells);
+                BuildSearchMesh(graphics.Mesh, SearchCells);
             }
 
             if (SearchCells.Count == 0)
@@ -545,9 +601,9 @@ namespace KRWF.RimKata
             }
 
             Graphics.DrawMesh(
-                SearchMesh,
+                graphics.Mesh,
                 Matrix4x4.identity,
-                SearchCellMaterial,
+                graphics.CellMaterial,
                 0);
         }
 
@@ -766,6 +822,46 @@ namespace KRWF.RimKata
         }
     }
 
+    // Keep the GameComponent type for old saves, but register it only while the text HUD is on.
+    [HarmonyPatch(typeof(Game), "FillComponents")]
+    public static class Patch_Game_RimKataDebugHUDRegistration
+    {
+        public static void Postfix(Game __instance)
+        {
+            RimKataDebugHUD.RefreshGuiRegistration(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(Current), nameof(Current.Game), MethodType.Setter)]
+    public static class Patch_Current_RimKataDebugHUDGameChanged
+    {
+        public static void Prefix(Game value, out bool __state)
+        {
+            __state = Current.Game != value;
+        }
+
+        public static void Postfix(bool __state)
+        {
+            if (__state)
+            {
+                RimKataDebugHUD.NotifyGameChanged();
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Prefs), nameof(Prefs.DevMode), MethodType.Setter)]
+    public static class Patch_Prefs_RimKataDebugHUDDisabled
+    {
+        public static void Postfix(bool value)
+        {
+            // The options GUI also assigns the unchanged value on every GUI event.
+            if (!value && (RimKataDebugHUD.Enabled || RimKataDebugHUD.SearchRangeEnabled))
+            {
+                RimKataDebugHUD.DisableForDeveloperMode();
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(Pawn), nameof(Pawn.GetGizmos))]
     public static class Patch_Pawn_RimKataDebugHUDGizmo
     {
@@ -773,15 +869,24 @@ namespace KRWF.RimKata
             IEnumerable<Gizmo> __result,
             Pawn __instance)
         {
-            foreach (Gizmo gizmo in __result)
+            return Prefs.DevMode
+                ? AddDebugGizmo(__result, __instance)
+                : __result;
+        }
+
+        private static IEnumerable<Gizmo> AddDebugGizmo(
+            IEnumerable<Gizmo> gizmos,
+            Pawn pawn)
+        {
+            foreach (Gizmo gizmo in gizmos)
             {
                 yield return gizmo;
             }
 
             if (!Prefs.DevMode
-                || __instance == null
-                || !__instance.Spawned
-                || !RimKataEligibilityCache.DebugHasRawAccessSource(__instance))
+                || pawn == null
+                || !pawn.Spawned
+                || !RimKataEligibilityCache.DebugHasRawAccessSource(pawn))
             {
                 yield break;
             }
@@ -794,7 +899,7 @@ namespace KRWF.RimKata
                             && p.Spawned
                             && RimKataEligibilityCache.DebugHasRawAccessSource(p));
 
-            if (firstRimKataPawn != __instance)
+            if (firstRimKataPawn != pawn)
             {
                 yield break;
             }

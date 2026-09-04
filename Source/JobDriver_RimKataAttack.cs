@@ -255,7 +255,6 @@ namespace KRWF.RimKata
         {
             if (pawn?.InMentalState == true)
             {
-                RimKataDualWeaponController.CancelOffenseForMentalState(pawn);
                 EndRimKataJobWith(JobCondition.InterruptForced);
                 return;
             }
@@ -276,8 +275,6 @@ namespace KRWF.RimKata
 
             if (RimKataTemporaryInactivity.IsInactive(pawn))
             {
-                RimKataDualWeaponController
-                    .CancelOffenseForMentalState(pawn);
                 EndRimKataJobWith(JobCondition.InterruptForced);
                 return;
             }
@@ -876,8 +873,6 @@ namespace KRWF.RimKata
         {
             if (___pawn?.InMentalState == true)
             {
-                RimKataDualWeaponController
-                    .CancelOffenseForMentalState(___pawn);
                 if (newJob?.def != RimKataDefOf.RimKata_Attack)
                 {
                     return true;

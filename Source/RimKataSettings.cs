@@ -54,6 +54,29 @@ namespace KRWF.RimKata
             return profile;
         }
 
+        internal bool Matches(RimKataSettings settings)
+        {
+            if (settings == null
+                || entries == null
+                || entries.Count != ProfileFields.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < ProfileFields.Length; i++)
+            {
+                FieldInfo field = ProfileFields[i];
+                string currentEntry = field.Name + "="
+                    + Serialize(field.GetValue(settings), field.FieldType);
+                if (!string.Equals(entries[i], currentEntry, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         public void ApplyTo(RimKataSettings settings)
         {
             if (settings == null || entries == null)
@@ -407,7 +430,7 @@ namespace KRWF.RimKata
         public float RangedDodgeChance => ChanceFromPercent(rangedDodgeChancePercent);
         public float MeleeResponseChance => ChanceFromPercent(meleeResponseChancePercent);
         public float MeleeDodgeChance => ChanceFromPercent(meleeDodgeChancePercent);
-        public float InterceptionChance => ChanceFromPercent(interceptionChancePercent);
+        public float InterceptionAccuracyBonusMultiplier => BonusMultiplierFromPercent(interceptionChancePercent);
         public float InterceptionCriticalChance => ChanceFromPercent(interceptionCriticalChancePercent);
         public float MovingAccuracyMultiplier => MultiplierFromPercent(movingAccuracyMultiplierPercent);
         public float ArmorCooldownFactor => 1f - ChanceFromPercent(armorCooldownReductionPercent);
@@ -454,7 +477,7 @@ namespace KRWF.RimKata
         public float GetMeleeDodgeBonusMultiplier(Pawn pawn) => BonusMultiplierFromPercent(ResolvePercent(
             pawn, meleeDodgeChanceFixed, meleeDodgeChancePercent,
             meleeDodgeChanceMinimumPercent, meleeDodgeChanceGrowthPerLevelPercent, SkillDefOf.Melee));
-        public float GetInterceptionChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
+        public float GetInterceptionAccuracyBonusMultiplier(Pawn pawn) => BonusMultiplierFromPercent(ResolvePercent(
             pawn, interceptionChanceFixed, interceptionChancePercent,
             interceptionChanceMinimumPercent, interceptionChanceGrowthPerLevelPercent, SkillDefOf.Shooting));
         public float GetInterceptionCriticalChance(Pawn pawn) => ChanceFromPercent(ResolvePercent(
@@ -477,7 +500,7 @@ namespace KRWF.RimKata
             serumResponseMultiplierMinimumPercent, serumResponseMultiplierGrowthPerLevelPercent, SkillDefOf.Melee));
         public float GetSerumInterceptionMultiplier(Pawn pawn) => MultiplierFromPercent(ResolvePercent(
             pawn, serumInterceptionMultiplierFixed, serumInterceptionMultiplierPercent,
-            serumInterceptionMultiplierMinimumPercent, serumInterceptionMultiplierGrowthPerLevelPercent, SkillDefOf.Melee));
+            serumInterceptionMultiplierMinimumPercent, serumInterceptionMultiplierGrowthPerLevelPercent, SkillDefOf.Shooting));
         public float ResponseWeaponDurabilityLossChance => ChanceFromPercent(responseWeaponDurabilityLossChancePercent);
         public float CreepJoinerDependencyGeneChance => ChanceFromPercent(creepJoinerDependencyGeneChancePercent);
         public float AiSecondaryWeaponChance => ChanceFromPercent(aiSecondaryWeaponChancePercent);

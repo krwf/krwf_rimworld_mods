@@ -74,7 +74,6 @@ namespace KRWF.RimKata
 
             if (pawn.InMentalState)
             {
-                RimKataDualWeaponController.CancelOffenseForMentalState(pawn);
                 return;
             }
 

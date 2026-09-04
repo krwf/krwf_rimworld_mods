@@ -6,8 +6,8 @@
   <KRWF_RimKata_MeleeResponseChance>Parry chance bonus</KRWF_RimKata_MeleeResponseChance>
   <KRWF_RimKata_ResponseDisarmChance>Disarm chance on parry</KRWF_RimKata_ResponseDisarmChance>
   <KRWF_RimKata_MeleeDodgeChance>Melee dodge chance bonus</KRWF_RimKata_MeleeDodgeChance>
-  <KRWF_RimKata_InterceptionChance>Explosive interception chance</KRWF_RimKata_InterceptionChance>
-  <KRWF_RimKata_InterceptionCriticalChance>Detonation chance on successful interception</KRWF_RimKata_InterceptionCriticalChance>
+  <KRWF_RimKata_InterceptionChance>Explosive interception accuracy bonus</KRWF_RimKata_InterceptionChance>
+  <KRWF_RimKata_InterceptionCriticalChance>Immediate explosive neutralization chance</KRWF_RimKata_InterceptionCriticalChance>
   <KRWF_RimKata_TimingHeader>Modifiers</KRWF_RimKata_TimingHeader>
   <KRWF_RimKata_MovingAccuracyMultiplier>Moving accuracy multiplier</KRWF_RimKata_MovingAccuracyMultiplier>
   <KRWF_RimKata_ArmorCooldownReduction>Enabled armor cooldown reduction</KRWF_RimKata_ArmorCooldownReduction>
