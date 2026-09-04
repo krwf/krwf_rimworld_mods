@@ -1,4 +1,6 @@
 ﻿using RimWorld;
+using System;
+using HarmonyLib;
 using UnityEngine;
 using Verse;
 
@@ -13,6 +15,20 @@ namespace KRWF.RimKata
 
     public static class RimKataCombatMath
     {
+        private static readonly Func<Verb_MeleeAttack, LocalTargetInfo, float> NativeMeleeHitChance =
+            AccessTools.MethodDelegate<Func<Verb_MeleeAttack, LocalTargetInfo, float>>(
+                AccessTools.Method(typeof(Verb_MeleeAttack), "GetNonMissChance"));
+        private static readonly Func<Verb_MeleeAttack, LocalTargetInfo, float> NativeMeleeDodgeChance =
+            AccessTools.MethodDelegate<Func<Verb_MeleeAttack, LocalTargetInfo, float>>(
+                AccessTools.Method(typeof(Verb_MeleeAttack), "GetDodgeChance"));
+        private static readonly AccessTools.FieldRef<Verb, bool> MeleeSurpriseAttack =
+            AccessTools.FieldRefAccess<Verb, bool>("surpriseAttack");
+        private static readonly AccessTools.FieldRef<Pawn_MeleeVerbs, Verb> SelectedMeleeVerb =
+            AccessTools.FieldRefAccess<Pawn_MeleeVerbs, Verb>("curMeleeVerb");
+
+        [ThreadStatic]
+        private static Pawn verifiedMeleeDodgeTarget;
+
         public static float ConfiguredChance(Pawn pawn, RimKataChanceKind kind)
         {
             RimKataSettings settings = RimKataMod.Settings;
@@ -66,11 +82,6 @@ namespace KRWF.RimKata
             return Mathf.Clamp01(baseChance * multiplier);
         }
 
-        public static bool RollCloseMeleeNonMiss(Pawn attacker, Thing target)
-        {
-            return Rand.Chance(CloseMeleeNonMissChance(attacker, target));
-        }
-
         public static bool RollCloseRangedNonMiss(Pawn attacker, Verb verb, LocalTargetInfo target)
         {
             if (attacker == null
@@ -83,11 +94,6 @@ namespace KRWF.RimKata
             ShotReport report = ShotReport.HitReportFor(attacker, verb, target);
 
             return Rand.Chance(Mathf.Clamp01(report.TotalEstimatedHitChance));
-        }
-
-        public static bool RollCloseMeleeDodge(Pawn target)
-        {
-            return Rand.Chance(CloseMeleeDodgeChance(target));
         }
 
         public static float AddConfiguredMeleeDodgeBonus(Pawn target, float vanillaChance)
@@ -112,39 +118,10 @@ namespace KRWF.RimKata
             float vanillaChance,
             LocalTargetInfo target)
         {
-            return AddConfiguredMeleeDodgeBonus(target.Pawn, vanillaChance);
-        }
-
-        public static float CloseMeleeNonMissChance(Pawn attacker, Thing target)
-        {
-            if (attacker == null || target == null)
-            {
-                return 0f;
-            }
-
-            if (IsMeleeTargetImmobile(target))
-            {
-                return 1f;
-            }
-
-            float chance = attacker.GetStatValue(StatDefOf.MeleeHitChance);
-            if (ModsConfig.IdeologyActive)
-            {
-                chance += MeleeLightingOffset(
-                    attacker,
-                    target,
-                    StatDefOf.MeleeHitChanceOutdoorsLitOffset,
-                    StatDefOf.MeleeHitChanceOutdoorsDarkOffset,
-                    StatDefOf.MeleeHitChanceIndoorsDarkOffset,
-                    StatDefOf.MeleeHitChanceIndoorsLitOffset);
-            }
-
-            return chance;
-        }
-
-        public static bool RollMeleeParry(Pawn defender, Pawn attacker)
-        {
-            return Rand.Chance(MeleeParryChance(defender, attacker));
+            Pawn pawn = target.Pawn;
+            return pawn != null && ReferenceEquals(pawn, verifiedMeleeDodgeTarget)
+                ? ApplyConfiguredMeleeDodgeBonus(pawn, vanillaChance)
+                : AddConfiguredMeleeDodgeBonus(pawn, vanillaChance);
         }
 
         public static float MeleeParryChance(Pawn defender, Pawn attacker)
@@ -154,17 +131,10 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
-            float chance = defender.GetStatValue(StatDefOf.MeleeHitChance);
-            if (ModsConfig.IdeologyActive)
-            {
-                chance += MeleeLightingOffset(
-                    defender,
-                    attacker,
-                    StatDefOf.MeleeHitChanceOutdoorsLitOffset,
-                    StatDefOf.MeleeHitChanceOutdoorsDarkOffset,
-                    StatDefOf.MeleeHitChanceIndoorsDarkOffset,
-                    StatDefOf.MeleeHitChanceIndoorsLitOffset);
-            }
+            float chance = ReadMeleeProbability(
+                ResolveMeleeProbabilityVerb(defender),
+                attacker,
+                NativeMeleeHitChance);
 
             RimKataSettings settings = RimKataMod.Settings;
             chance *= settings?.GetMeleeResponseBonusMultiplier(defender) ?? 1f;
@@ -176,86 +146,82 @@ namespace KRWF.RimKata
             return Mathf.Clamp01(chance);
         }
 
-        public static float CloseMeleeDodgeChance(Pawn target)
-        {
-            return CloseMeleeDodgeChanceCore(target, false);
-        }
-
         internal static float CloseMeleeDodgeChanceVerified(Pawn target)
         {
-            return CloseMeleeDodgeChanceCore(target, true);
+            return CloseMeleeDodgeChanceCore(target);
         }
 
-        private static float CloseMeleeDodgeChanceCore(
+        private static float CloseMeleeDodgeChanceCore(Pawn target)
+        {
+            if (target == null)
+            {
+                return 0f;
+            }
+
+            Pawn previousVerifiedTarget = verifiedMeleeDodgeTarget;
+            verifiedMeleeDodgeTarget = target;
+            try
+            {
+                // GetDodgeChance already includes the existing vanilla dodge bonus hook.
+                return ReadMeleeProbability(
+                    ResolveMeleeProbabilityVerb(target),
+                    target,
+                    NativeMeleeDodgeChance);
+            }
+            finally
+            {
+                verifiedMeleeDodgeTarget = previousVerifiedTarget;
+            }
+        }
+
+        private static Verb_MeleeAttack ResolveMeleeProbabilityVerb(Pawn pawn)
+        {
+            // Read an owned instance without choosing an attack, checking weapon permissions,
+            // or consuming random numbers. The native getters do not use its tool or weapon.
+            if (pawn?.meleeVerbs != null
+                && SelectedMeleeVerb(pawn.meleeVerbs) is Verb_MeleeAttack selected
+                && selected.CasterPawn == pawn)
+            {
+                return selected;
+            }
+
+            var verbs = pawn?.verbTracker?.AllVerbs;
+            if (verbs != null)
+            {
+                for (int i = 0; i < verbs.Count; i++)
+                {
+                    if (verbs[i] is Verb_MeleeAttack melee && melee.CasterPawn == pawn)
+                    {
+                        return melee;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static float ReadMeleeProbability(
+            Verb_MeleeAttack verb,
             Pawn target,
-            bool defenseEligibilityVerified)
+            Func<Verb_MeleeAttack, LocalTargetInfo, float> calculator)
         {
-            if (target == null || IsMeleeTargetImmobile(target))
+            if (verb == null)
             {
                 return 0f;
             }
 
-            if (target.stances?.curStance is Stance_Busy busy && busy.verb != null && !busy.verb.verbProps.IsMeleeAttack)
+            // Parry and RimKata close gunfire are non-surprise actions. Borrow only the
+            // probability getter; restore this instance's prior attack context even on failure.
+            bool previousSurpriseAttack = MeleeSurpriseAttack(verb);
+            MeleeSurpriseAttack(verb) = false;
+            try
             {
-                return 0f;
+                return calculator(verb, target);
             }
-
-            float chance = target.GetStatValue(StatDefOf.MeleeDodgeChance);
-            if (ModsConfig.IdeologyActive)
+            finally
             {
-                chance += MeleeLightingOffset(
-                    target,
-                    target,
-                    StatDefOf.MeleeDodgeChanceOutdoorsLitOffset,
-                    StatDefOf.MeleeDodgeChanceOutdoorsDarkOffset,
-                    StatDefOf.MeleeDodgeChanceIndoorsDarkOffset,
-                    StatDefOf.MeleeDodgeChanceIndoorsLitOffset);
+                MeleeSurpriseAttack(verb) = previousSurpriseAttack;
             }
-
-            return defenseEligibilityVerified
-                ? ApplyConfiguredMeleeDodgeBonus(target, chance)
-                : AddConfiguredMeleeDodgeBonus(target, chance);
-        }
-
-        private static bool IsMeleeTargetImmobile(Thing target)
-        {
-            if (target?.def?.category == ThingCategory.Pawn && target is Pawn targetPawn && !targetPawn.Downed)
-            {
-                return targetPawn.GetPosture() != PawnPosture.Standing;
-            }
-
-            return true;
-        }
-
-        private static float MeleeLightingOffset(
-            Pawn statPawn,
-            Thing target,
-            StatDef outdoorsLit,
-            StatDef outdoorsDark,
-            StatDef indoorsDark,
-            StatDef indoorsLit)
-        {
-            if (DarknessCombatUtility.IsOutdoorsAndLit(target))
-            {
-                return statPawn.GetStatValue(outdoorsLit);
-            }
-
-            if (DarknessCombatUtility.IsOutdoorsAndDark(target))
-            {
-                return statPawn.GetStatValue(outdoorsDark);
-            }
-
-            if (DarknessCombatUtility.IsIndoorsAndDark(target))
-            {
-                return statPawn.GetStatValue(indoorsDark);
-            }
-
-            if (DarknessCombatUtility.IsIndoorsAndLit(target))
-            {
-                return statPawn.GetStatValue(indoorsLit);
-            }
-
-            return 0f;
         }
 
         public static int WarmupTicksForSingleShot(Verb verb)
