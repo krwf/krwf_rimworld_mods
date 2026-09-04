@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Reflection;
+using System.Reflection.Emit;
 using HarmonyLib;
 using RimWorld;
 using UnityEngine;
@@ -25,31 +26,94 @@ namespace KRWF.RimKata
                 typeof(float),
                 typeof(bool)
             });
-        private static readonly MethodInfo DrawWeaponIconsMethod = AccessTools.Method(
+        private static readonly MethodInfo DrawSecondaryWeaponIconMethod = AccessTools.Method(
             typeof(Patch_ColonistBar_RimKataDualWeaponIcons),
-            nameof(DrawWeaponIcons));
+            nameof(DrawSecondaryWeaponIcon));
 
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        public static IEnumerable<CodeInstruction> Transpiler(
+            IEnumerable<CodeInstruction> instructions,
+            ILGenerator generator)
         {
-            int replacements = 0;
-            foreach (CodeInstruction instruction in instructions)
+            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            int thingIconIndex = -1;
+            int thingIconCount = 0;
+            for (int i = 0; i < codes.Count; i++)
             {
-                if (instruction.Calls(ThingIconMethod))
+                if (codes[i].Calls(ThingIconMethod))
                 {
-                    instruction.operand = DrawWeaponIconsMethod;
-                    replacements++;
+                    thingIconIndex = i;
+                    thingIconCount++;
                 }
-
-                yield return instruction;
             }
 
-            if (replacements != 1)
+            if (thingIconCount != 1 || thingIconIndex < 0)
             {
-                Log.Warning("[RimKata] Expected one colonist-bar weapon icon call, but replaced " + replacements + ".");
+                Log.Warning(
+                    "[RimKata] Expected one colonist-bar weapon icon call for the secondary overlay, but found "
+                    + thingIconCount
+                    + ".");
+                return codes;
             }
+
+            if (DrawSecondaryWeaponIconMethod == null)
+            {
+                Log.Warning("[RimKata] Could not resolve the colonist-bar secondary weapon icon helper.");
+                return codes;
+            }
+
+            if (codes[thingIconIndex].blocks.Count != 0)
+            {
+                Log.Warning(
+                    "[RimKata] Kept the vanilla colonist-bar weapon icon call unchanged because its exception metadata was not safe to augment.");
+                return codes;
+            }
+
+            LocalBuilder rectLocal = generator.DeclareLocal(typeof(Rect));
+            LocalBuilder primaryLocal = generator.DeclareLocal(typeof(Thing));
+            LocalBuilder alphaLocal = generator.DeclareLocal(typeof(float));
+            LocalBuilder rotLocal = generator.DeclareLocal(typeof(Rot4?));
+            LocalBuilder stackOfOneLocal = generator.DeclareLocal(typeof(bool));
+            LocalBuilder scaleLocal = generator.DeclareLocal(typeof(float));
+            LocalBuilder grayscaleLocal = generator.DeclareLocal(typeof(bool));
+
+            CodeInstruction first = new CodeInstruction(
+                OpCodes.Stloc,
+                grayscaleLocal);
+            first.labels.AddRange(codes[thingIconIndex].labels);
+            codes[thingIconIndex].labels.Clear();
+
+            codes.InsertRange(
+                thingIconIndex,
+                new[]
+                {
+                    first,
+                    new CodeInstruction(OpCodes.Stloc, scaleLocal),
+                    new CodeInstruction(OpCodes.Stloc, stackOfOneLocal),
+                    new CodeInstruction(OpCodes.Stloc, rotLocal),
+                    new CodeInstruction(OpCodes.Stloc, alphaLocal),
+                    new CodeInstruction(OpCodes.Stloc, primaryLocal),
+                    new CodeInstruction(OpCodes.Stloc, rectLocal),
+                    new CodeInstruction(OpCodes.Ldloc, rectLocal),
+                    new CodeInstruction(OpCodes.Ldloc, primaryLocal),
+                    new CodeInstruction(OpCodes.Ldloc, alphaLocal),
+                    new CodeInstruction(OpCodes.Ldloc, rotLocal),
+                    new CodeInstruction(OpCodes.Ldloc, stackOfOneLocal),
+                    new CodeInstruction(OpCodes.Ldloc, scaleLocal),
+                    new CodeInstruction(OpCodes.Ldloc, grayscaleLocal),
+                    new CodeInstruction(OpCodes.Call, DrawSecondaryWeaponIconMethod),
+                    new CodeInstruction(OpCodes.Ldloc, rectLocal),
+                    new CodeInstruction(OpCodes.Ldloc, primaryLocal),
+                    new CodeInstruction(OpCodes.Ldloc, alphaLocal),
+                    new CodeInstruction(OpCodes.Ldloc, rotLocal),
+                    new CodeInstruction(OpCodes.Ldloc, stackOfOneLocal),
+                    new CodeInstruction(OpCodes.Ldloc, scaleLocal),
+                    new CodeInstruction(OpCodes.Ldloc, grayscaleLocal)
+                });
+
+            return codes;
         }
 
-        public static void DrawWeaponIcons(
+        public static void DrawSecondaryWeaponIcon(
             Rect rect,
             Thing primary,
             float alpha,
@@ -87,15 +151,6 @@ namespace KRWF.RimKata
                     scale,
                     grayscale);
             }
-
-            Widgets.ThingIcon(
-                rect,
-                primary,
-                alpha,
-                rot,
-                stackOfOne,
-                scale,
-                grayscale);
         }
 
         private static void DrawRotatedIcon(
