@@ -130,7 +130,7 @@ namespace KRWF.RimKata
 
         public static bool TryResolve(
             Projectile shot,
-            Thing hitThing,
+            ref Thing hitThing,
             bool blockedByShield)
         {
             RimKataMapComponent component =
@@ -151,12 +151,17 @@ namespace KRWF.RimKata
             Pawn shooter = shot.Launcher as Pawn;
             if (shooter?.Map == null
                 || target?.Map != shooter.Map
-                || !RimKataTargeting.IsInterceptionTargetActive(target))
+                || !RimKataTargeting.IsInterceptionTargetActive(target)
+                || !RimKataInterceptionTrajectory.TryGetContact(shot, target, out Vector3 contact))
             {
+                // Vanilla accepts a usedTarget Thing at any distance. Keep the
+                // shot's normal ground impact, not damage to that remote Thing.
+                hitThing = null;
                 return false;
             }
 
-            return RimKataInterceptionUtility.Resolve(shooter, target);
+            RimKataInterceptionTrajectory.PlaceAtContact(shot, contact);
+            return RimKataInterceptionUtility.Resolve(shooter, target, contact);
         }
     }
 
@@ -1024,9 +1029,20 @@ namespace KRWF.RimKata
                     && intendedTarget.HasThing
                     && intendedTarget.Thing == interceptionTarget)
                 {
-                    RimKataInterceptionShotRegistry.Register(
-                        __instance,
-                        interceptionTarget);
+                    // Only the vanilla hit branch reaches here. Use the actual
+                    // spawned ammo/speed, and never reroll a miss or home in flight.
+                    if (RimKataInterceptionTrajectory.TryRedirectHit(
+                        __instance, interceptionTarget,
+                        RimKataFireContext.Shooter, RimKataFireContext.ActiveVerb))
+                    {
+                        RimKataInterceptionShotRegistry.Register(
+                            __instance,
+                            interceptionTarget);
+                    }
+                    else
+                    {
+                        RimKataInterceptionTrajectory.ReleaseUnreachableHit(__instance);
+                    }
                 }
 
                 return;
@@ -1194,14 +1210,14 @@ namespace KRWF.RimKata
 
         public static bool Prefix(
             Projectile __instance,
-            Thing __0,
+            ref Thing __0,
             bool __1)
         {
             RimKataProjectileImpactContext.Enter(__instance);
 
             if (RimKataInterceptionShotRegistry.TryResolve(
                     __instance,
-                    __0,
+                    ref __0,
                     __1))
             {
                 if (!__instance.Destroyed)

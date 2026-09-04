@@ -31,6 +31,10 @@ using System;
 using System.Collections.Generic;
 namespace ExplosiveInterceptionImpactChecks {
     public enum DestroyMode { Vanish }
+    public struct Vector3 {
+        public float x, y, z;
+        public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
+    }
     public class Thing { public Map Map; }
     public sealed class Pawn : Thing { }
     public sealed class ProjectileProperties { public float explosionRadius; }
@@ -60,12 +64,33 @@ namespace ExplosiveInterceptionImpactChecks {
     public static class RimKataTargeting {
         public static bool IsInterceptionTargetActive(Projectile target) { return target.active; }
     }
+    public static class RimKataInterceptionTrajectory {
+        public static bool hasContact = true;
+        public static int calls, placements;
+        public static Vector3 contact = new Vector3(3f, 0f, 7f);
+        public static Vector3 placedContact;
+        public static Projectile placedShot;
+        public static bool TryGetContact(Projectile shot, Projectile target, out Vector3 position) {
+            calls++;
+            position = contact;
+            return hasContact;
+        }
+        public static void PlaceAtContact(Projectile shot, Vector3 position) {
+            placements++;
+            placedShot = shot;
+            placedContact = position;
+        }
+    }
     public static class RimKataInterceptionUtility {
         public static bool succeeds = true;
         public static int calls, criticalOutcomes;
+        public static Vector3 lastContact;
+        public static bool placementPrecedesResolution;
         public static Action onResolve;
-        public static bool Resolve(Pawn shooter, Projectile target) {
+        public static bool Resolve(Pawn shooter, Projectile target, Vector3 contact) {
             calls++;
+            lastContact = contact;
+            placementPrecedesResolution = RimKataInterceptionTrajectory.placements == 1;
             if (succeeds && target.critical) criticalOutcomes++;
             if (onResolve != null) onResolve();
             return succeeds;
@@ -82,6 +107,7 @@ namespace ExplosiveInterceptionImpactChecks {
     public sealed class Fixture {
         public Map map = new Map();
         public Projectile shot = new Projectile(), target = new Projectile();
+        public Thing originalHit;
         public Fixture(float radius = 1f) {
             shot.Map = target.Map = map;
             shot.Launcher = new Pawn { Map = map };
@@ -90,11 +116,16 @@ namespace ExplosiveInterceptionImpactChecks {
             RimKataInterceptionUtility.calls = RimKataInterceptionUtility.criticalOutcomes = 0;
             RimKataInterceptionUtility.succeeds = true;
             RimKataInterceptionUtility.onResolve = null;
+            RimKataInterceptionUtility.placementPrecedesResolution = false;
+            RimKataInterceptionTrajectory.hasContact = true;
+            RimKataInterceptionTrajectory.calls = RimKataInterceptionTrajectory.placements = 0;
+            RimKataInterceptionTrajectory.placedShot = null;
         }
         public bool Impact(Thing hit, bool blocked = false) {
-            bool allowed = Patch.Prefix(shot, hit, blocked);
+            bool allowed = Patch.Prefix(shot, ref hit, blocked);
             // Stand-in for the original method only records which branch runs.
             if (allowed) {
+                originalHit = hit;
                 shot.originals++;
                 if (shot.def.projectile.explosionRadius > 0f) {
                     if (shot.delayed) shot.scheduled++; else shot.explosions++;
@@ -117,6 +148,15 @@ namespace ExplosiveInterceptionImpactChecks {
             var explosive = new Fixture();
             Check(explosive.Impact(explosive.target) && explosive.shot.destroys == 0 && explosive.shot.explosions == 1 && RimKataInterceptionUtility.calls == 1,
                 "Successful explosive interceptor dispatches its own immediate impact exactly once");
+            Check(RimKataInterceptionTrajectory.calls == 1
+                    && RimKataInterceptionTrajectory.placements == 1
+                    && RimKataInterceptionTrajectory.placedShot == explosive.shot
+                    && RimKataInterceptionTrajectory.placedContact.x == RimKataInterceptionTrajectory.contact.x
+                    && RimKataInterceptionTrajectory.placedContact.z == RimKataInterceptionTrajectory.contact.z
+                    && RimKataInterceptionUtility.placementPrecedesResolution
+                    && RimKataInterceptionUtility.lastContact.x == RimKataInterceptionTrajectory.contact.x
+                    && RimKataInterceptionUtility.lastContact.z == RimKataInterceptionTrajectory.contact.z,
+                "Actual contact is checked once, places the shot, then forwards the same point to target resolution");
             var critical = new Fixture(); critical.target.critical = true;
             Check(critical.Impact(critical.target) && critical.shot.explosions == 1 && RimKataInterceptionUtility.criticalOutcomes == 1,
                 "Target critical outcome does not suppress interceptor impact");
@@ -135,19 +175,47 @@ namespace ExplosiveInterceptionImpactChecks {
             RimKataInterceptionUtility.onResolve = () => mapless.shot.Map = null;
             Check(!mapless.Impact(mapless.target) && mapless.shot.originals == 0, "Mapless explosive shot skips original");
             var blocked = new Fixture();
-            Check(blocked.Impact(blocked.target, true) && RimKataInterceptionUtility.calls == 0,
-                "Shield-blocked impact follows original path without target resolution");
+            Check(blocked.Impact(blocked.target, true) && blocked.originalHit == blocked.target
+                    && RimKataInterceptionUtility.calls == 0 && RimKataInterceptionTrajectory.calls == 0
+                    && RimKataInterceptionTrajectory.placements == 0,
+                "Shield-blocked impact preserves original hit target without contact or target resolution");
             var missed = new Fixture();
-            Check(missed.Impact(new Thing()) && RimKataInterceptionUtility.calls == 0,
-                "Wrong hit target follows original path without target resolution");
+            Thing obstacle = new Thing();
+            Check(missed.Impact(obstacle) && missed.originalHit == obstacle
+                    && RimKataInterceptionUtility.calls == 0 && RimKataInterceptionTrajectory.calls == 0
+                    && RimKataInterceptionTrajectory.placements == 0,
+                "Wrong hit target preserves original obstacle without contact or target resolution");
+            var remote = new Fixture(); RimKataInterceptionTrajectory.hasContact = false;
+            Check(remote.Impact(remote.target) && remote.originalHit == null
+                    && remote.shot.explosions == 1 && RimKataInterceptionUtility.calls == 0
+                    && RimKataInterceptionTrajectory.calls == 1 && RimKataInterceptionTrajectory.placements == 0,
+                "Remote reference-only hit becomes a ground impact without resolving the distant target");
+            remote.Impact(remote.target);
+            Check(RimKataInterceptionTrajectory.calls == 1 && RimKataInterceptionUtility.calls == 0,
+                "Failed spatial contact consumes the pair and is not retried during nested or later impact");
             var failed = new Fixture(); RimKataInterceptionUtility.succeeds = false;
-            Check(failed.Impact(failed.target) && failed.shot.destroys == 0 && RimKataInterceptionUtility.calls == 1,
+            Check(failed.Impact(failed.target) && failed.originalHit == failed.target
+                    && failed.shot.destroys == 0 && RimKataInterceptionUtility.calls == 1,
                 "Failed target resolution retains original impact");
             var stale = new Fixture(); stale.target.active = false;
-            Check(stale.Impact(stale.target) && RimKataInterceptionUtility.calls == 0, "Inactive target retains original impact");
+            Check(stale.Impact(stale.target) && stale.originalHit == null
+                    && RimKataInterceptionUtility.calls == 0 && RimKataInterceptionTrajectory.calls == 0
+                    && RimKataInterceptionTrajectory.placements == 0,
+                "Inactive target follows original ground impact without remote damage or trajectory work");
+            var invalidShooter = new Fixture(); invalidShooter.shot.Launcher = new Thing();
+            Check(invalidShooter.Impact(invalidShooter.target) && invalidShooter.originalHit == null
+                    && RimKataInterceptionUtility.calls == 0 && RimKataInterceptionTrajectory.calls == 0
+                    && RimKataInterceptionTrajectory.placements == 0,
+                "Invalid shooter clears the linked target before original impact");
+            var otherMap = new Fixture(); otherMap.target.Map = new Map();
+            Check(otherMap.Impact(otherMap.target) && otherMap.originalHit == null
+                    && RimKataInterceptionUtility.calls == 0 && RimKataInterceptionTrajectory.calls == 0
+                    && RimKataInterceptionTrajectory.placements == 0,
+                "Target on another map cannot receive a reference-only hit");
             var nested = new Fixture();
-            bool outer = Patch.Prefix(nested.shot, nested.target, false);
-            bool inner = Patch.Prefix(nested.shot, nested.target, false);
+            Thing nestedHit = nested.target;
+            bool outer = Patch.Prefix(nested.shot, ref nestedHit, false);
+            bool inner = Patch.Prefix(nested.shot, ref nestedHit, false);
             var error = new Exception("original failure");
             Exception returned = Patch.Finalizer(error);
             bool innerRestored = RimKataProjectileImpactContext.CurrentProjectile == nested.shot && nested.map.component.finished == 0;

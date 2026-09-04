@@ -2442,7 +2442,9 @@ namespace KRWF.RimKata
                         verb,
                         projectile,
                         rangeSquared)
-                    && !destination.Contains(projectile))
+                    && !destination.Contains(projectile)
+                    && RimKataInterceptionTrajectory.CanIntercept(
+                        pawn, verb, projectile, 0, rangeSquared))
                 {
                     destination.Add(projectile);
                 }

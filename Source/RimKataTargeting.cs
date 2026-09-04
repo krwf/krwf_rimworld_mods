@@ -201,7 +201,7 @@ namespace KRWF.RimKata
 
     public static class RimKataInterceptionUtility
     {
-        public static bool Resolve(Pawn pawn, Projectile projectile)
+        public static bool Resolve(Pawn pawn, Projectile projectile, Vector3 impactPosition)
         {
             if (pawn?.Map == null
                 || projectile == null
@@ -212,7 +212,6 @@ namespace KRWF.RimKata
             }
 
             Map impactMap = projectile.Map;
-            Vector3 impactPosition = projectile.ExactPosition;
             float impactAngle = projectile.ExactRotation.eulerAngles.y;
             IntVec3 currentCell = impactPosition.ToIntVec3();
             if (impactMap == null || !currentCell.InBounds(impactMap))

@@ -4588,6 +4588,15 @@ namespace KRWF.RimKata
                     cycle);
 
                 int totalWarmup = normalWarmup + openingBonus;
+                // Predict once when aiming starts, not from per-tick ValidPlan.
+                if (cycle.plannedInterception
+                    && !RimKataInterceptionTrajectory.CanIntercept(
+                        pawn, cycle.plannedActionVerb,
+                        cycle.plannedTarget as Projectile, totalWarmup))
+                {
+                    ClearTargetPreservingCycle(cycle);
+                    return false;
+                }
                 cycle.warmupTotalTicks = totalWarmup;
                 cycle.warmupTicksRemaining = totalWarmup;
                 if (cycle.warmupTicksRemaining > 0)
