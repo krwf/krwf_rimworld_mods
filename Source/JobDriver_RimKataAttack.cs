@@ -35,24 +35,6 @@ namespace KRWF.RimKata
             }
         }
 
-        public static void Invoke(Action action)
-        {
-            if (action == null)
-            {
-                return;
-            }
-
-            Enter(false);
-            try
-            {
-                action();
-            }
-            finally
-            {
-                Exit(false);
-            }
-        }
-
         public static T Invoke<T>(Func<T> action)
         {
             if (action == null)
@@ -469,6 +451,7 @@ namespace KRWF.RimKata
                     || state?.CloseCombatActive == true;
 
                 TickCombatFire(
+                    state,
                     assignedTarget,
                     dodgeCloseCombat,
                     assignedTargetInTouchRange || immediateCloseTarget != null);
@@ -484,7 +467,7 @@ namespace KRWF.RimKata
                 if (!canRush && !CanAttackWithoutRushing(assignedTarget))
                 {
                     pawn.pather?.StopDead();
-                    TickAdvancingFire(assignedTarget);
+                    TickAdvancingFire(state, assignedTarget);
                     return;
                 }
 
@@ -495,7 +478,7 @@ namespace KRWF.RimKata
                     EnsurePathToAssignedTarget();
                 }
 
-                TickAdvancingFire(assignedTarget);
+                TickAdvancingFire(state, assignedTarget);
                 return;
             }
 
@@ -505,31 +488,38 @@ namespace KRWF.RimKata
             }
 
             pawn.pather.StopDead();
-            TickCloseCombat(assignedTarget);
+            TickCloseCombat(state, assignedTarget);
         }
 
-        private void TickAdvancingFire(Thing assignedTarget)
+        private void TickAdvancingFire(
+            RimKataPawnCombatState state,
+            Thing assignedTarget)
         {
-            TickCombatFire(assignedTarget, false, true);
+            TickCombatFire(state, assignedTarget, false, true);
         }
 
-        private void TickCloseCombat(Thing assignedTarget)
+        private void TickCloseCombat(
+            RimKataPawnCombatState state,
+            Thing assignedTarget)
         {
-            TickCombatFire(assignedTarget, true, true);
+            TickCombatFire(state, assignedTarget, true, true);
         }
 
         private void TickCombatFire(
+            RimKataPawnCombatState state,
             Thing assignedTarget,
             bool closeCombatContext,
             bool closeTargetResolved)
         {
-            RimKataDualWeaponController.Tick(
+            RimKataDualWeaponController.TickWithKnownState(
                 pawn,
+                state,
                 assignedTarget,
                 IsPlayerForced,
                 job.killIncappedTarget,
                 closeCombatContext,
-                closeTargetResolved);
+                closeTargetResolved,
+                true);
         }
 
         private void ClearAimStance()
