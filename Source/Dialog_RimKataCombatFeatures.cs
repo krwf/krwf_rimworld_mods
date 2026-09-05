@@ -8,9 +8,16 @@ namespace KRWF.RimKata
         private const float RowHeight = 30f;
         private const float RestrictionButtonHeight = 30f;
         private const float CloseButtonHeight = 30f;
-        private const float HorizontalPadding = 24f;
+        private const float BottomButtonGap = 8f;
+        private const float MinimumButtonWidth = 90f;
+        private const float ButtonHorizontalPadding = 28f;
+        private const float CheckboxSize = 24f;
+        private const float CheckboxLabelGap = 6f;
         private const float VerticalPadding = 18f;
+        private const float MinimumWindowWidth = 220f;
+        private const float WindowScreenMargin = 80f;
         private readonly RimKataSettings settings;
+        private bool commitChangesOnClose;
         private bool secondaryWeaponEnabled;
         private bool singleShotConversionEnabled;
         private bool randomAttackEnabled;
@@ -57,33 +64,62 @@ namespace KRWF.RimKata
 
             doCloseX = false;
             doCloseButton = false;
-            closeOnClickedOutside = false;
+            closeOnClickedOutside = true;
             closeOnAccept = false;
             closeOnCancel = false;
             absorbInputAroundWindow = true;
+            resizeable = false;
         }
 
         public override Vector2 InitialSize
         {
             get
             {
-                float labelWidth = 0f;
+                float featureLabelWidth = 0f;
                 for (int i = 0; i < LabelKeys.Length; i++)
                 {
-                    labelWidth = Mathf.Max(labelWidth, Text.CalcSize(LabelKeys[i].Translate()).x);
+                    featureLabelWidth = Mathf.Max(
+                        featureLabelWidth,
+                        Text.CalcSize(LabelKeys[i].Translate()).x);
                 }
 
-                labelWidth = Mathf.Max(labelWidth, Text.CalcSize("KRWF_RimKata_RemoveRestrictions".Translate()).x);
-                labelWidth = Mathf.Max(labelWidth, Text.CalcSize("KRWF_RimKata_RestoreRestrictions".Translate()).x);
-                float closeWidth = Text.CalcSize("Close".Translate()).x + 28f;
-                float width = Mathf.Max(labelWidth + 54f, closeWidth + HorizontalPadding * 2f);
+                float restrictionLabelWidth = Mathf.Max(
+                    Text.CalcSize(
+                        "KRWF_RimKata_RemoveRestrictions".Translate()).x,
+                    Text.CalcSize(
+                        "KRWF_RimKata_RestoreRestrictions".Translate()).x);
+                float closeWidth = Mathf.Max(
+                    MinimumButtonWidth,
+                    Text.CalcSize("Close".Translate()).x
+                        + ButtonHorizontalPadding);
+                float confirmWidth = Mathf.Max(
+                    MinimumButtonWidth,
+                    Text.CalcSize("Confirm".Translate()).x
+                        + ButtonHorizontalPadding);
+                float buttonRowWidth = closeWidth
+                    + BottomButtonGap
+                    + confirmWidth;
+                float contentWidth = Mathf.Max(
+                    featureLabelWidth + CheckboxSize + CheckboxLabelGap,
+                    Mathf.Max(
+                        restrictionLabelWidth + ButtonHorizontalPadding,
+                        buttonRowWidth));
+                float width = contentWidth + Margin * 2f;
                 float height = VerticalPadding * 2f
                     + RestrictionButtonHeight
                     + 10f
                     + LabelKeys.Length * RowHeight
                     + 10f
                     + CloseButtonHeight;
-                return new Vector2(Mathf.Clamp(width, 220f, 420f), height);
+                float maximumWindowWidth = Mathf.Max(
+                    MinimumWindowWidth,
+                    UI.screenWidth - WindowScreenMargin);
+                return new Vector2(
+                    Mathf.Clamp(
+                        width,
+                        MinimumWindowWidth,
+                        maximumWindowWidth),
+                    height);
             }
         }
 
@@ -111,10 +147,49 @@ namespace KRWF.RimKata
 
             y += 10f;
             string closeLabel = "Close".Translate();
-            float closeWidth = Mathf.Clamp(Text.CalcSize(closeLabel).x + 28f, 90f, inRect.width);
-            Rect closeRect = new Rect(inRect.x + (inRect.width - closeWidth) * 0.5f, y, closeWidth, CloseButtonHeight);
+            string confirmLabel = "Confirm".Translate();
+            float closeWidth = Mathf.Max(
+                MinimumButtonWidth,
+                Text.CalcSize(closeLabel).x + ButtonHorizontalPadding);
+            float confirmWidth = Mathf.Max(
+                MinimumButtonWidth,
+                Text.CalcSize(confirmLabel).x + ButtonHorizontalPadding);
+            float availableButtonWidth = Mathf.Max(
+                0f,
+                inRect.width - BottomButtonGap);
+            float naturalButtonWidth = closeWidth + confirmWidth;
+            if (naturalButtonWidth > availableButtonWidth
+                && naturalButtonWidth > 0f)
+            {
+                float scale = availableButtonWidth / naturalButtonWidth;
+                closeWidth *= scale;
+                confirmWidth *= scale;
+            }
+
+            float buttonRowWidth = closeWidth
+                + BottomButtonGap
+                + confirmWidth;
+            float buttonX = inRect.x
+                + (inRect.width - buttonRowWidth) * 0.5f;
+            Rect closeRect = new Rect(
+                buttonX,
+                y,
+                closeWidth,
+                CloseButtonHeight);
             if (Widgets.ButtonText(closeRect, closeLabel))
             {
+                Close();
+                return;
+            }
+
+            Rect confirmRect = new Rect(
+                closeRect.xMax + BottomButtonGap,
+                y,
+                confirmWidth,
+                CloseButtonHeight);
+            if (Widgets.ButtonText(confirmRect, confirmLabel))
+            {
+                commitChangesOnClose = true;
                 Close();
             }
         }
@@ -122,7 +197,7 @@ namespace KRWF.RimKata
         public override void PostClose()
         {
             base.PostClose();
-            if (settings == null)
+            if (!commitChangesOnClose || settings == null)
             {
                 return;
             }
