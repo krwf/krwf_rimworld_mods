@@ -35,6 +35,8 @@ $rkRemove = Get-CSharpBlock $rkCombatSource 'private void RemoveStateAt('
 $rkMapRemoved = Get-CSharpBlock $rkCombatSource 'public override void MapRemoved()'
 $rkVisualLoadout = Get-CSharpBlock $rkVisualSource 'private static bool TryGetVisualLoadout('
 $rkResponseSnapshot = Get-CSharpBlock $rkVisualSource 'public static bool TryGetCachedResponseSnapshot('
+$rkCarryPush = Get-CSharpBlock $rkVisualSource 'public static RimKataCarryDrawContext Push('
+$rkTryDrawPair = Get-CSharpBlock $rkVisualSource 'public static bool TryDrawPair('
 $rkPush = Get-CSharpBlock $rkVisualSource 'public static RimKataGunReadyDrawContext Push('
 $rkCandidate = Get-CSharpBlock $rkVisualSource 'private static bool MayNeedGunReadyTarget('
 $rkCombatIndicators = Get-CSharpBlock $rkVisualSource 'public static void DrawCombatIndicators('
@@ -85,22 +87,49 @@ if ($rkRemoveDictionary -ge $rkRemoveMarker) {
     throw 'Combat-state marker is cleared before the indexed state is removed.'
 }
 
-if ($rkCandidate -notmatch 'CurJobDef\s*==\s*RimKataDefOf\.RimKata_Attack' -or
-    $rkCandidate -notmatch 'RimKataCombatStatePresenceCache\.Contains\(pawn, pawn\?\.Map\)' -or
-    $rkCandidate -match 'Drafted|Moving|Stance|GetComponent|GetState|\.Active|TryGetEnabledCombatVerb') {
-    throw 'Gun-ready candidate gate no longer uses only Job or state presence.'
+if ($rkCandidate -notmatch 'bool statePresent' -or
+    $rkCandidate -notmatch 'CurJobDef\s*==\s*RimKataDefOf\.RimKata_Attack' -or
+    $rkCandidate -notmatch '\|\|\s*statePresent' -or
+    $rkCandidate -match 'RimKataCombatStatePresenceCache|Drafted|Moving|Stance|GetComponent|GetState|\.Active|TryGetEnabledCombatVerb') {
+    throw 'Gun-ready candidate gate no longer reuses only Job or supplied state presence.'
 }
 
+$rkStatePresence = Get-Index $rkPush 'RimKataCombatStatePresenceCache.Contains('
+$rkResponseProbe = Get-Index $rkPush 'TryGetResponseParticipantLoadout('
+$rkCandidateCall = Get-Index $rkPush 'MayNeedGunReadyTarget(pawn, statePresent)'
+$rkCandidateChecks = Get-Index $rkPush 'bool gunReadyCandidate = mayNeedGunReadyTarget'
+$rkPawnConditionChecks = Get-Index $rkPush '&& !pawn.Dead'
+$rkNeedsContext = Get-Index $rkPush 'if (!needsActiveContext)'
+$rkSnapshotProbe = Get-Index $rkPush 'TryGetCachedResponseSnapshot('
+$rkActiveContext = Get-Index $rkPush 'RimKataGunReadyDrawContext next'
 $rkContextPublish = Get-Index $rkPush 'current = next;'
-$rkDormancyGate = Get-Index $rkPush 'MayNeedGunReadyTarget(pawn)'
+$rkGunReadyGate = Get-Index $rkPush 'if (!gunReadyCandidate)'
 $rkComponent = Get-Index $rkPush 'GetComponent<RimKataMapComponent>'
 $rkTarget = Get-Index $rkPush 'TryGetGunReadyTarget'
 $rkVerb = Get-Index $rkPush 'TryGetEnabledCombatVerb'
-if (-not ($rkContextPublish -lt $rkDormancyGate -and
-          $rkDormancyGate -lt $rkComponent -and
+if (-not ($rkStatePresence -lt $rkResponseProbe -and
+          $rkStatePresence -lt $rkCandidateCall -and
+          $rkStatePresence -lt $rkSnapshotProbe -and
+          $rkCandidateCall -lt $rkCandidateChecks -and
+          $rkCandidateChecks -lt $rkPawnConditionChecks -and
+          $rkPawnConditionChecks -lt $rkNeedsContext -and
+          $rkNeedsContext -lt $rkSnapshotProbe -and
+          $rkSnapshotProbe -lt $rkContextPublish -and
+          $rkContextPublish -lt $rkGunReadyGate -and
+          $rkGunReadyGate -lt $rkComponent -and
           $rkComponent -lt $rkTarget -and
           $rkTarget -lt $rkVerb)) {
-    throw 'Gun-ready dormancy gate moved across a required render boundary.'
+    throw 'Gun-ready shared-state dormancy gates moved across a required render boundary.'
+}
+
+if ([regex]::Matches($rkPush, 'RimKataCombatStatePresenceCache\.Contains').Count -ne 1) {
+    throw 'Gun-ready render path no longer shares exactly one state-presence probe.'
+}
+
+if ($rkPush -notmatch 'bool\s+statePresent\s*=\s*RimKataCombatStatePresenceCache\.Contains\(\s*pawn,\s*pawn\.Map\s*\);' -or
+    $rkPush -notmatch 'bool\s+mayNeedGunReadyTarget\s*=\s*rimKataUser\s*&&\s*MayNeedGunReadyTarget\(\s*pawn,\s*statePresent\s*\);' -or
+    $rkPush -notmatch 'bool\s+gunReadyCandidate\s*=\s*mayNeedGunReadyTarget\s*&&\s*!pawn\.Dead\s*&&\s*!pawn\.Downed\s*&&\s*!pawn\.IsBurning\(\)\s*&&\s*primary != null\s*&&\s*pawn\.carryTracker\?\.CarriedThing == null\s*&&\s*\(flags & PawnRenderFlags\.NeverAimWeapon\) == 0\s*&&\s*!\(pawn\.stances\?\.curStance is Stance_Busy\);') {
+    throw 'Dead, downed, burning, carrying, or busy pawns escaped the guarded gun-ready candidate boundary.'
 }
 
 if ([regex]::Matches($rkPush, 'TryGetGunReadyTarget').Count -ne 1) {
@@ -113,9 +142,55 @@ if ($rkPrimaryGate -ge $rkLoadoutRead) {
     throw 'Unarmed pawn gate moved behind the world-loadout lookup.'
 }
 
-if ($rkPush -notmatch 'if \(secondary == null\)[\s\S]*?TryGetResponseParticipantLoadout' -or
-    $rkPush -notmatch 'TryGetCachedResponseSnapshot\([\s\S]*?responseParticipant') {
-    throw 'Regular dual users no longer defer the response-participant probe.'
+$rkResponseGate = Get-CSharpBlock $rkPush 'if (statePresent && (!rimKataUser || secondary == null))'
+if ([regex]::Matches($rkPush, 'TryGetResponseParticipantLoadout').Count -ne 1 -or
+    [regex]::Matches($rkPush, 'TryGetCachedResponseSnapshot').Count -ne 1 -or
+    $rkResponseGate -notmatch 'TryGetResponseParticipantLoadout' -or
+    $rkPush -notmatch 'bool snapshotActive\s*=\s*statePresent\s*&&\s*\(secondary != null \|\| responseParticipant\)\s*&&\s*RimKataVisualUtility\.TryGetCachedResponseSnapshot\(\s*pawn,\s*responseParticipant,\s*out snapshot\);') {
+    throw 'Stateless renderers no longer defer response-participant and snapshot probes.'
+}
+
+if ($rkPush -notmatch 'bool\s+needsActiveContext\s*=\s*secondary != null\s*\|\|\s*responseParticipant\s*\|\|\s*gunReadyCandidate;\s*if \(!needsActiveContext\)\s*\{\s*return previous;\s*\}' -or
+    $rkNeedsContext -ge $rkActiveContext) {
+    throw 'Gun-ready render path regained an active context for an irrelevant armed pawn.'
+}
+
+$rkInactiveContext = Get-Index $rkPush 'current = new RimKataGunReadyDrawContext'
+$rkInactiveInitializer = Get-CSharpBlock $rkPush 'current = new RimKataGunReadyDrawContext'
+$rkPortraitGate = Get-Index $rkPush 'if (portrait || pawn?.Spawned != true)'
+if (-not ($rkInactiveContext -lt $rkPortraitGate -and
+          $rkPortraitGate -lt $rkPrimaryGate) -or
+    $rkInactiveInitializer -notmatch 'scoped\s*=\s*true' -or
+    $rkInactiveInitializer -notmatch 'portrait\s*=\s*portrait' -or
+    $rkInactiveInitializer -match '(active|gunReady)\s*=\s*true') {
+    throw 'Gun-ready scope no longer publishes an inactive context before early returns.'
+}
+
+$rkCarryScoped = Get-Index $rkCarryPush 'if (renderContext.scoped)'
+$rkCarryFallback = Get-Index $rkCarryPush 'FindPawnOwner(weapon)'
+$rkPairScoped = Get-Index $rkTryDrawPair 'if (renderContext.scoped)'
+$rkPairFallback = Get-Index $rkTryDrawPair 'FindPawnOwner(equipment)'
+$rkCarryScopedBlock = Get-CSharpBlock $rkCarryPush 'if (renderContext.scoped)'
+$rkPairScopedBlock = Get-CSharpBlock $rkTryDrawPair 'if (renderContext.scoped)'
+$rkPairInactiveBlock = Get-CSharpBlock $rkPairScopedBlock 'if (!renderContext.active)'
+if ($rkCarryScoped -ge $rkCarryFallback -or
+    $rkPairScoped -ge $rkPairFallback -or
+    $rkCarryScopedBlock -notmatch 'return previous;\s*\}$' -or
+    $rkPairInactiveBlock -notmatch 'return false;\s*\}$') {
+    throw 'Inactive gun-ready contexts no longer stop downstream owner/loadout fallback work.'
+}
+
+$rkFinalGunReady = Get-Index $rkPush 'next.gunReady = true;'
+$rkFinalAim = Get-Index $rkPush 'next.aimAngle = aimAngle;'
+$rkFinalPublish = $rkPush.IndexOf(
+    'current = next;',
+    $rkFinalAim,
+    [StringComparison]::Ordinal)
+if ($rkFinalPublish -lt 0 -or
+    -not ($rkVerb -lt $rkFinalGunReady -and
+          $rkFinalGunReady -lt $rkFinalAim -and
+          $rkFinalAim -lt $rkFinalPublish)) {
+    throw 'Successful gun-ready rendering no longer publishes its target-facing context.'
 }
 
 if ($rkResponseSnapshot -notmatch '!participantKnown[\s\S]*?IsParticipant\(pawn\)' -or
@@ -240,6 +315,7 @@ namespace KRWF.RimKata
 
         public static int Run()
         {
+            checks = 0;
             var pawn = new Pawn();
             var oldMap = new Map();
             var newMap = new Map();

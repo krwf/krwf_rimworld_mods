@@ -1820,34 +1820,30 @@ namespace KRWF.RimKata
                     pawn,
                     out ThingWithComps primary,
                     out ThingWithComps rawSecondary);
+            bool statePresent = RimKataCombatStatePresenceCache.Contains(
+                pawn,
+                pawn.Map);
             bool responseParticipant = false;
             ThingWithComps participantPrimary = null;
             ThingWithComps participantSecondary = null;
-            ThingWithComps secondary;
-            if (rimKataUser)
-            {
-                secondary = RimKataVisualUtility.IsSecondaryUsable(
+            ThingWithComps secondary = rimKataUser
+                && RimKataVisualUtility.IsSecondaryUsable(
                     pawn,
                     primary,
                     rawSecondary)
                         ? rawSecondary
                         : null;
-                if (secondary == null)
-                {
-                    responseParticipant = RimKataVisualUtility
-                        .TryGetResponseParticipantLoadout(
-                            pawn,
-                            out participantPrimary,
-                            out participantSecondary);
-                }
-            }
-            else
+            if (statePresent && (!rimKataUser || secondary == null))
             {
                 responseParticipant = RimKataVisualUtility
                     .TryGetResponseParticipantLoadout(
                         pawn,
                         out participantPrimary,
                         out participantSecondary);
+            }
+
+            if (!rimKataUser)
+            {
                 if (!responseParticipant)
                 {
                     return previous;
@@ -1857,9 +1853,28 @@ namespace KRWF.RimKata
                 secondary = participantSecondary;
             }
 
+            bool mayNeedGunReadyTarget = rimKataUser
+                && MayNeedGunReadyTarget(pawn, statePresent);
+            bool gunReadyCandidate = mayNeedGunReadyTarget
+                && !pawn.Dead
+                && !pawn.Downed
+                && !pawn.IsBurning()
+                && primary != null
+                && pawn.carryTracker?.CarriedThing == null
+                && (flags & PawnRenderFlags.NeverAimWeapon) == 0
+                && !(pawn.stances?.curStance is Stance_Busy);
+            bool needsActiveContext = secondary != null
+                || responseParticipant
+                || gunReadyCandidate;
+            if (!needsActiveContext)
+            {
+                return previous;
+            }
+
             RimKataVisualSnapshot snapshot =
                 default(RimKataVisualSnapshot);
-            bool snapshotActive = (secondary != null || responseParticipant)
+            bool snapshotActive = statePresent
+                && (secondary != null || responseParticipant)
                 && RimKataVisualUtility.TryGetCachedResponseSnapshot(
                     pawn,
                     responseParticipant,
@@ -1876,19 +1891,7 @@ namespace KRWF.RimKata
                     snapshot = snapshot
                 };
             current = next;
-            if (!rimKataUser
-                || pawn.Dead
-                || pawn.Downed
-                || pawn.IsBurning()
-                || primary == null
-                || pawn.carryTracker?.CarriedThing != null
-                || (flags & PawnRenderFlags.NeverAimWeapon) != 0
-                || pawn.stances?.curStance is Stance_Busy)
-            {
-                return previous;
-            }
-
-            if (!MayNeedGunReadyTarget(pawn))
+            if (!gunReadyCandidate)
             {
                 return previous;
             }
@@ -1928,10 +1931,12 @@ namespace KRWF.RimKata
             return previous;
         }
 
-        private static bool MayNeedGunReadyTarget(Pawn pawn)
+        private static bool MayNeedGunReadyTarget(
+            Pawn pawn,
+            bool statePresent)
         {
             return pawn?.CurJobDef == RimKataDefOf.RimKata_Attack
-                || RimKataCombatStatePresenceCache.Contains(pawn, pawn?.Map);
+                || statePresent;
         }
 
         public static void Pop(RimKataGunReadyDrawContext previous)
