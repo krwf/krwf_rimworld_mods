@@ -2127,7 +2127,10 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             bool? randomAttackEnabled = null)
         {
-            if (pawn?.Map == null || cycle?.weapon == null)
+            // DedicatedActive is the cheap structural prerequisite for every
+            // target-bearing branch below.  Cooldown/visual-only retained
+            // cycles must not resolve a Verb on every pawn tick.
+            if (pawn?.Map == null || cycle?.DedicatedActive != true)
             {
                 return false;
             }
@@ -5486,6 +5489,13 @@ namespace KRWF.RimKata
             bool firedFromVanillaOpening = cycle.openingWarmupPending
                 || (cycle.burstShotsRemaining > 0
                     && cycle.cooldownFromVanillaOpening);
+            if (!firedFromVanillaOpening
+                && cycle.burstShotsRemaining <= 0)
+            {
+                RimKataVerbUtility.RequestNormalSpeedForCombat(
+                    actionVerb,
+                    target);
+            }
             bool acted;
             Projectile interceptedProjectile = cycle.plannedTarget as Projectile;
             if (actionVerb.IsMeleeAttack)

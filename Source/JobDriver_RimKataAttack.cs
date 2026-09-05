@@ -240,8 +240,11 @@ namespace KRWF.RimKata
 
     public sealed class JobDriver_RimKataAttack : JobDriver, IRimKataResponseCooldown
     {
+        private const int NormalSpeedRefreshIntervalTicks = 600;
+
         private int warmupTicksRemaining = -1;
         private int cooldownTicksRemaining;
+        private int nextNormalSpeedRequestTick;
         private Thing plannedTarget;
         private bool plannedInterception;
         private bool plannedCloseAttack;
@@ -430,6 +433,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            MaintainCombatNormalSpeedRequest(assignedTarget);
             RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
             RimKataPawnCombatState state = component?.GetState(pawn, false);
 
@@ -503,6 +507,21 @@ namespace KRWF.RimKata
             Thing assignedTarget)
         {
             TickCombatFire(state, assignedTarget, true, true);
+        }
+
+        private void MaintainCombatNormalSpeedRequest(Thing assignedTarget)
+        {
+            int currentTick = Find.TickManager?.TicksGame ?? -1;
+            if (currentTick < 0 || currentTick < nextNormalSpeedRequestTick)
+            {
+                return;
+            }
+
+            nextNormalSpeedRequestTick = currentTick
+                + NormalSpeedRefreshIntervalTicks;
+            RimKataVerbUtility.RequestNormalSpeedForCombat(
+                job?.verbToUse,
+                new LocalTargetInfo(assignedTarget));
         }
 
         private void TickCombatFire(

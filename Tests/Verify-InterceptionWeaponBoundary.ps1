@@ -202,6 +202,9 @@ namespace InterceptionWeaponBoundaryChecks {
         public IntVec3 plannedTargetCell;
         public bool HasPlan { get { return plannedTarget != null; } }
         public bool HasAutomaticCandidates { get { return automaticCandidates != null && automaticCandidates.Count > 0; } }
+        public bool DedicatedActive { get { return weapon != null
+            && (cachedCandidateTarget != null || HasAutomaticCandidates
+                || focusedTarget != null || HasPlan); } }
         $rkClearPlan
         $rkClearCandidates
     }
@@ -355,6 +358,12 @@ namespace InterceptionWeaponBoundaryChecks {
             RimKataDualWeaponController.QueueIdleProjectileSearch(emptyAllowed);
             Check(emptyAllowed.verbReads == 0 && emptyAllowed.rangeReads == 0 && emptyAllowed.trajectoryChecks == 0,
                 "Approved gun also performs no empty-map interception work");
+
+            var targetlessRetained = Create(true, false);
+            Check(!RimKataDualWeaponController.HasWorkForCheck(targetlessRetained),
+                "Targetless retained weapon cycle contributes no combat work");
+            Check(targetlessRetained.verbReads == 0,
+                "Targetless retained weapon cycle skips CombatVerb resolution");
 
             var preferred = Create(false, false);
             var ordinary = new Thing();

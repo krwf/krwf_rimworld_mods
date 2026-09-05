@@ -402,12 +402,82 @@ namespace KRWF.RimKata
 
     public static class RimKataVerbUtility
     {
+        private delegate bool CausesTimeSlowdownDelegate(
+            Verb verb,
+            LocalTargetInfo target);
+
         private static readonly FieldInfo CurrentTargetField = AccessTools.Field(typeof(Verb), "currentTarget");
         private static readonly FieldInfo CurrentDestinationField = AccessTools.Field(typeof(Verb), "currentDestination");
         private static readonly FieldInfo SurpriseAttackField = AccessTools.Field(typeof(Verb), "surpriseAttack");
         private static readonly FieldInfo CanHitNonTargetPawnsField = AccessTools.Field(typeof(Verb), "canHitNonTargetPawnsNow");
         private static readonly FieldInfo PreventFriendlyFireField = AccessTools.Field(typeof(Verb), "preventFriendlyFire");
         private static readonly FieldInfo NonInterruptingSelfCastField = AccessTools.Field(typeof(Verb), "nonInterruptingSelfCast");
+        private static readonly CausesTimeSlowdownDelegate CausesTimeSlowdown =
+            ResolveCausesTimeSlowdown();
+        private static TickManager lastNormalSpeedSignalManager;
+        private static int lastNormalSpeedSignalTick = -1;
+
+        private static CausesTimeSlowdownDelegate ResolveCausesTimeSlowdown()
+        {
+            MethodInfo method = AccessTools.Method(
+                typeof(Verb),
+                "CausesTimeSlowdown",
+                new[] { typeof(LocalTargetInfo) });
+            if (method == null)
+            {
+                Log.Warning(
+                    "[RimKata] Could not resolve Verb.CausesTimeSlowdown; RimKata attacks will not request vanilla combat speed.");
+                return null;
+            }
+
+            try
+            {
+                return AccessTools.MethodDelegate<CausesTimeSlowdownDelegate>(
+                    method,
+                    null,
+                    false,
+                    null);
+            }
+            catch (Exception exception)
+            {
+                Log.Warning(
+                    "[RimKata] Could not bind Verb.CausesTimeSlowdown; RimKata attacks will not request vanilla combat speed. "
+                    + exception.Message);
+                return null;
+            }
+        }
+
+        internal static void RequestNormalSpeedForCombat(
+            Verb verb,
+            LocalTargetInfo target)
+        {
+            TickManager tickManager = Find.TickManager;
+            if (verb == null
+                || tickManager == null
+                || CausesTimeSlowdown == null
+                || (ReferenceEquals(
+                        lastNormalSpeedSignalManager,
+                        tickManager)
+                    && lastNormalSpeedSignalTick == tickManager.TicksGame))
+            {
+                return;
+            }
+
+            if (!CausesTimeSlowdown(verb, target))
+            {
+                return;
+            }
+
+            TimeSlower slower = tickManager.slower;
+            if (slower == null)
+            {
+                return;
+            }
+
+            slower.SignalForceNormalSpeed();
+            lastNormalSpeedSignalManager = tickManager;
+            lastNormalSpeedSignalTick = tickManager.TicksGame;
+        }
 
         public static bool FireSingleShot(
             Verb verb,

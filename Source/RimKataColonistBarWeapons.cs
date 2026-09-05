@@ -175,4 +175,59 @@ namespace KRWF.RimKata
             }
         }
     }
+
+    [HarmonyPatch(typeof(ColonistBarColonistDrawer), "DrawIcons")]
+    public static class Patch_ColonistBarColonistDrawer_RimKataAttackIcon
+    {
+        private static readonly FieldInfo AttackStaticField = AccessTools.Field(
+            typeof(JobDefOf),
+            nameof(JobDefOf.AttackStatic));
+        private static readonly MethodInfo IsAttackJobMethod = AccessTools.Method(
+            typeof(Patch_ColonistBarColonistDrawer_RimKataAttackIcon),
+            nameof(IsAttackJob));
+
+        public static IEnumerable<CodeInstruction> Transpiler(
+            IEnumerable<CodeInstruction> instructions)
+        {
+            List<CodeInstruction> codes = new List<CodeInstruction>(instructions);
+            int comparisonIndex = -1;
+            int comparisonCount = 0;
+            for (int i = 0; i < codes.Count - 1; i++)
+            {
+                if (codes[i].opcode == OpCodes.Ldsfld
+                    && Equals(codes[i].operand, AttackStaticField)
+                    && (codes[i + 1].opcode == OpCodes.Bne_Un
+                        || codes[i + 1].opcode == OpCodes.Bne_Un_S))
+                {
+                    comparisonIndex = i;
+                    comparisonCount++;
+                }
+            }
+
+            if (comparisonCount != 1
+                || comparisonIndex < 0
+                || IsAttackJobMethod == null)
+            {
+                Log.Warning(
+                    "[RimKata] Expected one colonist-bar AttackStatic comparison for the RimKata combat icon, but found "
+                    + comparisonCount
+                    + ".");
+                return codes;
+            }
+
+            codes[comparisonIndex].opcode = OpCodes.Call;
+            codes[comparisonIndex].operand = IsAttackJobMethod;
+            codes[comparisonIndex + 1].opcode =
+                codes[comparisonIndex + 1].opcode == OpCodes.Bne_Un
+                    ? OpCodes.Brfalse
+                    : OpCodes.Brfalse_S;
+            return codes;
+        }
+
+        public static bool IsAttackJob(JobDef jobDef)
+        {
+            return jobDef == JobDefOf.AttackStatic
+                || jobDef == RimKataDefOf.RimKata_Attack;
+        }
+    }
 }

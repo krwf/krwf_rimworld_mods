@@ -86,6 +86,15 @@ namespace KRWF.RimKata
                         .TryConsumePendingDedicatedFollowupJob(pawn, state);
                 }
 
+                // New combat work is published by the attack, movement,
+                // defensive-response, and projectile-wake entry points before
+                // it reaches this per-tick driver.  Do not create an otherwise
+                // empty state merely because a drafted pawn is standing still.
+                if (state == null && pawn.pather?.Moving != true)
+                {
+                    return;
+                }
+
                 TickDualWeaponController(pawn, state, true);
                 return;
             }
@@ -205,6 +214,10 @@ namespace KRWF.RimKata
             if (!combatDemand)
             {
                 ResetIfActive(pawn, state);
+                if (pawn.pather?.Moving != true)
+                {
+                    state.ClearDraftedMovementSearchTracking();
+                }
 
                 return;
             }
