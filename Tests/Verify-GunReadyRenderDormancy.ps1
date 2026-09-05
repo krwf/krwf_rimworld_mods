@@ -36,12 +36,21 @@ $rkMapRemoved = Get-CSharpBlock $rkCombatSource 'public override void MapRemoved
 $rkVisualLoadout = Get-CSharpBlock $rkVisualSource 'private static bool TryGetVisualLoadout('
 $rkResponseSnapshot = Get-CSharpBlock $rkVisualSource 'public static bool TryGetCachedResponseSnapshot('
 $rkGunReadyUtility = Get-CSharpBlock $rkVisualSource 'internal static class RimKataGunReadyDrawUtility'
-$rkCarryPush = Get-CSharpBlock $rkVisualSource 'public static RimKataCarryDrawContext Push('
+$rkCarryUtility = Get-CSharpBlock $rkVisualSource 'internal static class RimKataCarryDrawUtility'
+$rkCarryPush = Get-CSharpBlock $rkCarryUtility 'public static int Push('
+$rkCarryEnterScope = Get-CSharpBlock $rkCarryUtility 'private static int EnterScope('
+$rkCarryEnsureNestedCapacity = Get-CSharpBlock $rkCarryUtility 'private static void EnsureNestedContextCapacity('
+$rkCarryPop = Get-CSharpBlock $rkCarryUtility 'public static void Pop('
+$rkCarryPushCatch = Get-CSharpBlock $rkCarryPush 'catch'
 $rkTryDrawPair = Get-CSharpBlock $rkVisualSource 'public static bool TryDrawPair('
+$rkDrawWeapon = Get-CSharpBlock $rkVisualSource 'private static void DrawWeapon('
+$rkSymmetricIdleSecondaryLoc = Get-CSharpBlock $rkVisualSource 'private static Vector3 SymmetricIdleSecondaryLoc('
+$rkResolveEquipmentPivot = Get-CSharpBlock $rkVisualSource 'internal static Vector3 ResolveEquipmentPivot('
 $rkDeflectionPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderUtility_RimKataDeflection'
 $rkGunReadyPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderUtility_RimKataGunReadyContext'
 $rkCarryGunReadyPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderUtility_RimKataCarryGunReady'
 $rkDrawGunReadyPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderUtility_RimKataDrawGunReady'
+$rkCarryPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderUtility_RimKataCarryDrawContext'
 $rkPush = Get-CSharpBlock $rkGunReadyUtility 'public static int Push('
 $rkEnterScope = Get-CSharpBlock $rkGunReadyUtility 'private static int EnterScope('
 $rkEnsureNestedCapacity = Get-CSharpBlock $rkGunReadyUtility 'private static void EnsureNestedContextCapacity('
@@ -272,16 +281,166 @@ if (-not ($rkEnterCall -lt $rkPortraitGate -and
     throw 'Gun-ready scope no longer publishes an inactive context before early returns.'
 }
 
+$rkCarryRefConsumerPattern = 'ref readonly\s+RimKataCarryDrawContext\s+\w+\s*=\s*ref\s+RimKataCarryDrawUtility\.Current;'
+$rkCarryRefConsumerBlocks = @(
+    $rkTryDrawPair,
+    $rkDrawWeapon,
+    $rkSymmetricIdleSecondaryLoc,
+    $rkResolveEquipmentPivot
+)
+if ($rkCarryUtility -notmatch 'public static ref readonly\s+RimKataCarryDrawContext\s+Current\s*=>\s*ref current;' -or
+    [regex]::Matches($rkVisualSource, 'RimKataCarryDrawUtility\.Current').Count -ne 4 -or
+    [regex]::Matches($rkVisualSource, $rkCarryRefConsumerPattern).Count -ne 4 -or
+    $rkVisualSource -match 'RimKataCarryDrawContext\s+\w+\s*=\s*RimKataCarryDrawUtility\.Current;') {
+    throw 'Carry Current or one of its four consumers regained a full context copy.'
+}
+foreach ($rkCarryRefConsumerBlock in $rkCarryRefConsumerBlocks) {
+    if ([regex]::Matches($rkCarryRefConsumerBlock, $rkCarryRefConsumerPattern).Count -ne 1) {
+        throw 'A carry context consumer no longer holds exactly one readonly reference.'
+    }
+}
+
+if ($rkCarryUtility -notmatch '\[ThreadStatic\]\s*private static int scopeDepth;' -or
+    $rkCarryUtility -notmatch '\[ThreadStatic\]\s*private static RimKataCarryDrawContext\[\] nestedContexts;' -or
+    $rkCarryPush -match '\bRimKataCarryDrawContext\b|\bcurrent\s*=|\bvar\s+\w+\s*=\s*current\s*;|return\s+previous|\bnext\.' -or
+    $rkCarryPush -notmatch 'public static int Push\(\s*ThingWithComps weapon,\s*Vector3 drawPos\)') {
+    throw 'Top-level carry scopes regained a full context token or local context copy.'
+}
+
+$rkCarryNestedSaveBlock = Get-CSharpBlock $rkCarryEnterScope 'if (previousDepth > 0)'
+$rkCarryEnterSave = Get-Index $rkCarryEnterScope 'nestedContexts[previousDepth - 1] = current;'
+$rkCarryEnterReset = Get-Index $rkCarryEnterScope 'current = default(RimKataCarryDrawContext);'
+$rkCarryEnterDepthPublish = Get-Index $rkCarryEnterScope 'scopeDepth = previousDepth + 1;'
+$rkCarryEnterInactivePublish = Get-Index $rkCarryEnterScope 'current.active = false;'
+if ([regex]::Matches($rkCarryEnterScope, 'nestedContexts\[previousDepth - 1\]\s*=\s*current;').Count -ne 1 -or
+    $rkCarryNestedSaveBlock -notmatch 'EnsureNestedContextCapacity\(previousDepth\);' -or
+    $rkCarryNestedSaveBlock -notmatch 'nestedContexts\[previousDepth - 1\]\s*=\s*current;' -or
+    $rkCarryNestedSaveBlock -notmatch 'current\s*=\s*default\(RimKataCarryDrawContext\);' -or
+    -not ($rkCarryEnterSave -lt $rkCarryEnterReset -and
+          $rkCarryEnterReset -lt $rkCarryEnterDepthPublish -and
+          $rkCarryEnterDepthPublish -lt $rkCarryEnterInactivePublish) -or
+    $rkCarryEnterScope -notmatch 'return scopeDepth;') {
+    throw 'Carry scopes no longer save a full context only for a nested scope.'
+}
+
+$rkCarryPopNoOp = Get-CSharpBlock $rkCarryPop 'if (scopeToken <= 0)'
+$rkCarryPopMismatch = Get-CSharpBlock $rkCarryPop 'if (scopeDepth != scopeToken)'
+$rkCarryPopTopLevel = Get-CSharpBlock $rkCarryPop 'if (previousDepth == 0)'
+$rkCarryPopRestore = Get-Index $rkCarryPop 'current = nestedContexts[nestedIndex];'
+$rkCarryPopClearSlot = Get-Index $rkCarryPop 'nestedContexts[nestedIndex] ='
+$rkCarryPopDepth = Get-Index $rkCarryPop 'scopeDepth = previousDepth;'
+if ($rkCarryPopNoOp -notmatch '^if\s*\(scopeToken <= 0\)\s*\{\s*return;\s*\}$' -or
+    $rkCarryPopMismatch -notmatch 'current\s*=\s*default\(RimKataCarryDrawContext\);' -or
+    $rkCarryPopMismatch -notmatch 'scopeDepth\s*=\s*0;' -or
+    $rkCarryPopMismatch -notmatch 'Array\.Clear\(' -or
+    $rkCarryPopTopLevel -notmatch 'current\s*=\s*default\(RimKataCarryDrawContext\);' -or
+    -not ($rkCarryPopRestore -lt $rkCarryPopClearSlot -and
+          $rkCarryPopClearSlot -lt $rkCarryPopDepth) -or
+    $rkCarryPop -notmatch 'int nestedIndex\s*=\s*previousDepth - 1;' -or
+    $rkCarryPop -notmatch 'nestedContexts\[nestedIndex\]\s*=\s*default\(RimKataCarryDrawContext\);') {
+    throw 'Carry scope Pop no longer provides no-op, LIFO restore, and slot cleanup boundaries.'
+}
+
+$rkCarryPatchPrefix = Get-CSharpBlock $rkCarryPatch 'public static void Prefix('
+$rkCarryPatchFinalizer = Get-CSharpBlock $rkCarryPatch 'public static Exception Finalizer('
+$rkCarryPatchStateZero = Get-Index $rkCarryPatchPrefix '__state = 0;'
+$rkCarryPatchPush = Get-Index $rkCarryPatchPrefix '__state = RimKataCarryDrawUtility.Push(weapon, drawPos);'
+if ($rkCarryPatch -match 'RimKataCarryDrawContext\s+__state' -or
+    $rkCarryPatchPrefix -notmatch 'out int __state' -or
+    $rkCarryPatchFinalizer -notmatch 'int __state' -or
+    $rkCarryPatchFinalizer -notmatch 'RimKataCarryDrawUtility\.Pop\(__state\);' -or
+    $rkCarryPatchStateZero -ge $rkCarryPatchPush -or
+    $rkCarryPushCatch -notmatch '^catch\s*\{\s*Pop\(scopeToken\);\s*throw;\s*\}$') {
+    throw 'Carry Harmony scope token no longer cleans up and rethrows Push failures safely.'
+}
+
+$rkCarryScopeTokenReturns = [regex]::Matches($rkCarryPush, 'return\s+scopeToken;').Count
+if ($rkCarryScopeTokenReturns -lt 3 -or
+    [regex]::Matches($rkCarryPush, '\breturn\b').Count -ne $rkCarryScopeTokenReturns) {
+    throw 'A successful carry Push path no longer returns only its integer scope token.'
+}
+
+$rkCarryEnterCall = Get-Index $rkCarryPush 'int scopeToken = EnterScope();'
+$rkCarryTryStart = Get-Index $rkCarryPush 'try'
+$rkCarryGunReadyRead = Get-Index $rkCarryPush 'ref RimKataGunReadyDrawUtility.Current;'
 $rkCarryScoped = Get-Index $rkCarryPush 'if (renderContext.scoped)'
 $rkCarryFallback = Get-Index $rkCarryPush 'FindPawnOwner(weapon)'
+$rkCarryScopedBlock = Get-CSharpBlock $rkCarryPush 'if (renderContext.scoped)'
+$rkCarryScopedActiveBlock = Get-CSharpBlock $rkCarryScopedBlock 'if (renderContext.active'
+$rkCarryScopedSnapshotBlock = Get-CSharpBlock $rkCarryScopedActiveBlock 'if (renderContext.snapshotActive)'
+$rkCarryScopedPawnPublish = Get-Index $rkCarryScopedActiveBlock 'current.pawn = renderContext.pawn;'
+$rkCarryScopedPrimaryPublish = Get-Index $rkCarryScopedActiveBlock 'current.primary = renderContext.primary;'
+$rkCarryScopedSecondaryPublish = Get-Index $rkCarryScopedActiveBlock 'current.secondary = renderContext.secondary;'
+$rkCarryScopedSnapshotPublish = Get-Index $rkCarryScopedActiveBlock 'current.snapshot = renderContext.snapshot;'
+$rkCarryScopedSnapshotActivePublish = Get-Index $rkCarryScopedActiveBlock 'current.snapshotActive ='
+$rkCarryScopedDrawPosPublish = Get-Index $rkCarryScopedActiveBlock 'current.drawPos = drawPos;'
+$rkCarryScopedActivePublish = Get-Index $rkCarryScopedActiveBlock 'current.active = true;'
+if (-not ($rkCarryEnterCall -lt $rkCarryTryStart -and
+          $rkCarryTryStart -lt $rkCarryGunReadyRead -and
+          $rkCarryGunReadyRead -lt $rkCarryScoped -and
+          $rkCarryScoped -lt $rkCarryFallback) -or
+    $rkCarryScopedBlock -match 'FindPawnOwner|TryGetCachedWorldLoadout|TryGetResponseParticipantLoadout|TryGetCachedActiveSnapshot' -or
+    $rkCarryScopedBlock -notmatch 'return scopeToken;\s*\}$' -or
+    $rkCarryScopedActiveBlock -notmatch 'renderContext\.active\s*&&\s*renderContext\.primary == weapon' -or
+    $rkCarryScopedSnapshotBlock -notmatch 'current\.snapshot\s*=\s*renderContext\.snapshot;' -or
+    -not ($rkCarryScopedPawnPublish -lt $rkCarryScopedPrimaryPublish -and
+          $rkCarryScopedPrimaryPublish -lt $rkCarryScopedSecondaryPublish -and
+          $rkCarryScopedSecondaryPublish -lt $rkCarryScopedSnapshotPublish -and
+          $rkCarryScopedSnapshotPublish -lt $rkCarryScopedSnapshotActivePublish -and
+          $rkCarryScopedSnapshotActivePublish -lt $rkCarryScopedDrawPosPublish -and
+          $rkCarryScopedDrawPosPublish -lt $rkCarryScopedActivePublish)) {
+    throw 'Scoped carry rendering no longer reuses GunReady data without entering owner or loadout fallback work.'
+}
+
+$rkCarryWorldLoadout = Get-Index $rkCarryPush 'TryGetCachedWorldLoadout('
+$rkCarryResponseLoadout = Get-Index $rkCarryPush 'TryGetResponseParticipantLoadout('
+$rkCarryParticipantPrimary = Get-Index $rkCarryPush 'primary = participantPrimary;'
+$rkCarryReject = Get-Index $rkCarryPush 'if ((!rimKataUser && !responseParticipant)'
+$rkCarrySecondary = Get-Index $rkCarryPush 'ThingWithComps secondary = rimKataUser'
+$rkCarrySnapshotProbe = Get-Index $rkCarryPush 'TryGetCachedActiveSnapshot('
+$rkCarrySnapshotPublish = Get-Index $rkCarryPush 'out current.snapshot'
+$rkCarryPawnPublish = Get-Index $rkCarryPush 'current.pawn = pawn;'
+$rkCarryPrimaryPublish = Get-Index $rkCarryPush 'current.primary = primary;'
+$rkCarrySecondaryPublish = Get-Index $rkCarryPush 'current.secondary = secondary;'
+$rkCarrySnapshotActivePublish = Get-Index $rkCarryPush 'current.snapshotActive = snapshotActive;'
+$rkCarryDrawPosPublish = $rkCarryPush.IndexOf(
+    'current.drawPos = drawPos;',
+    $rkCarryPawnPublish,
+    [StringComparison]::Ordinal)
+$rkCarryActivePublish = $rkCarryPush.IndexOf(
+    'current.active = true;',
+    $rkCarryPawnPublish,
+    [StringComparison]::Ordinal)
+$rkCarryDirectPublishPattern = 'current\.(pawn|primary|secondary|snapshotActive|drawPos|active)\s*='
+if ([regex]::Matches($rkCarryPush, $rkCarryDirectPublishPattern).Count -ne 12 -or
+    [regex]::Matches($rkCarryPush, 'TryGetCachedActiveSnapshot').Count -ne 1 -or
+    [regex]::Matches($rkCarryPush, 'out\s+current\.snapshot').Count -ne 1 -or
+    [regex]::Matches($rkCarryPush, 'current\.snapshot\s*=\s*renderContext\.snapshot;').Count -ne 1 -or
+    $rkCarryPush -match 'RimKataVisualSnapshot\s+\w+' -or
+    -not ($rkCarryFallback -lt $rkCarryWorldLoadout -and
+          $rkCarryWorldLoadout -lt $rkCarryResponseLoadout -and
+          $rkCarryResponseLoadout -lt $rkCarryParticipantPrimary -and
+          $rkCarryParticipantPrimary -lt $rkCarryReject -and
+          $rkCarryReject -lt $rkCarrySecondary -and
+          $rkCarrySecondary -lt $rkCarrySnapshotProbe -and
+          $rkCarrySnapshotProbe -lt $rkCarrySnapshotPublish -and
+          $rkCarrySnapshotPublish -lt $rkCarryPawnPublish -and
+          $rkCarryPawnPublish -lt $rkCarryPrimaryPublish -and
+          $rkCarryPrimaryPublish -lt $rkCarrySecondaryPublish -and
+          $rkCarrySecondaryPublish -lt $rkCarrySnapshotActivePublish -and
+          $rkCarrySnapshotActivePublish -lt $rkCarryDrawPosPublish -and
+          $rkCarryDrawPosPublish -lt $rkCarryActivePublish) -or
+    $rkCarryPush -notmatch 'bool snapshotActive\s*=\s*\(secondary != null \|\| responseParticipant\)\s*&&\s*RimKataVisualUtility\.TryGetCachedActiveSnapshot\(\s*pawn,\s*out current\.snapshot\);\s*current\.pawn\s*=\s*pawn;\s*current\.primary\s*=\s*primary;\s*current\.secondary\s*=\s*secondary;\s*current\.snapshotActive\s*=\s*snapshotActive;\s*current\.drawPos\s*=\s*drawPos;\s*current\.active\s*=\s*true;\s*return scopeToken;') {
+    throw 'Unscoped carry rendering no longer preserves its guarded direct-publication boundary.'
+}
+
 $rkPairScoped = Get-Index $rkTryDrawPair 'if (renderContext.scoped)'
 $rkPairFallback = Get-Index $rkTryDrawPair 'FindPawnOwner(equipment)'
-$rkCarryScopedBlock = Get-CSharpBlock $rkCarryPush 'if (renderContext.scoped)'
 $rkPairScopedBlock = Get-CSharpBlock $rkTryDrawPair 'if (renderContext.scoped)'
 $rkPairInactiveBlock = Get-CSharpBlock $rkPairScopedBlock 'if (!renderContext.active)'
 if ($rkCarryScoped -ge $rkCarryFallback -or
     $rkPairScoped -ge $rkPairFallback -or
-    $rkCarryScopedBlock -notmatch 'return previous;\s*\}$' -or
+    $rkCarryScopedBlock -notmatch 'return scopeToken;\s*\}$' -or
     $rkPairInactiveBlock -notmatch 'return false;\s*\}$') {
     throw 'Inactive gun-ready contexts no longer stop downstream owner/loadout fallback work.'
 }
@@ -651,10 +810,214 @@ namespace KRWF.RimKata
             return checks;
         }
     }
+
+    public struct RimKataCarryDrawContext
+    {
+        public bool active;
+        public int marker;
+        public object heldReference;
+    }
+
+    public static class CarryScopeChecks
+    {
+        [ThreadStatic] private static RimKataCarryDrawContext current;
+        [ThreadStatic] private static int scopeDepth;
+        [ThreadStatic] private static RimKataCarryDrawContext[] nestedContexts;
+
+        $rkCarryEnterScope
+
+        $rkCarryEnsureNestedCapacity
+
+        $rkCarryPop
+
+        private static int checks;
+
+        private static void Check(bool condition, string name)
+        {
+            if (!condition) throw new Exception("FAIL: " + name);
+            checks++;
+        }
+
+        private static void ResetScope()
+        {
+            current = default(RimKataCarryDrawContext);
+            scopeDepth = 0;
+            nestedContexts = null;
+        }
+
+        private static void Publish(int marker, object heldReference)
+        {
+            current.marker = marker;
+            current.heldReference = heldReference;
+            current.active = true;
+        }
+
+        private static bool NestedSlotsAreClear()
+        {
+            if (nestedContexts == null)
+            {
+                return true;
+            }
+
+            for (int index = 0; index < nestedContexts.Length; index++)
+            {
+                if (nestedContexts[index].active
+                    || nestedContexts[index].marker != 0
+                    || nestedContexts[index].heldReference != null)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void ThrowInsideScope()
+        {
+            int scopeToken = EnterScope();
+            try
+            {
+                Publish(999, new object());
+                throw new InvalidOperationException("carry scope failure");
+            }
+            $rkCarryPushCatch
+        }
+
+        public static int Run()
+        {
+            checks = 0;
+            ResetScope();
+
+            int topToken = EnterScope();
+            Check(topToken == 1 && scopeDepth == 1,
+                "top-level carry scope uses an integer depth token");
+            Check(!current.active && current.marker == 0
+                    && current.heldReference == null,
+                "top-level carry scope begins inactive");
+            Check(nestedContexts == null,
+                "top-level carry scope does not allocate or save a context");
+
+            object outerReference = new object();
+            Publish(11, outerReference);
+            int nestedToken = EnterScope();
+            Check(nestedToken == 2 && scopeDepth == 2,
+                "nested carry scope increments the depth token");
+            Check(!current.active && current.marker == 0
+                    && current.heldReference == null,
+                "nested carry scope starts from a cleared context");
+            Check(nestedContexts != null
+                    && nestedContexts[0].active
+                    && nestedContexts[0].marker == 11
+                    && object.ReferenceEquals(
+                        nestedContexts[0].heldReference,
+                        outerReference),
+                "nested carry scope saves the complete outer context");
+
+            object nestedReference = new object();
+            Publish(22, nestedReference);
+            Pop(0);
+            Check(scopeDepth == 2 && current.active && current.marker == 22
+                    && object.ReferenceEquals(current.heldReference, nestedReference)
+                    && nestedContexts[0].marker == 11,
+                "default carry token is a strict no-op");
+
+            Pop(nestedToken);
+            Check(scopeDepth == 1 && current.active && current.marker == 11
+                    && object.ReferenceEquals(current.heldReference, outerReference),
+                "nested carry Pop restores the immediately preceding context");
+            Check(!nestedContexts[0].active
+                    && nestedContexts[0].marker == 0
+                    && nestedContexts[0].heldReference == null,
+                "nested carry Pop clears its saved slot");
+            Pop(topToken);
+            Check(scopeDepth == 0 && !current.active
+                    && current.marker == 0 && current.heldReference == null,
+                "top-level carry Pop clears the current context");
+
+            bool topLevelRethrew = false;
+            try
+            {
+                ThrowInsideScope();
+            }
+            catch (InvalidOperationException)
+            {
+                topLevelRethrew = true;
+            }
+            Check(topLevelRethrew && scopeDepth == 0 && !current.active
+                    && current.marker == 0 && current.heldReference == null,
+                "top-level carry Push failure pops its scope and rethrows");
+
+            topToken = EnterScope();
+            outerReference = new object();
+            Publish(31, outerReference);
+            bool nestedRethrew = false;
+            try
+            {
+                ThrowInsideScope();
+            }
+            catch (InvalidOperationException)
+            {
+                nestedRethrew = true;
+            }
+            Check(nestedRethrew && scopeDepth == 1 && current.active
+                    && current.marker == 31
+                    && object.ReferenceEquals(current.heldReference, outerReference),
+                "nested carry Push failure restores its outer scope and rethrows");
+            Check(!nestedContexts[0].active
+                    && nestedContexts[0].marker == 0
+                    && nestedContexts[0].heldReference == null,
+                "nested carry Push failure clears its saved slot");
+            Pop(topToken);
+
+            ResetScope();
+            object firstReference = new object();
+            object secondReference = new object();
+            object thirdReference = new object();
+            int firstToken = EnterScope();
+            Publish(41, firstReference);
+            int secondToken = EnterScope();
+            Publish(42, secondReference);
+            int thirdToken = EnterScope();
+            Publish(43, thirdReference);
+            int fourthToken = EnterScope();
+            Publish(44, new object());
+            Check(nestedContexts != null && nestedContexts.Length >= 3,
+                "deep carry nesting grows the saved-context array");
+            Pop(fourthToken);
+            Check(scopeDepth == 3 && current.marker == 43
+                    && object.ReferenceEquals(current.heldReference, thirdReference),
+                "fourth carry scope restores the third scope");
+            Pop(thirdToken);
+            Check(scopeDepth == 2 && current.marker == 42
+                    && object.ReferenceEquals(current.heldReference, secondReference),
+                "third carry scope restores the second scope");
+            Pop(secondToken);
+            Check(scopeDepth == 1 && current.marker == 41
+                    && object.ReferenceEquals(current.heldReference, firstReference),
+                "second carry scope restores the first scope");
+            Pop(firstToken);
+            Check(scopeDepth == 0 && !current.active && NestedSlotsAreClear(),
+                "deep carry LIFO unwind clears every saved slot");
+
+            ResetScope();
+            topToken = EnterScope();
+            Publish(51, new object());
+            nestedToken = EnterScope();
+            Publish(52, new object());
+            Pop(topToken);
+            Check(scopeDepth == 0 && !current.active
+                    && current.marker == 0 && current.heldReference == null
+                    && NestedSlotsAreClear(),
+                "mismatched carry Pop fails closed and clears all scope state");
+
+            return checks;
+        }
+    }
 }
 "@
 
 Add-Type -TypeDefinition $rkHarness -Language CSharp
 $rkPresencePassed = [KRWF.RimKata.GunReadyPresenceChecks]::Run()
 $rkScopePassed = [KRWF.RimKata.GunReadyScopeChecks]::Run()
-"PASS: $rkPresencePassed executable state-presence assertions + $rkScopePassed executable gun-ready scope assertions + gun-ready, combat-indicator, and dodge-offset render dormancy source-boundary assertions; in-game profiler comparison remains required."
+$rkCarryScopePassed = [KRWF.RimKata.CarryScopeChecks]::Run()
+"PASS: $rkPresencePassed executable state-presence assertions + $rkScopePassed executable gun-ready scope assertions + $rkCarryScopePassed executable carry scope assertions + gun-ready, carry, combat-indicator, and dodge-offset render dormancy source-boundary assertions; in-game profiler comparison remains required."

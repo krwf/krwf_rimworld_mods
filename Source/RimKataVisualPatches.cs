@@ -376,88 +376,162 @@ namespace KRWF.RimKata
     internal static class RimKataCarryDrawUtility
     {
         [ThreadStatic] private static RimKataCarryDrawContext current;
+        [ThreadStatic] private static int scopeDepth;
+        [ThreadStatic] private static RimKataCarryDrawContext[] nestedContexts;
 
-        public static RimKataCarryDrawContext Current => current;
+        public static ref readonly RimKataCarryDrawContext Current => ref current;
 
-        public static RimKataCarryDrawContext Push(
+        public static int Push(
             ThingWithComps weapon,
             Vector3 drawPos)
         {
-            RimKataCarryDrawContext previous = current;
-            current = default(RimKataCarryDrawContext);
-            ref readonly RimKataGunReadyDrawContext renderContext =
-                ref RimKataGunReadyDrawUtility.Current;
-            if (renderContext.scoped)
+            int scopeToken = EnterScope();
+            try
             {
-                if (renderContext.active
-                    && renderContext.primary == weapon)
+                ref readonly RimKataGunReadyDrawContext renderContext =
+                    ref RimKataGunReadyDrawUtility.Current;
+                if (renderContext.scoped)
                 {
-                    current = new RimKataCarryDrawContext
+                    if (renderContext.active
+                        && renderContext.primary == weapon)
                     {
-                        active = true,
-                        pawn = renderContext.pawn,
-                        primary = renderContext.primary,
-                        secondary = renderContext.secondary,
-                        snapshotActive = renderContext.snapshotActive,
-                        snapshot = renderContext.snapshot,
-                        drawPos = drawPos
-                    };
+                        current.pawn = renderContext.pawn;
+                        current.primary = renderContext.primary;
+                        current.secondary = renderContext.secondary;
+                        if (renderContext.snapshotActive)
+                        {
+                            current.snapshot = renderContext.snapshot;
+                        }
+
+                        current.snapshotActive =
+                            renderContext.snapshotActive;
+                        current.drawPos = drawPos;
+                        current.active = true;
+                    }
+
+                    return scopeToken;
                 }
 
-                return previous;
-            }
+                Pawn pawn = RimKataVisualUtility.FindPawnOwner(weapon);
+                bool rimKataUser = RimKataVisualUtility
+                    .TryGetCachedWorldLoadout(
+                        pawn,
+                        out ThingWithComps primary,
+                        out ThingWithComps rawSecondary);
+                bool responseParticipant = RimKataVisualUtility
+                    .TryGetResponseParticipantLoadout(
+                        pawn,
+                        out ThingWithComps participantPrimary,
+                        out ThingWithComps participantSecondary);
+                if (!rimKataUser && responseParticipant)
+                {
+                    primary = participantPrimary;
+                }
 
-            Pawn pawn = RimKataVisualUtility.FindPawnOwner(weapon);
-            bool rimKataUser = RimKataVisualUtility
-                .TryGetCachedWorldLoadout(
-                    pawn,
-                    out ThingWithComps primary,
-                    out ThingWithComps rawSecondary);
-            bool responseParticipant = RimKataVisualUtility
-                .TryGetResponseParticipantLoadout(
-                    pawn,
-                    out ThingWithComps participantPrimary,
-                    out ThingWithComps participantSecondary);
-            if (!rimKataUser && responseParticipant)
-            {
-                primary = participantPrimary;
-            }
+                if ((!rimKataUser && !responseParticipant)
+                    || primary != weapon)
+                {
+                    return scopeToken;
+                }
 
-            if ((!rimKataUser && !responseParticipant) || primary != weapon)
-            {
-                return previous;
+                ThingWithComps secondary = rimKataUser
+                    ? RimKataVisualUtility.IsSecondaryUsable(
+                        pawn,
+                        primary,
+                        rawSecondary)
+                            ? rawSecondary
+                            : null
+                    : participantSecondary;
+                bool snapshotActive =
+                    (secondary != null || responseParticipant)
+                    && RimKataVisualUtility.TryGetCachedActiveSnapshot(
+                        pawn,
+                        out current.snapshot);
+                current.pawn = pawn;
+                current.primary = primary;
+                current.secondary = secondary;
+                current.snapshotActive = snapshotActive;
+                current.drawPos = drawPos;
+                current.active = true;
+                return scopeToken;
             }
-
-            ThingWithComps secondary = rimKataUser
-                ? RimKataVisualUtility.IsSecondaryUsable(
-                    pawn,
-                    primary,
-                    rawSecondary)
-                        ? rawSecondary
-                        : null
-                : participantSecondary;
-            RimKataVisualSnapshot snapshot =
-                default(RimKataVisualSnapshot);
-            bool snapshotActive = (secondary != null || responseParticipant)
-                && RimKataVisualUtility.TryGetCachedActiveSnapshot(
-                    pawn,
-                    out snapshot);
-            current = new RimKataCarryDrawContext
+            catch
             {
-                active = true,
-                pawn = pawn,
-                primary = primary,
-                secondary = secondary,
-                snapshotActive = snapshotActive,
-                snapshot = snapshot,
-                drawPos = drawPos
-            };
-            return previous;
+                Pop(scopeToken);
+                throw;
+            }
         }
 
-        public static void Pop(RimKataCarryDrawContext previous)
+        private static int EnterScope()
         {
-            current = previous;
+            int previousDepth = scopeDepth;
+            if (previousDepth > 0)
+            {
+                EnsureNestedContextCapacity(previousDepth);
+                nestedContexts[previousDepth - 1] = current;
+                current = default(RimKataCarryDrawContext);
+            }
+
+            scopeDepth = previousDepth + 1;
+            current.active = false;
+            return scopeDepth;
+        }
+
+        private static void EnsureNestedContextCapacity(int requiredLength)
+        {
+            if (nestedContexts != null
+                && nestedContexts.Length >= requiredLength)
+            {
+                return;
+            }
+
+            int newLength = nestedContexts == null
+                ? 2
+                : nestedContexts.Length * 2;
+            while (newLength < requiredLength)
+            {
+                newLength *= 2;
+            }
+
+            Array.Resize(ref nestedContexts, newLength);
+        }
+
+        public static void Pop(int scopeToken)
+        {
+            if (scopeToken <= 0)
+            {
+                return;
+            }
+
+            if (scopeDepth != scopeToken)
+            {
+                current = default(RimKataCarryDrawContext);
+                scopeDepth = 0;
+                if (nestedContexts != null)
+                {
+                    Array.Clear(
+                        nestedContexts,
+                        0,
+                        nestedContexts.Length);
+                }
+
+                return;
+            }
+
+            int previousDepth = scopeToken - 1;
+            if (previousDepth == 0)
+            {
+                current = default(RimKataCarryDrawContext);
+            }
+            else
+            {
+                int nestedIndex = previousDepth - 1;
+                current = nestedContexts[nestedIndex];
+                nestedContexts[nestedIndex] =
+                    default(RimKataCarryDrawContext);
+            }
+
+            scopeDepth = previousDepth;
         }
     }
 
@@ -508,8 +582,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            RimKataCarryDrawContext carryContext =
-                RimKataCarryDrawUtility.Current;
+            ref readonly RimKataCarryDrawContext carryContext =
+                ref RimKataCarryDrawUtility.Current;
             Pawn pawn;
             ThingWithComps primary;
             ThingWithComps secondary;
@@ -859,8 +933,8 @@ namespace KRWF.RimKata
             {
                 if (!hasOwnTarget)
                 {
-                    RimKataCarryDrawContext carryContext =
-                        RimKataCarryDrawUtility.Current;
+                    ref readonly RimKataCarryDrawContext carryContext =
+                        ref RimKataCarryDrawUtility.Current;
                     if (!carryContext.active)
                     {
                         sharedFallbackAim = true;
@@ -911,8 +985,8 @@ namespace KRWF.RimKata
                 return originalPrimaryLoc;
             }
 
-            RimKataCarryDrawContext carryContext =
-                RimKataCarryDrawUtility.Current;
+            ref readonly RimKataCarryDrawContext carryContext =
+                ref RimKataCarryDrawUtility.Current;
             if (carryContext.active
                 && carryContext.pawn == pawn
                 && carryContext.primary == primary)
@@ -1162,8 +1236,8 @@ namespace KRWF.RimKata
             Vector3 originalDrawLoc,
             float originalAimAngle)
         {
-            RimKataCarryDrawContext carryContext =
-                RimKataCarryDrawUtility.Current;
+            ref readonly RimKataCarryDrawContext carryContext =
+                ref RimKataCarryDrawUtility.Current;
             if (carryContext.active
                 && carryContext.pawn == pawn
                 && carryContext.primary == primary)
@@ -2053,14 +2127,15 @@ namespace KRWF.RimKata
         public static void Prefix(
             ThingWithComps weapon,
             Vector3 drawPos,
-            out RimKataCarryDrawContext __state)
+            out int __state)
         {
+            __state = 0;
             __state = RimKataCarryDrawUtility.Push(weapon, drawPos);
         }
 
         public static Exception Finalizer(
             Exception __exception,
-            RimKataCarryDrawContext __state)
+            int __state)
         {
             RimKataCarryDrawUtility.Pop(__state);
             return __exception;
