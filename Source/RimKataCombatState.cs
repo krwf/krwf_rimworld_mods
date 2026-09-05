@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -97,6 +98,46 @@ namespace KRWF.RimKata
         {
             Scribe_References.Look(ref shot, "shot");
             Scribe_References.Look(ref target, "target");
+        }
+    }
+
+    internal static class RimKataCombatStatePresenceCache
+    {
+        private sealed class StateMarker
+        {
+            public volatile Map map;
+        }
+
+        private static readonly ConditionalWeakTable<Pawn, StateMarker>
+            PawnsWithState = new ConditionalWeakTable<Pawn, StateMarker>();
+        private static readonly ConditionalWeakTable<Pawn, StateMarker>
+            .CreateValueCallback CreateMarker = delegate { return new StateMarker(); };
+
+        public static bool Contains(Pawn pawn, Map map)
+        {
+            return pawn != null
+                && map != null
+                && PawnsWithState.TryGetValue(pawn, out StateMarker marker)
+                && marker.map == map;
+        }
+
+        internal static void Mark(Pawn pawn, Map map)
+        {
+            if (pawn != null && map != null)
+            {
+                PawnsWithState.GetValue(pawn, CreateMarker).map = map;
+            }
+        }
+
+        internal static void Clear(Pawn pawn, Map map)
+        {
+            if (pawn != null
+                && map != null
+                && PawnsWithState.TryGetValue(pawn, out StateMarker marker)
+                && marker.map == map)
+            {
+                PawnsWithState.Remove(pawn);
+            }
         }
     }
 
@@ -1490,6 +1531,9 @@ namespace KRWF.RimKata
                 for (int i = 0; i < states.Count; i++)
                 {
                     RimKataPendingFollowupTickCache.Clear(states[i]?.pawn);
+                    RimKataCombatStatePresenceCache.Clear(
+                        states[i]?.pawn,
+                        map);
                 }
             }
             UnsubscribeProjectileEvents();
@@ -2485,6 +2529,7 @@ namespace KRWF.RimKata
                 }
 
                 RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
+                RimKataCombatStatePresenceCache.Mark(pawn, map);
                 states.Add(state);
                 statesByPawn[pawn] = state;
                 state.temporaryInactive = RimKataTemporaryInactivity.IsInactive(pawn);
@@ -2496,6 +2541,10 @@ namespace KRWF.RimKata
         private void RebuildStateIndex()
         {
             RimKataResponseVisualParticipantCache.ClearForMap(map);
+            foreach (Pawn indexedPawn in statesByPawn.Keys)
+            {
+                RimKataCombatStatePresenceCache.Clear(indexedPawn, map);
+            }
             statesByPawn.Clear();
             if (states == null)
             {
@@ -2507,6 +2556,7 @@ namespace KRWF.RimKata
                 RimKataPawnCombatState state = states[i];
                 if (state?.pawn != null)
                 {
+                    RimKataCombatStatePresenceCache.Mark(state.pawn, map);
                     statesByPawn[state.pawn] = state;
                     RimKataPendingFollowupTickCache.Synchronize(
                         state.pawn,
@@ -2531,6 +2581,11 @@ namespace KRWF.RimKata
                 && indexed == state)
             {
                 statesByPawn.Remove(state.pawn);
+            }
+            if (state?.pawn != null
+                && !statesByPawn.ContainsKey(state.pawn))
+            {
+                RimKataCombatStatePresenceCache.Clear(state.pawn, map);
             }
         }
 

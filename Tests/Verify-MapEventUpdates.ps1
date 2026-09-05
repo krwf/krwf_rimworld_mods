@@ -100,6 +100,9 @@ namespace Verse.AI {
     public sealed class MentalStateHandler { public bool TryStartMentalState() { return true; } }
 }
 namespace KRWF.RimKata {
+    public static class RimKataCombatStatePresenceCache {
+        public static void Mark(Verse.Pawn pawn, Verse.Map map) { }
+    }
     public sealed class RimKataPawnCombatState {
         public readonly Verse.Pawn pawn;
         internal bool temporaryInactive, temporaryInactivityCleanupPending;
