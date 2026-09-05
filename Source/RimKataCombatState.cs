@@ -1179,7 +1179,6 @@ namespace KRWF.RimKata
         public void QueueDraftedMovementSearchTrigger()
         {
             draftedMovementSearchTriggerPending = true;
-            RefreshMovementFireContinuity();
         }
 
         public void ConsumeDraftedMovementSearchTrigger()

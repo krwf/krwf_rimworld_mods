@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $rkRoot = Split-Path -Parent $PSScriptRoot
 $rkCombatSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataCombatState.cs') -Raw -Encoding UTF8
+$rkControllerSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataDualWeaponController.cs') -Raw -Encoding UTF8
 $rkVisualSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataVisualPatches.cs') -Raw -Encoding UTF8
 
 function Get-CSharpBlock([string] $source, [string] $marker) {
@@ -36,6 +37,15 @@ $rkVisualLoadout = Get-CSharpBlock $rkVisualSource 'private static bool TryGetVi
 $rkResponseSnapshot = Get-CSharpBlock $rkVisualSource 'public static bool TryGetCachedResponseSnapshot('
 $rkPush = Get-CSharpBlock $rkVisualSource 'public static RimKataGunReadyDrawContext Push('
 $rkCandidate = Get-CSharpBlock $rkVisualSource 'private static bool MayNeedGunReadyTarget('
+$rkCombatIndicators = Get-CSharpBlock $rkVisualSource 'public static void DrawCombatIndicators('
+$rkIndicatorCandidate = Get-CSharpBlock $rkControllerSource 'internal static bool MayNeedCombatIndicatorFrame('
+$rkIndicatorFrame = Get-CSharpBlock $rkControllerSource 'GetCombatIndicatorFrameData('
+$rkIndicatorWeaponFrame = Get-CSharpBlock $rkControllerSource 'private static RimKataCombatIndicatorWeaponFrame'
+$rkIndicatorVisual = Get-CSharpBlock $rkControllerSource 'private static bool TryGetIndicatorVisualData('
+$rkVanillaCooldownCandidate = Get-CSharpBlock $rkControllerSource 'private static bool TryGetPotentialVanillaRangedCooldown('
+$rkFocusedTargetWithState = Get-CSharpBlock $rkControllerSource 'private static bool TryGetFocusedWeaponTarget('
+$rkCloseTargetWithState = Get-CSharpBlock $rkControllerSource 'private static bool TryGetAttackGizmoCloseTarget('
+$rkVisualDataWithState = Get-CSharpBlock $rkControllerSource 'private static bool TryGetVisualData('
 
 if ($rkCache -notmatch 'ConditionalWeakTable<Pawn, StateMarker>' -or
     $rkCache -notmatch 'public static bool Contains\(Pawn pawn, Map map\)' -or
@@ -112,6 +122,71 @@ if ($rkResponseSnapshot -notmatch '!participantKnown[\s\S]*?IsParticipant\(pawn\
     throw 'Weapon response snapshot probe regained body-only visual work.'
 }
 
+$rkIndicatorSelected = Get-Index $rkCombatIndicators '!Find.Selector.IsSelected(pawn)'
+$rkIndicatorDormancy = Get-Index $rkCombatIndicators 'MayNeedCombatIndicatorFrame(pawn)'
+$rkIndicatorLoadout = Get-Index $rkCombatIndicators 'TryGetUiLoadout('
+if (-not ($rkIndicatorSelected -lt $rkIndicatorDormancy -and
+          $rkIndicatorDormancy -lt $rkIndicatorLoadout)) {
+    throw 'Combat-indicator dormancy gate moved behind UI loadout resolution.'
+}
+
+if ($rkIndicatorCandidate -notmatch 'RimKataCombatStatePresenceCache\.Contains\([\s\S]*?pawn,[\s\S]*?pawn\.Map\)' -or
+    $rkIndicatorCandidate -notmatch 'TryGetPotentialVanillaRangedCooldown\(' -or
+    $rkIndicatorCandidate -match 'StateFor|GetComponent|GetState|RimKataEligibility|CombatVerb|TryGetUiLoadout') {
+    throw 'Combat-indicator candidate gate regained a deep state, eligibility, or loadout lookup.'
+}
+
+if ($rkVanillaCooldownCandidate -notmatch 'Stance_Cooldown' -or
+    $rkVanillaCooldownCandidate -notmatch '\|\|\s*verb\.IsMeleeAttack' -or
+    $rkVanillaCooldownCandidate -notmatch 'cooldown\.ticksLeft\s*<=\s*0' -or
+    $rkVanillaCooldownCandidate -notmatch '!cooldown\.focusTarg\.IsValid' -or
+    $rkVanillaCooldownCandidate -notmatch 'drawAimPie\s*!=\s*true' -or
+    $rkVanillaCooldownCandidate -notmatch 'cooldownWeapon\s*==\s*null' -or
+    $rkVanillaCooldownCandidate -notmatch 'weapon\s*!=\s*null\s*&&\s*cooldownWeapon\s*!=\s*weapon') {
+    throw 'Combat-indicator dormancy gate no longer preserves the drawable vanilla ranged cooldown fallback.'
+}
+
+if ([regex]::Matches($rkIndicatorFrame, 'StateFor\(pawn, false\)').Count -ne 1 -or
+    [regex]::Matches($rkIndicatorFrame, 'GetCombatIndicatorWeaponFrame\(').Count -ne 2 -or
+    [regex]::Matches($rkIndicatorFrame, 'TryGetPotentialVanillaRangedCooldown\(').Count -ne 1 -or
+    $rkIndicatorFrame -match 'CombatVerb\(|ShouldPauseFireForDodge|IsVisualLocked' -or
+    $rkIndicatorFrame -notmatch 'movingFireEnabled\s*==\s*false[\s\S]*?state\?\.DodgeVisualLocked\s*==\s*true') {
+    throw 'Combat-indicator frame no longer shares one state lookup across both weapon slots.'
+}
+
+if ($rkIndicatorWeaponFrame -match 'StateFor\(|CombatVerb\(|TryGetPotentialVanillaRangedCooldown\(' -or
+    $rkIndicatorWeaponFrame -notmatch 'TryGetFocusedWeaponTarget\([\s\S]*?state' -or
+    $rkIndicatorWeaponFrame -notmatch 'TryGetIndicatorVisualData\([\s\S]*?state') {
+    throw 'Combat-indicator weapon frame stopped consuming the shared state snapshot.'
+}
+
+if ([regex]::Matches($rkCombatIndicators, 'GetCombatIndicatorFrameData\(').Count -ne 1 -or
+    $rkCombatIndicators -match 'TryGetFocusedWeaponTarget|TryGetAttackGizmoCloseTarget|TryGetIndicatorVisualData|CombatVerb|ShouldPauseFireForDodge') {
+    throw 'Combat-indicator renderer regained per-consumer state or verb lookups.'
+}
+
+if ([regex]::Matches($rkIndicatorVisual, 'CombatVerb\(').Count -ne 1 -or
+    $rkIndicatorVisual -match 'StateFor\(' -or
+    $rkIndicatorVisual -notmatch '!internalIndicator\s*&&\s*!potentialVanillaCooldown' -or
+    (Get-Index $rkIndicatorVisual '!internalIndicator && !potentialVanillaCooldown') -ge
+        (Get-Index $rkIndicatorVisual 'CombatVerb(pawn, weapon)') -or
+    $rkIndicatorVisual -notmatch 'potentialVanillaCooldown\s*=\s*vanillaCooldown\s*!=\s*null[\s\S]*?vanillaCooldown\.verb\?\.EquipmentSource\s*==\s*weapon' -or
+    $rkIndicatorVisual -notmatch 'vanillaCooldown\.verb\s*!=\s*verb' -or
+    $rkIndicatorVisual -notmatch 'data\.target\s*=\s*vanillaCooldown\.focusTarg' -or
+    $rkIndicatorVisual -notmatch 'data\.warming\s*=\s*false' -or
+    $rkIndicatorVisual -notmatch 'data\.warmupTicksRemaining\s*=\s*0' -or
+    $rkIndicatorVisual -notmatch 'data\.warmupTotalTicks\s*=\s*0' -or
+    $rkIndicatorVisual -notmatch 'data\.cooldownTicksRemaining\s*=\s*Mathf\.Max\([\s\S]*?data\.cooldownTicksRemaining,[\s\S]*?vanillaCooldown\.ticksLeft\)' -or
+    $rkIndicatorVisual -notmatch 'claimsVanillaRangedCooldown\s*=\s*true') {
+    throw 'Combat-indicator visual data no longer resolves its verb once and only when an indicator may be visible.'
+}
+
+if ($rkFocusedTargetWithState -match 'StateFor\(|CombatVerb\(' -or
+    $rkCloseTargetWithState -match 'StateFor\(|CombatVerb\(' -or
+    $rkVisualDataWithState -match 'StateFor\(|CombatVerb\(') {
+    throw 'Combat-indicator state readers regained their own state or verb lookup.'
+}
+
 $rkFirstRegisteredRead = Get-Index $rkVisualLoadout 'TryGetRegisteredSecondaryWeapon('
 $rkAccessDecision = Get-Index $rkVisualLoadout 'if (!hasAccess)'
 $rkCachedFallback = $rkVisualLoadout.IndexOf(
@@ -178,4 +253,4 @@ namespace KRWF.RimKata
 
 Add-Type -TypeDefinition $rkHarness -Language CSharp
 $rkPassed = [KRWF.RimKata.GunReadyPresenceChecks]::Run()
-"PASS: $rkPassed executable state-presence assertions + 13 gun-ready render dormancy source-boundary assertions; in-game profiler comparison remains required."
+"PASS: $rkPassed executable state-presence assertions + 13 gun-ready and 8 combat-indicator render dormancy source-boundary assertions; in-game profiler comparison remains required."

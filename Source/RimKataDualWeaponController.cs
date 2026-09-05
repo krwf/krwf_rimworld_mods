@@ -360,6 +360,24 @@ namespace KRWF.RimKata
         public int cooldownTicksRemaining;
     }
 
+    internal struct RimKataCombatIndicatorWeaponFrame
+    {
+        public Thing focusedTarget;
+        public bool focusedTargetFromAttackGizmo;
+        public RimKataWeaponVisualData visual;
+        public Verb verb;
+        public bool visible;
+        public int remainingTicks;
+    }
+
+    internal struct RimKataCombatIndicatorFrame
+    {
+        public Thing closeTarget;
+        public RimKataCombatIndicatorWeaponFrame primary;
+        public RimKataCombatIndicatorWeaponFrame secondary;
+        public bool pauseFireForDodge;
+    }
+
     public struct RimKataVanillaOpeningAttempt
     {
         public bool prepared;
@@ -889,15 +907,15 @@ namespace KRWF.RimKata
                 && verb.CasterPawn == pawn;
         }
 
-        public static bool TryGetFocusedWeaponTarget(
+        private static bool TryGetFocusedWeaponTarget(
             Pawn pawn,
+            RimKataPawnCombatState state,
             ThingWithComps weapon,
             out Thing target,
             out bool fromAttackGizmo)
         {
             target = null;
             fromAttackGizmo = false;
-            RimKataPawnCombatState state = StateFor(pawn, false);
             RimKataWeaponCycleState cycle = CycleForWeapon(state, weapon);
             if (!IsLiveFocusedTarget(pawn, cycle))
             {
@@ -951,12 +969,11 @@ namespace KRWF.RimKata
                 && pawn.CanReachImmediate(target, PathEndMode.Touch);
         }
 
-        public static bool TryGetAttackGizmoCloseTarget(
-            Pawn pawn,
+        private static bool TryGetAttackGizmoCloseTarget(
+            RimKataPawnCombatState state,
             out Thing target)
         {
             target = null;
-            RimKataPawnCombatState state = StateFor(pawn, false);
             if (state?.closeAttackRequestFromAttackGizmo != true
                 || !state.CloseAttackRequestActive)
             {
@@ -1079,11 +1096,16 @@ namespace KRWF.RimKata
             IntVec3 currentCell = pawn.Position;
             IntVec3 previousCell = state.draftedMovementSearchCell;
             bool movingFireEnabled = MovingFireEnabledForPawn(pawn);
+            bool firstTrackedMovement = !previousCell.IsValid
+                && pawn.pather?.Moving == true;
             bool movedToAnotherCell = previousCell.IsValid
                 && previousCell != currentCell;
+            bool movementSearchRequested = firstTrackedMovement
+                || movedToAnotherCell;
             state.draftedMovementSearchCell = currentCell;
             if (movingFireEnabled
-                && (pawn.pather?.MovingNow == true || movedToAnotherCell))
+                && (pawn.pather?.MovingNow == true || movedToAnotherCell)
+                && HasMovementFireCombatWork(state))
             {
                 state.RefreshMovementFireContinuity();
             }
@@ -1104,7 +1126,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (movedToAnotherCell)
+            if (movementSearchRequested)
             {
                 BindCurrentWeapons(
                     pawn,
@@ -1118,6 +1140,12 @@ namespace KRWF.RimKata
                 if (searchInProgress)
                 {
                     return true;
+                }
+
+                if (!HasAutomaticMovementSearchPotential(pawn))
+                {
+                    state.ConsumeDraftedMovementSearchTrigger();
+                    return false;
                 }
 
                 if (TryBeginMovementSearch(pawn, state, currentCell))
@@ -1135,7 +1163,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!movedToAnotherCell)
+            if (!movementSearchRequested)
             {
                 return false;
             }
@@ -1144,6 +1172,11 @@ namespace KRWF.RimKata
             {
                 state.QueueDraftedMovementSearchTrigger();
                 return true;
+            }
+
+            if (!HasAutomaticMovementSearchPotential(pawn))
+            {
+                return false;
             }
 
             return TryBeginMovementSearch(pawn, state, currentCell);
@@ -1161,13 +1194,15 @@ namespace KRWF.RimKata
                 || !MovingFireEnabledForPawn(pawn)
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn)
                 || (RimKataWeaponSlotUtility.PrimaryWeapon(pawn) == null
-                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) == null))
+                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) == null)
+                || !HasAutomaticMovementSearchPotential(pawn))
             {
                 return;
             }
 
             RimKataPawnCombatState state = StateFor(pawn, true);
             BindCurrentWeapons(pawn, state);
+            state.draftedMovementSearchCell = pawn.Position;
             if (MovementSearchInProgress(state))
             {
                 state.QueueDraftedMovementSearchTrigger();
@@ -1178,6 +1213,45 @@ namespace KRWF.RimKata
                 RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             }
             state.draftedFireActive = true;
+        }
+
+        internal static bool HasAutomaticMovementSearchPotential(Pawn pawn)
+        {
+            Map map = pawn?.Map;
+            if (map == null)
+            {
+                return false;
+            }
+
+            if (RimKataMod.Settings?.explosiveInterceptionEnabled != false
+                && map.GetComponent<RimKataMapComponent>()?
+                    .HasActiveExplosiveProjectiles == true)
+            {
+                return true;
+            }
+
+            // Vanilla publishes its combat-speed request before or when an
+            // ordinary hostile engagement begins.  Treat that public request
+            // as permission to start a movement scan; the selected time speed
+            // itself is deliberately irrelevant, so speed-unlock mods that
+            // only ignore the request do not hide the combat signal.
+            if (Find.TickManager?.slower?.ForcedNormalSpeed != true)
+            {
+                return false;
+            }
+
+            // GetPotentialTargetsFor is RimWorld's spawn/faction-maintained
+            // superset for ordinary IAttackTarget candidates.  Count is used
+            // immediately because the returned scratch list is shared.
+            return map.attackTargetsCache?.GetPotentialTargetsFor(pawn)?.Count
+                > 0;
+        }
+
+        private static bool HasMovementFireCombatWork(
+            RimKataPawnCombatState state)
+        {
+            return state?.primaryWeaponCycle?.CombatActive == true
+                || state?.secondaryWeaponCycle?.CombatActive == true;
         }
 
         internal static bool CanReceiveProjectileWake(Pawn pawn)
@@ -3670,29 +3744,198 @@ namespace KRWF.RimKata
             out RimKataWeaponVisualData data,
             out bool claimsVanillaRangedCooldown)
         {
-            bool hasInternal = TryGetVisualData(pawn, weapon, out data);
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            TryGetPotentialVanillaRangedCooldown(
+                pawn,
+                weapon,
+                out Stance_Cooldown vanillaCooldown);
+            return TryGetIndicatorVisualData(
+                pawn,
+                state,
+                weapon,
+                vanillaCooldown,
+                out data,
+                out claimsVanillaRangedCooldown,
+                out Verb _);
+        }
+
+        internal static bool MayNeedCombatIndicatorFrame(Pawn pawn)
+        {
+            return pawn != null
+                && (RimKataCombatStatePresenceCache.Contains(
+                        pawn,
+                        pawn.Map)
+                    || TryGetPotentialVanillaRangedCooldown(
+                        pawn,
+                        null,
+                        out Stance_Cooldown _));
+        }
+
+        internal static RimKataCombatIndicatorFrame
+            GetCombatIndicatorFrameData(
+                Pawn pawn,
+                ThingWithComps primary,
+                ThingWithComps secondary)
+        {
+            RimKataCombatIndicatorFrame frame =
+                default(RimKataCombatIndicatorFrame);
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            frame.pauseFireForDodge =
+                RimKataMod.Settings?.movingFireEnabled == false
+                && state?.DodgeVisualLocked == true;
+            TryGetPotentialVanillaRangedCooldown(
+                pawn,
+                null,
+                out Stance_Cooldown vanillaCooldown);
+            if (TryGetAttackGizmoCloseTarget(
+                    state,
+                    out Thing closeTarget))
+            {
+                frame.closeTarget = closeTarget;
+            }
+
+            bool includeFocusedTargets = frame.closeTarget == null;
+            frame.primary = GetCombatIndicatorWeaponFrame(
+                pawn,
+                state,
+                primary,
+                vanillaCooldown,
+                includeFocusedTargets);
+            frame.secondary = GetCombatIndicatorWeaponFrame(
+                pawn,
+                state,
+                secondary,
+                vanillaCooldown,
+                includeFocusedTargets);
+            return frame;
+        }
+
+        private static RimKataCombatIndicatorWeaponFrame
+            GetCombatIndicatorWeaponFrame(
+                Pawn pawn,
+                RimKataPawnCombatState state,
+                ThingWithComps weapon,
+                Stance_Cooldown vanillaCooldown,
+                bool includeFocusedTarget)
+        {
+            RimKataCombatIndicatorWeaponFrame frame =
+                default(RimKataCombatIndicatorWeaponFrame);
+            if (weapon == null)
+            {
+                return frame;
+            }
+
+            if (includeFocusedTarget
+                && TryGetFocusedWeaponTarget(
+                    pawn,
+                    state,
+                    weapon,
+                    out Thing focusedTarget,
+                    out bool fromAttackGizmo))
+            {
+                frame.focusedTarget = focusedTarget;
+                frame.focusedTargetFromAttackGizmo = fromAttackGizmo;
+            }
+
+            if (!TryGetIndicatorVisualData(
+                    pawn,
+                    state,
+                    weapon,
+                    vanillaCooldown,
+                    out RimKataWeaponVisualData visual,
+                    out bool _,
+                    out Verb verb))
+            {
+                return frame;
+            }
+
+            bool warming = visual.warming
+                && visual.warmupTicksRemaining > 0
+                && visual.warmupTotalTicks > 0;
+            bool cooling = visual.cooldownTicksRemaining > 0;
+            if ((!warming && !cooling) || verb == null)
+            {
+                return frame;
+            }
+
+            frame.visual = visual;
+            frame.verb = verb;
+            frame.visible = true;
+            frame.remainingTicks = warming
+                ? visual.warmupTicksRemaining
+                : visual.cooldownTicksRemaining;
+            return frame;
+        }
+
+        private static bool TryGetIndicatorVisualData(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            ThingWithComps weapon,
+            Stance_Cooldown vanillaCooldown,
+            out RimKataWeaponVisualData data,
+            out bool claimsVanillaRangedCooldown,
+            out Verb verb)
+        {
+            RimKataWeaponCycleState cycle = CycleForWeapon(state, weapon);
+            bool hasInternal = TryGetVisualData(
+                pawn,
+                cycle,
+                weapon,
+                out data);
             claimsVanillaRangedCooldown = false;
-            Verb verb = RimKataWeaponSlotUtility.CombatVerb(pawn, weapon);
-            if (verb == null
-                || verb.IsMeleeAttack
-                || !(pawn?.stances?.curStance is Stance_Cooldown cooldown)
-                || cooldown.verb != verb
-                || cooldown.ticksLeft <= 0
-                || !cooldown.focusTarg.IsValid
-                || verb.verbProps?.drawAimPie != true)
+            verb = null;
+            bool internalIndicator = hasInternal
+                && ((data.warming
+                        && data.warmupTicksRemaining > 0
+                        && data.warmupTotalTicks > 0)
+                    || data.cooldownTicksRemaining > 0);
+            bool potentialVanillaCooldown = vanillaCooldown != null
+                && vanillaCooldown.verb?.EquipmentSource == weapon;
+            if (!internalIndicator && !potentialVanillaCooldown)
+            {
+                return hasInternal;
+            }
+
+            verb = RimKataWeaponSlotUtility.CombatVerb(pawn, weapon);
+            if (!potentialVanillaCooldown
+                || vanillaCooldown.verb != verb)
             {
                 return hasInternal;
             }
 
             data.weapon = weapon;
-            data.target = cooldown.focusTarg;
+            data.target = vanillaCooldown.focusTarg;
             data.warming = false;
             data.warmupTicksRemaining = 0;
             data.warmupTotalTicks = 0;
             data.cooldownTicksRemaining = Mathf.Max(
                 data.cooldownTicksRemaining,
-                cooldown.ticksLeft);
+                vanillaCooldown.ticksLeft);
             claimsVanillaRangedCooldown = true;
+            return true;
+        }
+
+        private static bool TryGetPotentialVanillaRangedCooldown(
+            Pawn pawn,
+            ThingWithComps weapon,
+            out Stance_Cooldown cooldown)
+        {
+            cooldown = pawn?.stances?.curStance as Stance_Cooldown;
+            Verb verb = cooldown?.verb;
+            ThingWithComps cooldownWeapon =
+                verb?.EquipmentSource as ThingWithComps;
+            if (verb == null
+                || verb.IsMeleeAttack
+                || cooldown.ticksLeft <= 0
+                || !cooldown.focusTarg.IsValid
+                || verb.verbProps?.drawAimPie != true
+                || cooldownWeapon == null
+                || (weapon != null && cooldownWeapon != weapon))
+            {
+                cooldown = null;
+                return false;
+            }
+
             return true;
         }
 

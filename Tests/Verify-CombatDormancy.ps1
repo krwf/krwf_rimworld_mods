@@ -1,8 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $rkRoot = Split-Path -Parent $PSScriptRoot
+$rkCombatStateSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataCombatState.cs') -Raw -Encoding UTF8
 $rkDraftedSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataDraftedFire.cs') -Raw -Encoding UTF8
 $rkControllerSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataDualWeaponController.cs') -Raw -Encoding UTF8
 $rkJobDriverSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/JobDriver_RimKataAttack.cs') -Raw -Encoding UTF8
+$rkSharedSearchSource = Get-Content -LiteralPath (Join-Path $rkRoot 'Source/RimKataSharedTargetSearch.cs') -Raw -Encoding UTF8
 
 function Get-CSharpBlock([string] $source, [string] $marker) {
     $start = $source.IndexOf($marker, [StringComparison]::Ordinal)
@@ -22,6 +24,11 @@ function Get-CSharpBlock([string] $source, [string] $marker) {
 $rkProcessTick = Get-CSharpBlock $rkDraftedSource 'public static void ProcessJobTrackerTick('
 $rkDraftedTick = Get-CSharpBlock $rkDraftedSource 'private static void TickDualWeaponController('
 $rkNoDemand = Get-CSharpBlock $rkDraftedTick 'if (!combatDemand)'
+$rkMovementNotify = Get-CSharpBlock $rkControllerSource 'internal static bool NotifyDraftedMovementCell('
+$rkMovementQueue = Get-CSharpBlock $rkControllerSource 'public static void QueuePlayerMovementSearch('
+$rkMovementPotential = Get-CSharpBlock $rkControllerSource 'internal static bool HasAutomaticMovementSearchPotential('
+$rkMovementCombatWork = Get-CSharpBlock $rkControllerSource 'private static bool HasMovementFireCombatWork('
+$rkPendingMovementSearch = Get-CSharpBlock $rkCombatStateSource 'public void QueueDraftedMovementSearchTrigger()'
 $rkTickCore = Get-CSharpBlock $rkControllerSource 'private static void TickCore('
 $rkSharedScan = Get-CSharpBlock $rkTickCore 'if (state.sharedTargetSearch?.scanActive == true)'
 $rkResolveCloseTarget = Get-CSharpBlock $rkControllerSource 'private static Thing ResolveCloseTarget('
@@ -34,6 +41,8 @@ $rkJobClose = Get-CSharpBlock $rkJobDriverSource 'private void TickCloseCombat('
 $rkJobTickFire = Get-CSharpBlock $rkJobDriverSource 'private void TickCombatFire('
 $rkCycleWork = Get-CSharpBlock $rkControllerSource 'private static bool HasCycleTargetWork('
 $rkExecuteCycle = Get-CSharpBlock $rkControllerSource 'private static int ExecuteCycle('
+$rkCommitVanillaOpening = Get-CSharpBlock $rkControllerSource 'public static void CommitVanillaOpening('
+$rkSharedBegin = Get-CSharpBlock $rkSharedSearchSource 'internal static bool Begin('
 
 $rkResetIndex = $rkNoDemand.IndexOf('ResetIfActive(pawn, state);', [StringComparison]::Ordinal)
 $rkMovementClearIndex = $rkNoDemand.IndexOf('state.ClearDraftedMovementSearchTracking();', $rkResetIndex, [StringComparison]::Ordinal)
@@ -80,6 +89,100 @@ if ($rkDedicatedJobGate -notmatch 'RimKataPendingFollowupTickCache\.Contains\(pa
     $rkDedicatedJobGate -notmatch 'TryConsumePendingDedicatedFollowupJob\(pawn\)' -or
     $rkDedicatedJobGate -match 'StateFor\(') {
     throw 'Dedicated Job fast path no longer preserves only the rare pending follow-up lookup.'
+}
+
+$rkPresenceGateIndex = $rkProcessTick.IndexOf(
+    'RimKataCombatStatePresenceCache.Contains(pawn, map)',
+    [StringComparison]::Ordinal)
+$rkPotentialGateIndex = $rkProcessTick.IndexOf(
+    'HasAutomaticMovementSearchPotential(pawn)',
+    [StringComparison]::Ordinal)
+if ($rkPresenceGateIndex -lt 0 -or $rkPotentialGateIndex -le $rkPresenceGateIndex -or
+    $rkStateReadIndex -le $rkPotentialGateIndex) {
+    throw 'State-less drafted movement is no longer rejected by the potential-target gate before state lookup.'
+}
+
+$rkExplosiveGateIndex = $rkMovementPotential.IndexOf(
+    'HasActiveExplosiveProjectiles == true',
+    [StringComparison]::Ordinal)
+$rkExplosiveReturnIndex = if ($rkExplosiveGateIndex -ge 0) {
+    $rkMovementPotential.IndexOf(
+        'return true;',
+        $rkExplosiveGateIndex,
+        [StringComparison]::Ordinal)
+} else { -1 }
+$rkVanillaCombatGateIndex = $rkMovementPotential.IndexOf(
+    'Find.TickManager?.slower?.ForcedNormalSpeed != true',
+    [StringComparison]::Ordinal)
+$rkDormantReturnIndex = if ($rkVanillaCombatGateIndex -ge 0) {
+    $rkMovementPotential.IndexOf(
+        'return false;',
+        $rkVanillaCombatGateIndex,
+        [StringComparison]::Ordinal)
+} else { -1 }
+$rkAttackTargetCacheIndex = $rkMovementPotential.IndexOf(
+    'map.attackTargetsCache?',
+    [StringComparison]::Ordinal)
+$rkPotentialTargetReadIndex = $rkMovementPotential.IndexOf(
+    'GetPotentialTargetsFor(pawn)?.Count',
+    [StringComparison]::Ordinal)
+if ($rkExplosiveGateIndex -lt 0 -or
+    $rkExplosiveReturnIndex -le $rkExplosiveGateIndex -or
+    $rkVanillaCombatGateIndex -le $rkExplosiveReturnIndex -or
+    $rkDormantReturnIndex -le $rkVanillaCombatGateIndex -or
+    $rkAttackTargetCacheIndex -le $rkDormantReturnIndex -or
+    $rkPotentialTargetReadIndex -le $rkAttackTargetCacheIndex -or
+    $rkMovementPotential -match 'ToList|Where\(|Any\(') {
+    throw 'Movement search must bypass for projectiles, reject outside vanilla combat, then read the cached target count without LINQ.'
+}
+
+if ($rkMovementPotential -match 'forceNormalSpeedUntil|CurTimeSpeed|SignalForceNormalSpeed|TicksGame|NormalSpeedRefreshIntervalTicks|\b600\b') {
+    throw 'Movement search must read vanilla ForcedNormalSpeed without copying its timer, selected speed, or signal writer.'
+}
+
+if ($rkSharedScan -match 'ForcedNormalSpeed|HasAutomaticMovementSearchPotential' -or
+    $rkSharedBegin -match 'ForcedNormalSpeed|HasAutomaticMovementSearchPotential' -or
+    $rkCommitVanillaOpening -notmatch 'RimKataSharedTargetSearch\.Begin\(' -or
+    $rkCommitVanillaOpening -match 'ForcedNormalSpeed|HasAutomaticMovementSearchPotential') {
+    throw 'Vanilla combat permission must gate only new movement scans, not active scans or direct combat openings.'
+}
+
+$rkQueuePotentialIndex = $rkMovementQueue.IndexOf(
+    'HasAutomaticMovementSearchPotential(pawn)',
+    [StringComparison]::Ordinal)
+$rkQueueStateIndex = $rkMovementQueue.IndexOf(
+    'StateFor(pawn, true)',
+    [StringComparison]::Ordinal)
+if ($rkQueuePotentialIndex -lt 0 -or $rkQueueStateIndex -le $rkQueuePotentialIndex) {
+    throw 'Player movement must reject a zero-candidate map before creating combat state.'
+}
+
+if ($rkPendingMovementSearch -match 'RefreshMovementFireContinuity' -or
+    $rkMovementNotify -notmatch 'HasMovementFireCombatWork\(state\)' -or
+    $rkMovementCombatWork -match 'dualEngagementActive|sharedTargetSearch|DraftedMovementSearchTriggerPending|closeAttackRequestTarget|dualCloseCombatActive|dedicatedContinuityTarget|incomingThreatSource' -or
+    $rkMovementCombatWork -notmatch 'primaryWeaponCycle\?\.CombatActive' -or
+    $rkMovementCombatWork -notmatch 'secondaryWeaponCycle\?\.CombatActive') {
+    throw 'Movement/search bookkeeping can once again refresh combat continuity without actual combat work.'
+}
+
+if ([regex]::Matches(
+        $rkMovementNotify,
+        '!HasAutomaticMovementSearchPotential\(pawn\)').Count -ne 2 -or
+    $rkMovementNotify -notmatch '!HasAutomaticMovementSearchPotential\(pawn\)[\s\S]*?ConsumeDraftedMovementSearchTrigger\(\)[\s\S]*?return false;') {
+    throw 'Pending and new movement scans no longer stop cleanly when the map has no candidates.'
+}
+
+if ($rkMovementNotify -notmatch 'firstTrackedMovement\s*=\s*!previousCell\.IsValid[\s\S]*?pawn\.pather\?\.Moving\s*==\s*true' -or
+    $rkMovementNotify -notmatch 'movementSearchRequested\s*=\s*firstTrackedMovement[\s\S]*?\|\|\s*movedToAnotherCell' -or
+    $rkMovementNotify -notmatch 'if \(!movementSearchRequested\)[\s\S]*?return false;' -or
+    $rkMovementQueue -notmatch 'state\.draftedMovementSearchCell\s*=\s*pawn\.Position;' -or
+    $rkMovementQueue.IndexOf(
+        'state.draftedMovementSearchCell = pawn.Position;',
+        [StringComparison]::Ordinal) -ge
+        $rkMovementQueue.IndexOf(
+            'RimKataSharedTargetSearch.Begin(',
+            [StringComparison]::Ordinal)) {
+    throw 'A newly awakened moving pawn can no longer search immediately, or a normal queued move re-queues its origin.'
 }
 
 $rkScanAdvanceIndex = $rkSharedScan.IndexOf(
@@ -188,9 +291,11 @@ namespace CombatDormancyChecks
         public int pendingConsumerCalls;
         public int pendingMarkerClears;
         public int presenceReads;
+        public int potentialReads;
         public int controllerTicks;
         public int pendingConsumes;
         public bool controllerExistingStateKnown;
+        public bool movementSearchPotential;
         public string order = "";
         public Map Map = new Map();
         public JobDef CurJobDef;
@@ -226,6 +331,12 @@ namespace CombatDormancyChecks
     {
         public static int closeResolverCalls;
         public static Thing closeResolverResult;
+
+        public static bool HasAutomaticMovementSearchPotential(Pawn pawn)
+        {
+            if (pawn != null) pawn.potentialReads++;
+            return pawn != null && pawn.movementSearchPotential;
+        }
 
         public static void TryConsumePendingDedicatedFollowupJob(
             Pawn pawn,
@@ -330,10 +441,23 @@ namespace CombatDormancyChecks
             var moving = new Pawn { Drafted = true };
             moving.pather.Moving = true;
             RimKataDraftedFireController.ProcessJobTrackerTick(moving);
-            Check(moving.presenceReads == 0 && moving.stateReads == 1
-                && moving.controllerTicks == 1 && moving.controllerState == null
-                && moving.controllerExistingStateKnown,
-                "moving drafted pawn without state retains controller wake path");
+            Check(moving.presenceReads == 1 && moving.potentialReads == 1
+                && moving.stateReads == 0 && moving.controllerTicks == 0,
+                "moving drafted pawn without state or candidates stays dormant");
+
+            var movingWithPotential = new Pawn {
+                Drafted = true,
+                movementSearchPotential = true
+            };
+            movingWithPotential.pather.Moving = true;
+            RimKataDraftedFireController.ProcessJobTrackerTick(movingWithPotential);
+            Check(movingWithPotential.presenceReads == 1
+                && movingWithPotential.potentialReads == 1
+                && movingWithPotential.stateReads == 1
+                && movingWithPotential.controllerTicks == 1
+                && movingWithPotential.controllerState == null
+                && movingWithPotential.controllerExistingStateKnown,
+                "state-less movement still wakes when an attack or interception candidate exists");
 
             var retained = new Pawn {
                 Drafted = true,
@@ -473,4 +597,202 @@ namespace CombatDormancyChecks
 
 Add-Type -TypeDefinition $rkHarness -Language CSharp
 $rkPassed = [CombatDormancyChecks.Checks]::Run()
-"PASS: $rkPassed executable dormancy assertions + 11 source-boundary checks; production tick method with minimal fixtures, not an in-game performance test."
+
+$rkMovementGateHarness = @"
+using System;
+using System.Collections.Generic;
+
+namespace MovementCombatGateChecks
+{
+    public sealed class TimeSlower
+    {
+        private bool forcedNormalSpeed;
+        public int reads;
+
+        public bool ForcedNormalSpeed
+        {
+            get
+            {
+                reads++;
+                return forcedNormalSpeed;
+            }
+            set
+            {
+                forcedNormalSpeed = value;
+            }
+        }
+    }
+
+    public sealed class TickManager
+    {
+        public TimeSlower slower;
+    }
+
+    public static class Find
+    {
+        public static TickManager TickManager;
+    }
+
+    public sealed class RimKataSettings
+    {
+        public bool explosiveInterceptionEnabled = true;
+    }
+
+    public static class RimKataMod
+    {
+        public static RimKataSettings Settings = new RimKataSettings();
+    }
+
+    public sealed class RimKataMapComponent
+    {
+        public bool HasActiveExplosiveProjectiles;
+    }
+
+    public sealed class Thing
+    {
+    }
+
+    public sealed class AttackTargetsCache
+    {
+        public int reads;
+        public int candidateCount;
+
+        public List<Thing> GetPotentialTargetsFor(Pawn pawn)
+        {
+            reads++;
+            var result = new List<Thing>();
+            for (int index = 0; index < candidateCount; index++)
+            {
+                result.Add(new Thing());
+            }
+            return result;
+        }
+    }
+
+    public sealed class Map
+    {
+        public readonly RimKataMapComponent component =
+            new RimKataMapComponent();
+        public readonly AttackTargetsCache attackTargetsCache =
+            new AttackTargetsCache();
+
+        public T GetComponent<T>() where T : class
+        {
+            return component as T;
+        }
+    }
+
+    public sealed class Pawn
+    {
+        public Map Map;
+    }
+
+    public static class RimKataDualWeaponController
+    {
+        $rkMovementPotential
+    }
+
+    public static class Checks
+    {
+        private static int checks;
+
+        private static void Check(bool condition, string name)
+        {
+            if (!condition) throw new Exception("FAIL: " + name);
+            checks++;
+        }
+
+        private static Pawn MakePawn(
+            bool forcedNormalSpeed,
+            int candidateCount,
+            bool activeExplosive = false)
+        {
+            Find.TickManager = new TickManager
+            {
+                slower = new TimeSlower
+                {
+                    ForcedNormalSpeed = forcedNormalSpeed
+                }
+            };
+            var pawn = new Pawn { Map = new Map() };
+            pawn.Map.attackTargetsCache.candidateCount = candidateCount;
+            pawn.Map.component.HasActiveExplosiveProjectiles = activeExplosive;
+            return pawn;
+        }
+
+        public static int Run()
+        {
+            RimKataMod.Settings = new RimKataSettings
+            {
+                explosiveInterceptionEnabled = true
+            };
+            Pawn explosive = MakePawn(false, 1, true);
+            Check(RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(explosive)
+                    && Find.TickManager.slower.reads == 0
+                    && explosive.Map.attackTargetsCache.reads == 0,
+                "active explosive bypasses combat signal and ordinary targets");
+
+            Pawn peacefulCandidate = MakePawn(false, 1);
+            Check(!RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(peacefulCandidate)
+                    && Find.TickManager.slower.reads == 1
+                    && peacefulCandidate.Map.attackTargetsCache.reads == 0,
+                "ordinary target does not wake movement outside vanilla combat");
+
+            Pawn combatWithoutCandidate = MakePawn(true, 0);
+            Check(!RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(combatWithoutCandidate)
+                    && Find.TickManager.slower.reads == 1
+                    && combatWithoutCandidate.Map.attackTargetsCache.reads == 1,
+                "combat signal still requires a map target candidate");
+
+            Pawn combatCandidate = MakePawn(true, 1);
+            Check(RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(combatCandidate)
+                    && Find.TickManager.slower.reads == 1
+                    && combatCandidate.Map.attackTargetsCache.reads == 1,
+                "combat signal and map target permit movement search");
+
+            Pawn missingManager = MakePawn(true, 1);
+            Find.TickManager = null;
+            Check(!RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(missingManager)
+                    && missingManager.Map.attackTargetsCache.reads == 0,
+                "missing tick manager stays dormant before target cache");
+
+            Pawn missingSlower = MakePawn(true, 1);
+            Find.TickManager.slower = null;
+            Check(!RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(missingSlower)
+                    && missingSlower.Map.attackTargetsCache.reads == 0,
+                "missing TimeSlower stays dormant before target cache");
+
+            RimKataMod.Settings = new RimKataSettings
+            {
+                explosiveInterceptionEnabled = false
+            };
+            Pawn disabledExplosive = MakePawn(false, 0, true);
+            Check(!RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(disabledExplosive)
+                    && Find.TickManager.slower.reads == 1
+                    && disabledExplosive.Map.attackTargetsCache.reads == 0,
+                "disabled interception does not bypass a closed combat gate");
+
+            RimKataMod.Settings = null;
+            Pawn defaultExplosive = MakePawn(false, 0, true);
+            Check(RimKataDualWeaponController
+                    .HasAutomaticMovementSearchPotential(defaultExplosive)
+                    && Find.TickManager.slower.reads == 0
+                    && defaultExplosive.Map.attackTargetsCache.reads == 0,
+                "missing settings preserves the default interception bypass");
+
+            return checks;
+        }
+    }
+}
+"@
+
+Add-Type -TypeDefinition $rkMovementGateHarness -Language CSharp
+$rkMovementGatePassed = [MovementCombatGateChecks.Checks]::Run()
+"PASS: $rkPassed executable dormancy assertions + $rkMovementGatePassed executable movement-gate assertions + 19 source-boundary checks; production methods with minimal fixtures, not an in-game performance test."

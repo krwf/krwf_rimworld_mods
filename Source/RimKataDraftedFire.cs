@@ -94,8 +94,12 @@ namespace KRWF.RimKata
             {
                 bool moving = pawn.pather?.Moving == true;
                 Map map = pawn.Map;
-                if (!moving
-                    && !RimKataCombatStatePresenceCache.Contains(pawn, map))
+                bool statePresent =
+                    RimKataCombatStatePresenceCache.Contains(pawn, map);
+                if (!statePresent
+                    && (!moving
+                        || !RimKataDualWeaponController
+                            .HasAutomaticMovementSearchPotential(pawn)))
                 {
                     return;
                 }
@@ -109,8 +113,9 @@ namespace KRWF.RimKata
 
                 // New combat work is published by the attack, movement,
                 // defensive-response, and projectile-wake entry points before
-                // it reaches this per-tick driver.  Do not create an otherwise
-                // empty state merely because a drafted pawn is standing still.
+                // it reaches this per-tick driver.  A state-less moving pawn
+                // only falls through when the map actually has an automatic
+                // attack or interception candidate to wake for.
                 if (state == null && !moving)
                 {
                     return;

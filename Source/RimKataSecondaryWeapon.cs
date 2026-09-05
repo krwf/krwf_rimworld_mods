@@ -2134,14 +2134,19 @@ namespace KRWF.RimKata
     {
         public static bool Prefix(
             Pawn pawn,
-            ref bool __result)
+            ref bool __result,
+            out bool? __state)
         {
+            __state = null;
             if (pawn != null
-                && RimKataMod.Settings?.targetRushEnabled == true
-                && RimKataEligibility.CanBeginGunKataAttack(pawn))
+                && RimKataMod.Settings?.targetRushEnabled == true)
             {
-                __result = false;
-                return false;
+                __state = RimKataEligibility.CanBeginGunKataAttack(pawn);
+                if (__state == true)
+                {
+                    __result = false;
+                    return false;
+                }
             }
 
             return true;
@@ -2149,10 +2154,12 @@ namespace KRWF.RimKata
 
         public static void Postfix(
             Pawn pawn,
-            ref bool __result)
+            ref bool __result,
+            bool? __state)
         {
             if (pawn?.Drafted == true
-                && RimKataEligibility.CanBeginGunKataAttack(pawn))
+                && (__state
+                    ?? RimKataEligibility.CanBeginGunKataAttack(pawn)))
             {
                 __result = true;
             }

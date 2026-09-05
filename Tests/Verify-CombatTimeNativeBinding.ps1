@@ -105,6 +105,13 @@ public static class CombatTimeNativeBindingChecks
         Check(signal != null && signal.IsPublic && !signal.IsStatic
             && signal.ReturnType == typeof(void),
             "real SignalForceNormalSpeed public API matches");
+        PropertyInfo forcedNormalSpeed = typeof(TimeSlower).GetProperty(
+            "ForcedNormalSpeed",
+            BindingFlags.Instance | BindingFlags.Public);
+        Check(forcedNormalSpeed != null
+            && forcedNormalSpeed.PropertyType == typeof(bool)
+            && forcedNormalSpeed.GetGetMethod() != null,
+            "real ForcedNormalSpeed public getter matches");
 
         Console.WriteLine(checks + "/" + checks + " native combat-time binding checks passed.");
         Console.WriteLine("Scope: real installed game DLL metadata and cached Harmony delegate binding only.");

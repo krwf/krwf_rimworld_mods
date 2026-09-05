@@ -632,6 +632,8 @@ namespace KRWF.RimKata
         {
             if (pawn?.Spawned != true
                 || !Find.Selector.IsSelected(pawn)
+                || !RimKataDualWeaponController
+                    .MayNeedCombatIndicatorFrame(pawn)
                 || !RimKataVisualUtility.TryGetUiLoadout(
                     pawn,
                     out ThingWithComps primary,
@@ -648,60 +650,97 @@ namespace KRWF.RimKata
                         ? rawSecondary
                         : null;
 
-            if (!DrawFocusedCloseTargetLine(pawn))
+            RimKataCombatIndicatorFrame frame =
+                RimKataDualWeaponController.GetCombatIndicatorFrameData(
+                    pawn,
+                    primary,
+                    secondary);
+            if (frame.closeTarget != null)
+            {
+                DrawFocusedCloseTargetLine(
+                    pawn,
+                    frame.closeTarget);
+            }
+            else
             {
                 DrawFocusedTargetLine(
                     pawn,
-                    primary);
+                    frame.primary.focusedTarget,
+                    frame.primary.focusedTargetFromAttackGizmo);
                 DrawFocusedTargetLine(
                     pawn,
-                    secondary);
+                    frame.secondary.focusedTarget,
+                    frame.secondary.focusedTargetFromAttackGizmo);
             }
 
-            bool primaryVisible = TryGetCombatIndicatorData(pawn, primary, out RimKataWeaponVisualData primaryVisual, out Verb primaryVerb, out int primaryRemaining);
-            bool secondaryVisible = TryGetCombatIndicatorData( pawn, secondary, out RimKataWeaponVisualData secondaryVisual, out Verb secondaryVerb, out int secondaryRemaining);
-            if (!primaryVisible
-                && !secondaryVisible)
+            if (!frame.primary.visible
+                && !frame.secondary.visible)
             {
                 return;
             }
 
-            if (primaryVisible
-                && secondaryVisible)
+            if (frame.primary.visible
+                && frame.secondary.visible)
             {
-                if (primaryRemaining <= secondaryRemaining)
+                if (frame.primary.remainingTicks
+                    <= frame.secondary.remainingTicks)
                 {
-                    DrawCombatIndicatorForWeapon(pawn, secondaryVisual, secondaryVerb, CombatIndicatorBaseAltitude);
-                    DrawCombatIndicatorForWeapon(pawn, primaryVisual, primaryVerb, CombatIndicatorTopAltitude);
+                    DrawCombatIndicatorForWeapon(
+                        pawn,
+                        frame.secondary.visual,
+                        frame.secondary.verb,
+                        CombatIndicatorBaseAltitude,
+                        frame.pauseFireForDodge);
+                    DrawCombatIndicatorForWeapon(
+                        pawn,
+                        frame.primary.visual,
+                        frame.primary.verb,
+                        CombatIndicatorTopAltitude,
+                        frame.pauseFireForDodge);
                 }
                 else
                 {
-                    DrawCombatIndicatorForWeapon(pawn, primaryVisual, primaryVerb, CombatIndicatorBaseAltitude);
-                    DrawCombatIndicatorForWeapon(pawn, secondaryVisual, secondaryVerb, CombatIndicatorTopAltitude);
+                    DrawCombatIndicatorForWeapon(
+                        pawn,
+                        frame.primary.visual,
+                        frame.primary.verb,
+                        CombatIndicatorBaseAltitude,
+                        frame.pauseFireForDodge);
+                    DrawCombatIndicatorForWeapon(
+                        pawn,
+                        frame.secondary.visual,
+                        frame.secondary.verb,
+                        CombatIndicatorTopAltitude,
+                        frame.pauseFireForDodge);
                 }
 
                 return;
             }
 
-            if (primaryVisible)
+            if (frame.primary.visible)
             {
-                DrawCombatIndicatorForWeapon(pawn, primaryVisual, primaryVerb, CombatIndicatorBaseAltitude);
+                DrawCombatIndicatorForWeapon(
+                    pawn,
+                    frame.primary.visual,
+                    frame.primary.verb,
+                    CombatIndicatorBaseAltitude,
+                    frame.pauseFireForDodge);
 
                 return;
             }
 
-            DrawCombatIndicatorForWeapon(pawn, secondaryVisual, secondaryVerb, CombatIndicatorBaseAltitude);
+            DrawCombatIndicatorForWeapon(
+                pawn,
+                frame.secondary.visual,
+                frame.secondary.verb,
+                CombatIndicatorBaseAltitude,
+                frame.pauseFireForDodge);
         }
 
-        private static bool DrawFocusedCloseTargetLine(Pawn pawn)
+        private static void DrawFocusedCloseTargetLine(
+            Pawn pawn,
+            Thing target)
         {
-            if (!RimKataDualWeaponController.TryGetAttackGizmoCloseTarget(
-                pawn,
-                out Thing target))
-            {
-                return false;
-            }
-
             Vector3 start = pawn.Position.ToVector3Shifted();
             Vector3 end = new LocalTargetInfo(target).CenterVector3;
             end.y = start.y;
@@ -713,19 +752,14 @@ namespace KRWF.RimKata
                 altitude,
                 BlackTargetLineMaterial,
                 FocusedTargetLineWidthForCamera());
-            return true;
         }
 
         private static void DrawFocusedTargetLine(
             Pawn pawn,
-            ThingWithComps weapon)
+            Thing target,
+            bool fromAttackGizmo)
         {
-            if (weapon == null
-                || !RimKataDualWeaponController.TryGetFocusedWeaponTarget(
-                    pawn,
-                    weapon,
-                    out Thing target,
-                    out bool fromAttackGizmo))
+            if (target == null)
             {
                 return;
             }
@@ -923,63 +957,12 @@ namespace KRWF.RimKata
                 * distanceFactor;
         }
 
-        private static bool TryGetCombatIndicatorData(
-            Pawn pawn,
-            ThingWithComps weapon,
-            out RimKataWeaponVisualData visual,
-            out Verb verb,
-            out int remainingTicks)
-        {
-            visual = default(RimKataWeaponVisualData);
-            verb = null;
-            remainingTicks = 0;
-            if (weapon == null
-                || !RimKataDualWeaponController.TryGetIndicatorVisualData(
-                    pawn,
-                    weapon,
-                    out visual,
-                    out bool _))
-            {
-                return false;
-            }
-
-            bool warming =
-                visual.warming
-                && visual.warmupTicksRemaining > 0
-                && visual.warmupTotalTicks > 0;
-
-            bool cooling = visual.cooldownTicksRemaining > 0;
-
-            if (!warming
-                && !cooling)
-            {
-                return false;
-            }
-
-            verb = RimKataWeaponSlotUtility.CombatVerb(pawn, weapon);
-
-            if (verb == null)
-            {
-                return false;
-            }
-
-            if (warming)
-            {
-                remainingTicks = visual.warmupTicksRemaining;
-
-                return true;
-            }
-
-            remainingTicks = visual.cooldownTicksRemaining;
-
-            return true;
-        }
-
         private static void DrawCombatIndicatorForWeapon(
             Pawn pawn,
             RimKataWeaponVisualData visual,
             Verb verb,
-            float altitudeOffset)
+            float altitudeOffset,
+            bool pauseFireForDodge)
         {
             if (pawn == null
                 || verb == null)
@@ -993,9 +976,7 @@ namespace KRWF.RimKata
                 && visual.warmupTotalTicks > 0;
 
             bool cooling = visual.cooldownTicksRemaining > 0;
-            if (warming
-                && RimKataDualWeaponController
-                    .ShouldPauseFireForDodge(pawn))
+            if (warming && pauseFireForDodge)
             {
                 return;
             }

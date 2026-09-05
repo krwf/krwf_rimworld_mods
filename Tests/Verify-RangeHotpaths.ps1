@@ -36,6 +36,9 @@ $rkPairPatch = Get-CSharpBlock $rkAttackSource 'public static class Patch_Pawn_T
 $rkSecondaryLookup = Get-CSharpBlock $rkSecondarySource 'internal static ThingWithComps SecondaryWeaponWithVerifiedAccess('
 $rkKnownPair = Get-CSharpBlock $rkSecondarySource 'internal static Verb BestRangedCombatVerb('
 $rkRangedValidity = Get-CSharpBlock $rkSecondarySource 'private static bool RangedVerbCanAttack('
+$rkMeleeGizmoPatch = Get-CSharpBlock $rkSecondarySource 'public static class Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo'
+$rkMeleeGizmoPrefix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static bool Prefix('
+$rkMeleeGizmoPostfix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static void Postfix('
 $rkMultiSelect = Get-CSharpBlock $rkSecondarySource 'public static class RimKataMultiSelectAttackGizmoUtility'
 $rkFactsLookup = Get-CSharpBlock $rkMultiSelect 'GetSelectedAttackGizmoFacts()'
 $rkFactsBuild = Get-CSharpBlock $rkMultiSelect 'BuildSelectedAttackGizmoFacts(List<object> selected)'
@@ -72,6 +75,15 @@ if ([regex]::Matches($rkRangedValidity, 'CanReachImmediate').Count -ne 1 -or
     $rkRangedValidity -notmatch 'targetAdjacent\.HasValue' -or
     $rkRangedValidity -notmatch 'targetAdjacent\s*=\s*adjacent') {
     throw 'Pair verb validity no longer shares its lazy adjacency result.'
+}
+
+if ([regex]::Matches($rkMeleeGizmoPrefix, 'CanBeginGunKataAttack').Count -ne 1 -or
+    [regex]::Matches($rkMeleeGizmoPostfix, 'CanBeginGunKataAttack').Count -ne 1 -or
+    $rkMeleeGizmoPrefix -notmatch 'out bool\? __state' -or
+    $rkMeleeGizmoPrefix -notmatch '__state\s*=\s*null' -or
+    $rkMeleeGizmoPostfix -notmatch 'bool\? __state' -or
+    $rkMeleeGizmoPostfix -notmatch '__state[\s\S]*?\?\?[\s\S]*?CanBeginGunKataAttack') {
+    throw 'Melee-gizmo patch no longer reuses eligibility with a skipped-Prefix fallback.'
 }
 
 if ($rkFactsLookup -notmatch 'SelectedObjectsListForReading' -or
@@ -179,6 +191,7 @@ namespace Verse
     {
         public int reachCalls;
         public bool adjacent;
+        public bool Drafted;
 
         public bool CanReachImmediate(Thing target, PathEndMode mode)
         {
@@ -221,6 +234,7 @@ namespace KRWF.RimKata
     {
         public RimKataCandidateRangeMode candidateRangeMode;
         public float customCandidateRange;
+        public bool targetRushEnabled = true;
     }
 
     public static class RimKataMod
@@ -246,6 +260,15 @@ namespace KRWF.RimKata
 
     public static class RimKataEligibility
     {
+        public static bool canBegin;
+        public static int beginCalls;
+
+        public static bool CanBeginGunKataAttack(Pawn pawn)
+        {
+            beginCalls++;
+            return canBegin;
+        }
+
         public static bool IsRangedVerbAvailableInCloseCombat(Pawn pawn, Verb verb)
         {
             return verb.closeAvailable;
@@ -296,6 +319,8 @@ namespace KRWF.RimKata
         $rkRangedValidity
     }
 
+    $rkMeleeGizmoPatch
+
     public static class RangeHotpathChecks
     {
         private static int checks;
@@ -311,8 +336,98 @@ namespace KRWF.RimKata
             return new ThingWithComps { range = range, verb = verb };
         }
 
+        private static bool EvaluateMeleeGizmo(
+            Pawn pawn,
+            bool vanillaResult,
+            out bool originalRan)
+        {
+            bool result = false;
+            bool? state;
+            originalRan = Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo.Prefix(
+                pawn,
+                ref result,
+                out state);
+            if (originalRan)
+            {
+                result = vanillaResult;
+            }
+
+            Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo.Postfix(
+                pawn,
+                ref result,
+                state);
+            return result;
+        }
+
         public static int Run()
         {
+            RimKataMod.Settings = new RimKataSettings { targetRushEnabled = true };
+            RimKataEligibility.canBegin = true;
+            RimKataEligibility.beginCalls = 0;
+            bool originalRan;
+            bool meleeGizmo = EvaluateMeleeGizmo(
+                new Pawn { Drafted = true },
+                false,
+                out originalRan);
+            Check(meleeGizmo && !originalRan && RimKataEligibility.beginCalls == 1,
+                "drafted eligible rush-on gizmo reuses one eligibility result");
+
+            RimKataMod.Settings.targetRushEnabled = false;
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = EvaluateMeleeGizmo(
+                new Pawn { Drafted = true },
+                false,
+                out originalRan);
+            Check(meleeGizmo && originalRan && RimKataEligibility.beginCalls == 1,
+                "rush-off preserves vanilla execution before RimKata override");
+
+            RimKataMod.Settings.targetRushEnabled = true;
+            RimKataEligibility.canBegin = false;
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = EvaluateMeleeGizmo(
+                new Pawn { Drafted = true },
+                false,
+                out originalRan);
+            Check(!meleeGizmo && originalRan && RimKataEligibility.beginCalls == 1,
+                "drafted ineligible pawn preserves the vanilla result");
+
+            RimKataEligibility.canBegin = true;
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = EvaluateMeleeGizmo(
+                new Pawn { Drafted = false },
+                true,
+                out originalRan);
+            Check(!meleeGizmo && !originalRan && RimKataEligibility.beginCalls == 1,
+                "rush-on undrafted eligible pawn preserves the original skip");
+
+            RimKataMod.Settings.targetRushEnabled = false;
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = EvaluateMeleeGizmo(
+                new Pawn { Drafted = false },
+                true,
+                out originalRan);
+            Check(meleeGizmo && originalRan && RimKataEligibility.beginCalls == 0,
+                "rush-off undrafted pawn preserves the vanilla result without eligibility");
+
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = false;
+            Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo.Postfix(
+                new Pawn { Drafted = true },
+                ref meleeGizmo,
+                null);
+            Check(meleeGizmo && RimKataEligibility.beginCalls == 1,
+                "skipped RimKata Prefix retains the Postfix eligibility fallback");
+
+            RimKataEligibility.canBegin = false;
+            RimKataEligibility.beginCalls = 0;
+            meleeGizmo = true;
+            Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo.Postfix(
+                new Pawn { Drafted = true },
+                ref meleeGizmo,
+                null);
+            Check(meleeGizmo && RimKataEligibility.beginCalls == 1,
+                "skipped Prefix fallback preserves an ineligible external result");
+
             var target = new Thing();
             var primaryVerb = new Verb();
             var secondaryVerb = new Verb();
