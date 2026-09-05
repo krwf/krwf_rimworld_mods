@@ -77,8 +77,29 @@ namespace KRWF.RimKata
                 return;
             }
 
+            // The dedicated JobDriver owns the combat tick.  This postfix only
+            // needs to service the rare hand-off request while that Job is live.
+            if (pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
+            {
+                if (RimKataPendingFollowupTickCache.Contains(pawn))
+                {
+                    RimKataDualWeaponController
+                        .TryConsumePendingDedicatedFollowupJob(pawn);
+                }
+
+                return;
+            }
+
             if (pawn.Drafted)
             {
+                bool moving = pawn.pather?.Moving == true;
+                Map map = pawn.Map;
+                if (!moving
+                    && !RimKataCombatStatePresenceCache.Contains(pawn, map))
+                {
+                    return;
+                }
+
                 RimKataPawnCombatState state = StateFor(pawn, false);
                 if (state?.dedicatedFollowupJobPending == true)
                 {
@@ -90,7 +111,7 @@ namespace KRWF.RimKata
                 // defensive-response, and projectile-wake entry points before
                 // it reaches this per-tick driver.  Do not create an otherwise
                 // empty state merely because a drafted pawn is standing still.
-                if (state == null && pawn.pather?.Moving != true)
+                if (state == null && !moving)
                 {
                     return;
                 }
@@ -223,7 +244,7 @@ namespace KRWF.RimKata
             }
 
             Thing requestedCloseTarget =
-                ordinaryAttackAllowed && state.CloseAttackRequestActive
+                ordinaryAttackAllowed
                     ? state.closeAttackRequestTarget
                     : null;
             bool closePlayerForced = false;
@@ -265,7 +286,7 @@ namespace KRWF.RimKata
                 immediateCloseTarget,
                 closePlayerForced,
                 closeKillIncappedTarget,
-                closeContext,
+                immediateCloseTarget,
                 true,
                 automaticRangedFireAllowed);
         }

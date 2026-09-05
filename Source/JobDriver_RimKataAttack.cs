@@ -451,14 +451,11 @@ namespace KRWF.RimKata
                     pawn,
                     state))
             {
-                bool dodgeCloseCombat = assignedTargetInTouchRange
-                    || state?.CloseCombatActive == true;
-
                 TickCombatFire(
                     state,
                     assignedTarget,
-                    dodgeCloseCombat,
-                    assignedTargetInTouchRange || immediateCloseTarget != null);
+                    immediateCloseTarget,
+                    true);
                 return;
             }
 
@@ -492,21 +489,26 @@ namespace KRWF.RimKata
             }
 
             pawn.pather.StopDead();
-            TickCloseCombat(state, assignedTarget);
+            TickCloseCombat(state, assignedTarget, immediateCloseTarget);
         }
 
         private void TickAdvancingFire(
             RimKataPawnCombatState state,
             Thing assignedTarget)
         {
-            TickCombatFire(state, assignedTarget, false, true);
+            TickCombatFire(state, assignedTarget, null, true);
         }
 
         private void TickCloseCombat(
             RimKataPawnCombatState state,
-            Thing assignedTarget)
+            Thing assignedTarget,
+            Thing resolvedCloseTarget)
         {
-            TickCombatFire(state, assignedTarget, true, true);
+            TickCombatFire(
+                state,
+                assignedTarget,
+                resolvedCloseTarget,
+                true);
         }
 
         private void MaintainCombatNormalSpeedRequest(Thing assignedTarget)
@@ -527,8 +529,8 @@ namespace KRWF.RimKata
         private void TickCombatFire(
             RimKataPawnCombatState state,
             Thing assignedTarget,
-            bool closeCombatContext,
-            bool closeTargetResolved)
+            Thing resolvedCloseTarget,
+            bool closeTargetResolutionKnown)
         {
             RimKataDualWeaponController.TickWithKnownState(
                 pawn,
@@ -536,8 +538,8 @@ namespace KRWF.RimKata
                 assignedTarget,
                 IsPlayerForced,
                 job.killIncappedTarget,
-                closeCombatContext,
-                closeTargetResolved,
+                resolvedCloseTarget,
+                closeTargetResolutionKnown,
                 true);
         }
 

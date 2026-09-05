@@ -382,13 +382,17 @@ namespace KRWF.RimKata
             bool closeTargetResolved = false,
             bool allowAutomaticRangedFire = true)
         {
+            Thing resolvedCloseTarget = closeTargetResolved
+                && closeCombatContext
+                    ? assignedTarget
+                    : null;
             TickCore(
                 pawn,
                 null,
                 assignedTarget,
                 playerForced,
                 killIncappedTarget,
-                closeCombatContext,
+                resolvedCloseTarget,
                 closeTargetResolved,
                 allowAutomaticRangedFire,
                 false);
@@ -400,8 +404,8 @@ namespace KRWF.RimKata
             Thing assignedTarget,
             bool playerForced,
             bool killIncappedTarget,
-            bool closeCombatContext,
-            bool closeTargetResolved,
+            Thing resolvedCloseTarget,
+            bool closeTargetResolutionKnown,
             bool allowAutomaticRangedFire)
         {
             TickCore(
@@ -410,8 +414,8 @@ namespace KRWF.RimKata
                 assignedTarget,
                 playerForced,
                 killIncappedTarget,
-                closeCombatContext,
-                closeTargetResolved,
+                resolvedCloseTarget,
+                closeTargetResolutionKnown,
                 allowAutomaticRangedFire,
                 true);
         }
@@ -422,8 +426,8 @@ namespace KRWF.RimKata
             Thing assignedTarget,
             bool playerForced,
             bool killIncappedTarget,
-            bool closeCombatContext,
-            bool closeTargetResolved,
+            Thing resolvedCloseTarget,
+            bool closeTargetResolutionKnown,
             bool allowAutomaticRangedFire,
             bool attackEligibilityVerified)
         {
@@ -497,21 +501,16 @@ namespace KRWF.RimKata
                 state.QueueIdleProjectileSearchTrigger();
             }
 
-            Thing closeTarget = !ordinaryAttackAllowed ? null : closeTargetResolved
-                && closeCombatContext
-                && IsImmediateCloseTarget(
-                    pawn,
-                    assignedTarget,
-                    playerForced,
-                    killIncappedTarget)
-                    ? assignedTarget
-                    : ResolveCloseTarget(
-                        pawn,
-                        state,
-                        assignedTarget,
-                        playerForced,
-                        killIncappedTarget);
-            closeCombatContext = closeTarget != null;
+            Thing closeTarget = ResolveTickCloseTarget(
+                pawn,
+                state,
+                assignedTarget,
+                playerForced,
+                killIncappedTarget,
+                ordinaryAttackAllowed,
+                resolvedCloseTarget,
+                closeTargetResolutionKnown);
+            bool closeCombatContext = closeTarget != null;
             if (closeCombatContext)
             {
                 assignedTarget = closeTarget;
@@ -550,11 +549,15 @@ namespace KRWF.RimKata
                 SuppressNewAutomaticRangedTargeting(pawn, state);
             }
 
+            bool combatContinuityKnown = false;
+            bool combatContinuity = false;
             if (state.sharedTargetSearch?.scanActive == true)
             {
                 AdvanceSharedTargetSearch(pawn, state, assignedTarget);
                 RefreshDualEngagementState(pawn, state, randomAttackEnabled);
-                if (state.dualEngagementActive)
+                combatContinuity = state.dualEngagementActive;
+                combatContinuityKnown = true;
+                if (combatContinuity)
                 {
                     if (pawn.Drafted)
                     {
@@ -569,7 +572,12 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!HasCombatContinuity(pawn, state, randomAttackEnabled))
+            if (!(combatContinuityKnown
+                    ? combatContinuity
+                    : HasCombatContinuity(
+                        pawn,
+                        state,
+                        randomAttackEnabled)))
             {
                 UpdateBodyAimStance(pawn, state);
                 return;
@@ -4114,9 +4122,10 @@ namespace KRWF.RimKata
             bool playerForced,
             bool killIncappedTarget)
         {
-            Thing requested = state?.CloseAttackRequestActive == true
-                ? state.closeAttackRequestTarget
-                : null;
+            // The immediate-target test below is the authoritative validation.
+            // Reading CloseAttackRequestActive first would perform the same
+            // target and reachability checks twice on this hot path.
+            Thing requested = state?.closeAttackRequestTarget;
             if (IsImmediateCloseTarget(
                 pawn,
                 requested,
@@ -4142,6 +4151,31 @@ namespace KRWF.RimKata
             }
 
             return null;
+        }
+
+        private static Thing ResolveTickCloseTarget(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool playerForced,
+            bool killIncappedTarget,
+            bool ordinaryAttackAllowed,
+            Thing resolvedCloseTarget,
+            bool closeTargetResolutionKnown)
+        {
+            if (!ordinaryAttackAllowed)
+            {
+                return null;
+            }
+
+            return closeTargetResolutionKnown
+                ? resolvedCloseTarget
+                : ResolveCloseTarget(
+                    pawn,
+                    state,
+                    assignedTarget,
+                    playerForced,
+                    killIncappedTarget);
         }
 
         private static bool IsImmediateCloseTarget(
