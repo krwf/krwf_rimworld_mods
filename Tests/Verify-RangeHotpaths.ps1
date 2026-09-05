@@ -36,6 +36,11 @@ $rkPairPatch = Get-CSharpBlock $rkAttackSource 'public static class Patch_Pawn_T
 $rkSecondaryLookup = Get-CSharpBlock $rkSecondarySource 'internal static ThingWithComps SecondaryWeaponWithVerifiedAccess('
 $rkKnownPair = Get-CSharpBlock $rkSecondarySource 'internal static Verb BestRangedCombatVerb('
 $rkRangedValidity = Get-CSharpBlock $rkSecondarySource 'private static bool RangedVerbCanAttack('
+$rkSecondaryGizmoPatch = Get-CSharpBlock $rkSecondarySource 'public static class Patch_PawnEquipmentTracker_RimKataSecondaryGizmo'
+$rkSecondaryGizmoIterator = Get-CSharpBlock $rkSecondaryGizmoPatch 'private static IEnumerable<Gizmo> MarkSecondaryWeaponGizmos('
+$rkSecondaryGizmoEligibilityGate = Get-CSharpBlock $rkSecondaryGizmoIterator 'if (!RimKataEligibility.CanBeginGunKataAttack(pawn))'
+$rkSecondaryGizmoBranch = Get-CSharpBlock $rkSecondaryGizmoIterator 'else if (weapon == secondary)'
+$rkUndraftedSecondaryGate = Get-CSharpBlock $rkSecondaryGizmoBranch 'if (!pawn.Drafted && command.Disabled)'
 $rkMeleeGizmoPatch = Get-CSharpBlock $rkSecondarySource 'public static class Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo'
 $rkMeleeGizmoPrefix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static bool Prefix('
 $rkMeleeGizmoPostfix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static void Postfix('
@@ -75,6 +80,54 @@ if ([regex]::Matches($rkRangedValidity, 'CanReachImmediate').Count -ne 1 -or
     $rkRangedValidity -notmatch 'targetAdjacent\.HasValue' -or
     $rkRangedValidity -notmatch 'targetAdjacent\s*=\s*adjacent') {
     throw 'Pair verb validity no longer shares its lazy adjacency result.'
+}
+
+if ($rkSecondarySource -match 'CreateVerbTargetCommand' -or
+    [regex]::Matches($rkSecondaryGizmoIterator, 'CanBeginGunKataAttack').Count -ne 1 -or
+    [regex]::Matches($rkSecondaryGizmoIterator, 'SecondaryWeaponWithVerifiedAccess\(pawn\)').Count -ne 1 -or
+    $rkSecondaryGizmoIterator -notmatch 'ThingWithComps secondary\s*=\s*RimKataWeaponSlotUtility\.SecondaryWeaponWithVerifiedAccess\(pawn\)' -or
+    $rkSecondaryGizmoIterator -match 'IsSecondaryWeapon\(|IsRegisteredUser|SecondaryWeapon\(pawn\)' -or
+    [regex]::Matches($rkSecondaryGizmoIterator, '"IsNotDrafted"\s*\.Translate').Count -ne 1 -or
+    [regex]::Matches($rkSecondaryGizmoIterator, 'command\.Disabled\s*=\s*false').Count -ne 1 -or
+    [regex]::Matches($rkSecondaryGizmoIterator, 'command\.disabledReason\s*=\s*null').Count -ne 1) {
+    throw 'Undrafted secondary-gizmo unlock regained a per-Verb patch or duplicate eligibility/loadout work.'
+}
+
+$rkUnifiedIndex = Get-Index $rkSecondaryGizmoIterator 'ShouldUseUnifiedAttackGizmo()'
+$rkNullSecondaryIndex = Get-Index $rkSecondaryGizmoIterator 'if (secondary == null)'
+$rkSecondaryBranchIndex = Get-Index $rkSecondaryGizmoIterator 'else if (weapon == secondary)'
+$rkEligibilityIndex = Get-Index $rkSecondaryGizmoIterator 'if (!RimKataEligibility.CanBeginGunKataAttack(pawn))'
+$rkPrimaryLookupIndex = Get-Index $rkSecondaryGizmoIterator 'ThingWithComps primary ='
+$rkUnifiedBlock = Get-CSharpBlock $rkSecondaryGizmoIterator 'if (RimKataMultiSelectAttackGizmoUtility'
+$rkNullSecondaryBlock = Get-CSharpBlock $rkSecondaryGizmoIterator 'if (secondary == null)'
+$rkGateIndex = Get-Index $rkSecondaryGizmoBranch 'if (!pawn.Drafted && command.Disabled)'
+$rkReasonGuardIndex = Get-Index $rkSecondaryGizmoBranch 'if (notDraftedReason == null)'
+$rkTranslateIndex = Get-Index $rkSecondaryGizmoBranch '"IsNotDrafted"'
+$rkReasonMatchIndex = Get-Index $rkSecondaryGizmoBranch 'if (command.disabledReason == notDraftedReason)'
+$rkEnableIndex = Get-Index $rkSecondaryGizmoBranch 'command.Disabled = false'
+$rkReasonClearIndex = Get-Index $rkSecondaryGizmoBranch 'command.disabledReason = null'
+$rkLabelIndex = Get-Index $rkSecondaryGizmoBranch 'command.defaultLabel = SecondaryGizmoLabel'
+$rkAddIndex = Get-Index $rkSecondaryGizmoBranch 'secondaryCommands.Add(command)'
+if ($rkUnifiedIndex -ge $rkNullSecondaryIndex -or
+    $rkNullSecondaryIndex -ge $rkSecondaryBranchIndex -or
+    $rkEligibilityIndex -ge $rkPrimaryLookupIndex -or
+    $rkSecondaryGizmoEligibilityGate -notmatch 'yield return gizmo' -or
+    $rkSecondaryGizmoEligibilityGate -notmatch 'yield break' -or
+    $rkSecondaryGizmoIterator -notmatch 'string notDraftedReason\s*=\s*null' -or
+    $rkUnifiedBlock -notmatch 'commandWeapon\s*==\s*primary' -or
+    $rkUnifiedBlock -notmatch 'commandWeapon\s*==\s*secondary' -or
+    $rkUnifiedBlock -notmatch 'continue' -or
+    $rkUnifiedBlock -notmatch 'yield break' -or
+    $rkNullSecondaryBlock -notmatch 'yield return gizmo' -or
+    $rkNullSecondaryBlock -notmatch 'yield break' -or
+    $rkGateIndex -ge $rkReasonGuardIndex -or
+    $rkReasonGuardIndex -ge $rkTranslateIndex -or
+    $rkTranslateIndex -ge $rkReasonMatchIndex -or
+    $rkReasonMatchIndex -ge $rkEnableIndex -or
+    $rkEnableIndex -ge $rkReasonClearIndex -or
+    $rkReasonClearIndex -ge $rkLabelIndex -or
+    $rkLabelIndex -ge $rkAddIndex) {
+    throw 'Undrafted secondary-gizmo unlock no longer preserves its exact reason, ordering, or grouping boundary.'
 }
 
 if ([regex]::Matches($rkMeleeGizmoPrefix, 'CanBeginGunKataAttack').Count -ne 1 -or
@@ -192,6 +245,7 @@ namespace Verse
         public int reachCalls;
         public bool adjacent;
         public bool Drafted;
+        public string LabelShort = "Pawn";
 
         public bool CanReachImmediate(Thing target, PathEndMode mode)
         {
@@ -211,6 +265,24 @@ namespace Verse
         public bool ApparelPreventsShooting() { return apparelBlocked; }
         public bool Available() { return available; }
         public bool CanHitTarget(Thing target) { return canHit; }
+    }
+
+    public sealed class Command_VerbTarget
+    {
+        public bool Disabled;
+        public string disabledReason;
+    }
+
+    public static class TranslationExtensions
+    {
+        public static int calls;
+        public static string result = "Pawn is not drafted";
+
+        public static string Translate(this string key, params object[] args)
+        {
+            calls++;
+            return result;
+        }
     }
 }
 
@@ -319,6 +391,22 @@ namespace KRWF.RimKata
         $rkRangedValidity
     }
 
+    public static class UndraftedSecondaryGizmoHarness
+    {
+        public static void Apply(
+            Pawn pawn,
+            ThingWithComps weapon,
+            ThingWithComps secondary,
+            Command_VerbTarget command,
+            ref string notDraftedReason)
+        {
+            if (weapon == secondary)
+            {
+                $rkUndraftedSecondaryGate
+            }
+        }
+    }
+
     $rkMeleeGizmoPatch
 
     public static class RangeHotpathChecks
@@ -390,6 +478,112 @@ namespace KRWF.RimKata
                 out originalRan);
             Check(!meleeGizmo && originalRan && RimKataEligibility.beginCalls == 1,
                 "drafted ineligible pawn preserves the vanilla result");
+
+            var gizmoPawn = new Pawn { Drafted = false };
+            var gizmoPrimary = new ThingWithComps();
+            var gizmoSecondary = new ThingWithComps();
+            var secondaryCommand = new Command_VerbTarget
+            {
+                Disabled = true,
+                disabledReason = TranslationExtensions.result
+            };
+            string notDraftedReason = null;
+            TranslationExtensions.calls = 0;
+            UndraftedSecondaryGizmoHarness.Apply(
+                gizmoPawn,
+                gizmoSecondary,
+                gizmoSecondary,
+                secondaryCommand,
+                ref notDraftedReason);
+            Check(!secondaryCommand.Disabled
+                    && secondaryCommand.disabledReason == null
+                    && TranslationExtensions.calls == 1,
+                "exact undrafted secondary reason is enabled once");
+
+            var secondSecondaryCommand = new Command_VerbTarget
+            {
+                Disabled = true,
+                disabledReason = TranslationExtensions.result
+            };
+            UndraftedSecondaryGizmoHarness.Apply(
+                gizmoPawn,
+                gizmoSecondary,
+                gizmoSecondary,
+                secondSecondaryCommand,
+                ref notDraftedReason);
+            Check(!secondSecondaryCommand.Disabled
+                    && TranslationExtensions.calls == 1,
+                "multiple secondary verbs share one translated reason");
+
+            var otherReasonCommand = new Command_VerbTarget
+            {
+                Disabled = true,
+                disabledReason = "Other reason"
+            };
+            notDraftedReason = null;
+            TranslationExtensions.calls = 0;
+            UndraftedSecondaryGizmoHarness.Apply(
+                gizmoPawn,
+                gizmoSecondary,
+                gizmoSecondary,
+                otherReasonCommand,
+                ref notDraftedReason);
+            Check(otherReasonCommand.Disabled
+                    && otherReasonCommand.disabledReason == "Other reason"
+                    && TranslationExtensions.calls == 1,
+                "another disabled reason remains blocked");
+
+            var draftedCommand = new Command_VerbTarget
+            {
+                Disabled = true,
+                disabledReason = TranslationExtensions.result
+            };
+            notDraftedReason = null;
+            TranslationExtensions.calls = 0;
+            UndraftedSecondaryGizmoHarness.Apply(
+                new Pawn { Drafted = true },
+                gizmoSecondary,
+                gizmoSecondary,
+                draftedCommand,
+                ref notDraftedReason);
+            Check(draftedCommand.Disabled
+                    && TranslationExtensions.calls == 0,
+                "drafted secondary command remains unchanged");
+
+            var primaryCommand = new Command_VerbTarget
+            {
+                Disabled = true,
+                disabledReason = TranslationExtensions.result
+            };
+            notDraftedReason = null;
+            TranslationExtensions.calls = 0;
+            UndraftedSecondaryGizmoHarness.Apply(
+                gizmoPawn,
+                gizmoPrimary,
+                gizmoSecondary,
+                primaryCommand,
+                ref notDraftedReason);
+            Check(primaryCommand.Disabled
+                    && TranslationExtensions.calls == 0,
+                "primary command remains blocked without translation");
+
+            var enabledCommand = new Command_VerbTarget
+            {
+                Disabled = false,
+                disabledReason = null
+            };
+            notDraftedReason = null;
+            TranslationExtensions.calls = 0;
+            UndraftedSecondaryGizmoHarness.Apply(
+                gizmoPawn,
+                gizmoSecondary,
+                gizmoSecondary,
+                enabledCommand,
+                ref notDraftedReason);
+            Check(!enabledCommand.Disabled
+                    && enabledCommand.disabledReason == null
+                    && TranslationExtensions.calls == 0,
+                "already enabled secondary command avoids translation");
 
             RimKataEligibility.canBegin = true;
             RimKataEligibility.beginCalls = 0;

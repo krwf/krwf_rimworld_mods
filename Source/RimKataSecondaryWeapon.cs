@@ -1580,7 +1580,8 @@ namespace KRWF.RimKata
 
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
 
-            ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(pawn);
+            ThingWithComps secondary =
+                RimKataWeaponSlotUtility.SecondaryWeaponWithVerifiedAccess(pawn);
 
             if (RimKataMultiSelectAttackGizmoUtility
                 .ShouldUseUnifiedAttackGizmo())
@@ -1620,6 +1621,7 @@ namespace KRWF.RimKata
             List<Gizmo> secondaryCommands = new List<Gizmo>();
 
             int insertionIndex = -1;
+            string notDraftedReason = null;
 
             for (int i = 0; i < all.Count; i++)
             {
@@ -1644,6 +1646,21 @@ namespace KRWF.RimKata
                     if (insertionIndex < 0)
                     {
                         insertionIndex = i;
+                    }
+
+                    if (!pawn.Drafted && command.Disabled)
+                    {
+                        if (notDraftedReason == null)
+                        {
+                            notDraftedReason = "IsNotDrafted"
+                                .Translate(pawn.LabelShort, pawn);
+                        }
+
+                        if (command.disabledReason == notDraftedReason)
+                        {
+                            command.Disabled = false;
+                            command.disabledReason = null;
+                        }
                     }
 
                     command.defaultLabel = SecondaryGizmoLabel;
@@ -2063,42 +2080,6 @@ namespace KRWF.RimKata
                     command,
                     group);
             }
-        }
-    }
-
-    [HarmonyPatch(typeof(VerbTracker), "CreateVerbTargetCommand")]
-    public static class Patch_VerbTracker_RimKataUndraftedSecondaryGizmo
-    {
-        public static void Postfix(
-            Verb verb,
-            ref Command_VerbTarget __result)
-        {
-            if (__result == null || verb == null || !verb.CasterIsPawn)
-            {
-                return;
-            }
-
-            Pawn pawn = verb.CasterPawn;
-            ThingWithComps weapon = verb.EquipmentSource;
-
-            if (pawn == null
-                || weapon == null
-                || pawn.Drafted
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn)
-                || !RimKataWeaponSlotUtility.IsSecondaryWeapon(pawn, weapon))
-            {
-                return;
-            }
-
-            string notDraftedReason = "IsNotDrafted".Translate(pawn.LabelShort, pawn);
-
-            if (!__result.Disabled || __result.disabledReason != notDraftedReason)
-            {
-                return;
-            }
-
-            __result.Disabled = false;
-            __result.disabledReason = null;
         }
     }
 
