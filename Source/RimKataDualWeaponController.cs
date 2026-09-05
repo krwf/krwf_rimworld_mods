@@ -1118,7 +1118,7 @@ namespace KRWF.RimKata
                     return true;
                 }
 
-                if (LongestAutomaticRangeVerb(pawn) == null)
+                if (LongestAutomaticCandidateCellRadiusVerb(pawn) == null)
                 {
                     state.ConsumeDraftedMovementSearchTrigger();
                     return false;
@@ -1819,7 +1819,7 @@ namespace KRWF.RimKata
                 target);
         }
 
-        private static bool TargetWithinAutomaticSearchRange(
+        private static bool TargetWithinAutomaticCandidateCellRadius(
             Pawn pawn,
             Thing target)
         {
@@ -1831,10 +1831,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            float range = RimKataTargeting.MaximumAutomaticSearchRange(pawn);
-            return range > 0f
+            float candidateCellRadius =
+                RimKataTargeting.MaximumAutomaticCandidateCellRadius(pawn);
+            return candidateCellRadius > 0f
                 && pawn.Position.DistanceToSquared(target.Position)
-                    <= range * range;
+                    <= candidateCellRadius * candidateCellRadius;
         }
 
         public static bool ShouldConvertVanillaOpeningToSingleShot(Verb verb)
@@ -1973,7 +1974,7 @@ namespace KRWF.RimKata
             return true;
         }
 
-        private static Verb LongestAutomaticRangeVerb(Pawn pawn)
+        private static Verb LongestAutomaticCandidateCellRadiusVerb(Pawn pawn)
         {
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
             ThingWithComps secondary = RimKataWeaponSlotUtility
@@ -1982,21 +1983,25 @@ namespace KRWF.RimKata
                 : null;
             Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
             Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
-            float primaryRange = primaryVerb != null && !primaryVerb.IsMeleeAttack
-                ? RimKataRangeUtility.ResolveCandidateRange(
+            float primaryCandidateCellRadius =
+                primaryVerb != null
+                && !primaryVerb.IsMeleeAttack
+                ? RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn,
                     primary,
                     primaryVerb)
                 : -1f;
-            float secondaryRange = secondaryVerb != null && !secondaryVerb.IsMeleeAttack
-                ? RimKataRangeUtility.ResolveCandidateRange(
+            float secondaryCandidateCellRadius =
+                secondaryVerb != null
+                && !secondaryVerb.IsMeleeAttack
+                ? RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn,
                     secondary,
                     secondaryVerb)
                 : -1f;
-            return secondaryRange > primaryRange
+            return secondaryCandidateCellRadius > primaryCandidateCellRadius
                 ? secondaryVerb
-                : primaryRange >= 0f
+                : primaryCandidateCellRadius >= 0f
                     ? primaryVerb
                     : null;
         }
@@ -2934,7 +2939,7 @@ namespace KRWF.RimKata
                     sourceJob,
                     jobGiver);
             if (!meleeOnlyCounterattackRush
-                && !TargetWithinAutomaticSearchRange(
+                && !TargetWithinAutomaticCandidateCellRadius(
                     pawn,
                     openingJobTarget)
                 && !RimKataWeaponSlotUtility.CanAttackTargetWithoutRushing(
@@ -3118,7 +3123,7 @@ namespace KRWF.RimKata
 
             return RimKataMod.Settings?.targetRushEnabled != false
                 && pawn?.CurJob?.playerForced != true
-                && (TargetWithinAutomaticSearchRange(pawn, target)
+                && (TargetWithinAutomaticCandidateCellRadius(pawn, target)
                     || IsConvertedMeleeCounterattackRushJob(pawn, target))
                 && RimKataTargeting.IsAutomaticEnemy(pawn, target)
                 && (!(target is Pawn automaticTargetPawn)
@@ -4762,7 +4767,7 @@ namespace KRWF.RimKata
                 || (RimKataTargeting.IsValidAutomaticAttackTarget(
                         pawn,
                         assignedTarget)
-                    && TargetWithinAutomaticSearchRange(
+                    && TargetWithinAutomaticCandidateCellRadius(
                         pawn,
                         assignedTarget))
                 || (primaryCandidate == null && secondaryCandidate == null)
@@ -4810,7 +4815,7 @@ namespace KRWF.RimKata
             Thing candidate)
         {
             return candidate != null
-                && TargetWithinAutomaticSearchRange(pawn, candidate)
+                && TargetWithinAutomaticCandidateCellRadius(pawn, candidate)
                 && driver.TryPromoteAutomaticJobTarget(candidate);
         }
 
@@ -5213,11 +5218,13 @@ namespace KRWF.RimKata
                     target);
             }
 
-            float range = RimKataRangeUtility.ResolveCandidateRange(
-                pawn,
-                cycle.weapon,
-                verb);
-            if (pawn.Position.DistanceToSquared(target.Position) > range * range)
+            float candidateCellRadius =
+                RimKataRangeUtility.ResolveCandidateCellRadius(
+                    pawn,
+                    cycle.weapon,
+                    verb);
+            if (pawn.Position.DistanceToSquared(target.Position)
+                > candidateCellRadius * candidateCellRadius)
             {
                 return false;
             }
@@ -5757,7 +5764,7 @@ namespace KRWF.RimKata
                 || verb.IsMeleeAttack
                 || cycle == null
                 || target == null
-                || TargetWithinAutomaticSearchRange(pawn, target))
+                || TargetWithinAutomaticCandidateCellRadius(pawn, target))
             {
                 return false;
             }
@@ -5795,7 +5802,7 @@ namespace KRWF.RimKata
             }
 
             if (cycle.cachedCandidateTarget != null
-                && !TargetWithinAutomaticSearchRange(
+                && !TargetWithinAutomaticCandidateCellRadius(
                     pawn,
                     cycle.cachedCandidateTarget))
             {

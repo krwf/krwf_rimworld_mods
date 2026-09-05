@@ -1274,20 +1274,20 @@ namespace KRWF.RimKata
                     rawSecondary)
                         ? rawSecondary
                         : null;
-            float radius = MaximumAutomaticSearchVisualRange(
+            float candidateCellRadius = MaximumAutomaticSearchVisualCellRadius(
                 pawn,
                 primary,
                 usableSecondary);
 
-            if (radius <= 0
-                || radius > GenRadial.MaxRadialPatternRadius)
+            if (candidateCellRadius <= 0
+                || candidateCellRadius > GenRadial.MaxRadialPatternRadius)
             {
                 return;
             }
 
             RingCells.Clear();
 
-            int cellCount = GenRadial.NumCellsInRadius(radius);
+            int cellCount = GenRadial.NumCellsInRadius(candidateCellRadius);
 
             for (int i = 0;
                  i < cellCount;
@@ -1393,23 +1393,23 @@ namespace KRWF.RimKata
             return null;
         }
 
-        private static float MaximumAutomaticSearchVisualRange(
+        private static float MaximumAutomaticSearchVisualCellRadius(
             Pawn pawn,
             ThingWithComps primary,
             ThingWithComps secondary)
         {
             return Mathf.Max(
-                AutomaticSearchVisualRange(
+                AutomaticSearchVisualCellRadius(
                     pawn,
                     primary,
                     RimKataWeaponSlotUtility.CombatVerb(pawn, primary)),
-                AutomaticSearchVisualRange(
+                AutomaticSearchVisualCellRadius(
                     pawn,
                     secondary,
                     RimKataWeaponSlotUtility.CombatVerb(pawn, secondary)));
         }
 
-        private static float AutomaticSearchVisualRange(
+        private static float AutomaticSearchVisualCellRadius(
             Pawn pawn,
             ThingWithComps weapon,
             Verb verb)
@@ -1426,7 +1426,7 @@ namespace KRWF.RimKata
                         pawn,
                         weapon,
                         verb)
-                    : RimKataRangeUtility.ResolveCandidateRange(
+                    : RimKataRangeUtility.ResolveCandidateCellRadius(
                         pawn,
                         weapon,
                         verb));

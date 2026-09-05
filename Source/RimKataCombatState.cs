@@ -3076,10 +3076,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            float range = RimKataTargeting.MaximumAutomaticSearchRange(pawn);
-            return range > 0f
+            float candidateCellRadius =
+                RimKataTargeting.MaximumAutomaticCandidateCellRadius(pawn);
+            return candidateCellRadius > 0f
                 && pawn.Position.DistanceToSquared(target.Cell)
-                    <= range * range;
+                    <= candidateCellRadius * candidateCellRadius;
         }
 
         public void BeginDeflection(Pawn pawn, int durationTicks, int sign, ThingWithComps weapon)

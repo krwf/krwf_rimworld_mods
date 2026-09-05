@@ -55,7 +55,7 @@ namespace KRWF.RimKata
                     || allowIncapacitated);
         }
 
-        public static float MaximumAutomaticSearchRange(Pawn pawn)
+        public static float MaximumAutomaticCandidateCellRadius(Pawn pawn)
         {
             if (pawn?.Map == null)
             {
@@ -72,29 +72,31 @@ namespace KRWF.RimKata
 
             Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(pawn,secondaryWeapon);
 
-            float primaryRange =
+            float primaryCandidateCellRadius =
                 primaryVerb != null
                 && !primaryVerb.IsMeleeAttack
                     ? Mathf.Max(
                         0f,
-                        RimKataRangeUtility.ResolveCandidateRange(
+                        RimKataRangeUtility.ResolveCandidateCellRadius(
                             pawn,
                             primaryWeapon,
                             primaryVerb))
                     : 0f;
 
-            float secondaryRange =
+            float secondaryCandidateCellRadius =
                 secondaryVerb != null
                 && !secondaryVerb.IsMeleeAttack
                     ? Mathf.Max(
                         0f,
-                        RimKataRangeUtility.ResolveCandidateRange(
+                        RimKataRangeUtility.ResolveCandidateCellRadius(
                             pawn,
                             secondaryWeapon,
                             secondaryVerb))
                     : 0f;
 
-            return Mathf.Max(primaryRange, secondaryRange);
+            return Mathf.Max(
+                primaryCandidateCellRadius,
+                secondaryCandidateCellRadius);
         }
 
         private static bool IsValidAttackTarget(Pawn shooter, Thing target)

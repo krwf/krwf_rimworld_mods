@@ -12,7 +12,7 @@ namespace KRWF.RimKata
         public bool scanActive;
         public int maximumRing;
         public int completedRing;
-        public float effectiveMaximumRange;
+        public float maximumCandidateCellRadius;
         public IntVec3 origin = IntVec3.Invalid;
         public int lastAdvancedTick = -1;
 
@@ -25,7 +25,7 @@ namespace KRWF.RimKata
             Scribe_Values.Look(ref maximumRing, "maximumRing");
             Scribe_Values.Look(ref completedRing, "completedRing");
             Scribe_Values.Look(
-                ref effectiveMaximumRange,
+                ref maximumCandidateCellRadius,
                 "effectiveMaximumRange");
             Scribe_Values.Look(ref origin, "origin", IntVec3.Invalid);
 
@@ -33,7 +33,9 @@ namespace KRWF.RimKata
             {
                 maximumRing = Mathf.Max(0, maximumRing);
                 completedRing = Mathf.Max(0, completedRing);
-                effectiveMaximumRange = Mathf.Max(0f, effectiveMaximumRange);
+                maximumCandidateCellRadius = Mathf.Max(
+                    0f,
+                    maximumCandidateCellRadius);
                 lastAdvancedTick = -1;
                 if (scanActive)
                 {
@@ -48,7 +50,7 @@ namespace KRWF.RimKata
             scanActive = false;
             maximumRing = 0;
             completedRing = 0;
-            effectiveMaximumRange = 0f;
+            maximumCandidateCellRadius = 0f;
             origin = IntVec3.Invalid;
             lastAdvancedTick = -1;
         }
@@ -56,10 +58,11 @@ namespace KRWF.RimKata
 
     internal static class RimKataSharedTargetSearch
     {
-        private const float ApiRadiusPadding =
+        private const float CandidateCellRadiusPadding =
             RimKataRangeUtility.CandidateCellRadiusPadding;
         private const float RadiusEpsilon = 0.001f;
-        private const float CloseCombatRangedCandidateRange = 1.7f;
+        // Deliberately covers the center cell and all eight adjacent cells.
+        private const float CloseCombatRangedCandidateCellRadius = 1.7f;
         private const int TouchCandidateLimit = 8;
         private const int ShortCandidateLimit = 16;
         private const int MediumCandidateLimit = 12;
@@ -106,16 +109,18 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            float maximumRange = MaximumRange(pawn, combatState);
-            if (maximumRange <= 0f)
+            float maximumCellRadius =
+                MaximumCandidateCellRadius(pawn, combatState);
+            if (maximumCellRadius <= 0f)
             {
                 return false;
             }
 
             search.sessionActive = true;
             search.scanActive = true;
-            search.effectiveMaximumRange = maximumRange;
-            search.maximumRing = MaximumLogicalRing(maximumRange);
+            search.maximumCandidateCellRadius = maximumCellRadius;
+            search.maximumRing = MaximumLogicalRingFromCellRadius(
+                maximumCellRadius);
             search.completedRing = 0;
             search.origin = origin;
             search.lastAdvancedTick = -1;
@@ -175,23 +180,25 @@ namespace KRWF.RimKata
 
             TryAddKnownAutomaticTarget(pawn, combatState, knownTarget);
 
-            float maximumRange = MaximumRange(pawn, combatState);
-            if (maximumRange <= 0f)
+            float maximumCellRadius =
+                MaximumCandidateCellRadius(pawn, combatState);
+            if (maximumCellRadius <= 0f)
             {
                 Finish(combatState);
                 return false;
             }
 
-            search.effectiveMaximumRange = maximumRange;
-            search.maximumRing = MaximumLogicalRing(maximumRange);
+            search.maximumCandidateCellRadius = maximumCellRadius;
+            search.maximumRing = MaximumLogicalRingFromCellRadius(
+                maximumCellRadius);
             int innerRing = Mathf.Max(0, search.completedRing);
             int outerRing = Mathf.Min(innerRing + 1, search.maximumRing);
-            float innerRadius = innerRing <= 0
+            float innerCellRadius = innerRing <= 0
                 ? -1f
-                : innerRing + ApiRadiusPadding;
-            float outerRadius = Mathf.Min(
-                outerRing + ApiRadiusPadding,
-                maximumRange);
+                : innerRing + CandidateCellRadiusPadding;
+            float outerCellRadius = Mathf.Min(
+                outerRing + CandidateCellRadiusPadding,
+                maximumCellRadius);
             IntVec3 center = search.origin.IsValid
                 ? search.origin
                 : pawn.Position;
@@ -210,8 +217,8 @@ namespace KRWF.RimKata
                 pawn,
                 combatState,
                 center,
-                innerRadius,
-                outerRadius,
+                innerCellRadius,
+                outerCellRadius,
                 outerRing);
             if (Prefs.DevMode && RimKataDebugHUD.SearchRangeEnabled)
             {
@@ -219,8 +226,8 @@ namespace KRWF.RimKata
                     pawn,
                     pawn.Map,
                     center,
-                    innerRadius,
-                    outerRadius);
+                    innerCellRadius,
+                    outerCellRadius);
             }
 
             search.completedRing = outerRing;
@@ -704,14 +711,14 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            float range = RangeForCycle(
+            float candidateCellRadius = CandidateCellRadiusForCycle(
                 pawn,
                 combatState,
                 cycle,
                 verb);
-            if (range <= 0f
+            if (candidateCellRadius <= 0f
                 || pawn.Position.DistanceToSquared(target.Position)
-                    > range * range)
+                    > candidateCellRadius * candidateCellRadius)
             {
                 return false;
             }
@@ -991,19 +998,20 @@ namespace KRWF.RimKata
             }
 
             Verb verb = CombatVerbForCycle(pawn, cycle);
-            float range = RangeForCycle(
+            float candidateCellRadius = CandidateCellRadiusForCycle(
                 pawn,
                 combatState,
                 cycle,
                 verb);
-            usable = verb != null && range > 0f;
+            usable = verb != null && candidateCellRadius > 0f;
             if (!usable)
             {
                 return false;
             }
 
             List<Thing> candidates = cycle.automaticCandidates;
-            int maximumRing = MaximumLogicalRing(range);
+            int maximumRing = MaximumLogicalRingFromCellRadius(
+                candidateCellRadius);
             for (int ring = 1; ring <= maximumRing; ring++)
             {
                 int limit = CandidateLimitForRing(ring);
@@ -1013,8 +1021,8 @@ namespace KRWF.RimKata
                 }
 
                 float outerRadius = Mathf.Min(
-                    ring + ApiRadiusPadding,
-                    range);
+                    ring + CandidateCellRadiusPadding,
+                    candidateCellRadius);
                 float outerSquared = outerRadius * outerRadius;
                 int count = 0;
                 for (int i = 0; i < candidates.Count; i++)
@@ -1044,7 +1052,7 @@ namespace KRWF.RimKata
             }
 
             Verb verb = CombatVerbForCycle(pawn, cycle);
-            float fullRange = RangeForCycle(
+            float candidateCellRadius = CandidateCellRadiusForCycle(
                 pawn,
                 combatState,
                 cycle,
@@ -1060,7 +1068,8 @@ namespace KRWF.RimKata
                     cycle.pendingCandidateLimitOverride);
                 cycle.pendingCandidateLimitOverride = 0;
             }
-            cycle.automaticCandidateCollectionClosed = fullRange <= 0f;
+            cycle.automaticCandidateCollectionClosed =
+                candidateCellRadius <= 0f;
         }
 
         private static bool UpdateCycleCollectionClosure(
@@ -1078,14 +1087,15 @@ namespace KRWF.RimKata
             }
 
             Verb verb = CombatVerbForCycle(pawn, cycle);
-            float cycleRange = RangeForCycle(
+            float candidateCellRadius = CandidateCellRadiusForCycle(
                 pawn,
                 combatState,
                 cycle,
                 verb);
             int limit = EffectiveCandidateLimitForRing(cycle, outerRing);
-            int maximumRing = MaximumLogicalRing(cycleRange);
-            bool reachedWeaponRange = cycleRange <= 0f
+            int maximumRing = MaximumLogicalRingFromCellRadius(
+                candidateCellRadius);
+            bool reachedWeaponRange = candidateCellRadius <= 0f
                 || outerRing >= maximumRing;
             bool saturated = CountStoredCandidatesThroughRing(
                     cycle,
@@ -1111,8 +1121,8 @@ namespace KRWF.RimKata
 
             Verb verb = CombatVerbForCycle(pawn, cycle);
             return cycle.automaticCandidateCollectionClosed
-                || outerRing >= MaximumLogicalRing(
-                    RangeForCycle(
+                || outerRing >= MaximumLogicalRingFromCellRadius(
+                    CandidateCellRadiusForCycle(
                         pawn,
                         combatState,
                         cycle,
@@ -1136,12 +1146,13 @@ namespace KRWF.RimKata
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
                 cycle.weapon);
-            float fullRange = RangeForCycle(
+            float candidateCellRadius = CandidateCellRadiusForCycle(
                 pawn,
                 combatState,
                 cycle,
                 verb);
-            int maximumRing = MaximumLogicalRing(fullRange);
+            int maximumRing = MaximumLogicalRingFromCellRadius(
+                candidateCellRadius);
             int currentLimit = CandidateLimitForRing(saturatedRing);
             int nextLimit = 0;
             for (int ring = saturatedRing + 1; ring <= maximumRing; ring++)
@@ -1199,7 +1210,8 @@ namespace KRWF.RimKata
                 return 0;
             }
 
-            float outerRadius = outerRing + ApiRadiusPadding;
+            float outerRadius =
+                outerRing + CandidateCellRadiusPadding;
             float outerSquared = outerRadius * outerRadius;
             int count = 0;
             for (int i = 0; i < candidates.Count; i++)
@@ -1252,15 +1264,18 @@ namespace KRWF.RimKata
             return cycle?.weapon?.def?.IsRangedWeapon == true;
         }
 
-        private static int MaximumLogicalRing(float range)
+        private static int MaximumLogicalRingFromCellRadius(
+            float candidateCellRadius)
         {
             return Mathf.Max(
                 1,
                 Mathf.CeilToInt(
-                    Mathf.Max(0f, range - ApiRadiusPadding)));
+                    Mathf.Max(
+                        0f,
+                        candidateCellRadius - CandidateCellRadiusPadding)));
         }
 
-        private static float MaximumRange(
+        private static float MaximumCandidateCellRadius(
             Pawn pawn,
             RimKataPawnCombatState combatState)
         {
@@ -1269,19 +1284,19 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState secondary =
                 combatState?.secondaryWeaponCycle;
             return Mathf.Max(
-                RangeForCycle(
+                CandidateCellRadiusForCycle(
                     pawn,
                     combatState,
                     primary,
                     CombatVerbForCycle(pawn, primary)),
-                RangeForCycle(
+                CandidateCellRadiusForCycle(
                     pawn,
                     combatState,
                     secondary,
                     CombatVerbForCycle(pawn, secondary)));
         }
 
-        private static float RangeForCycle(
+        private static float CandidateCellRadiusForCycle(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
@@ -1303,17 +1318,17 @@ namespace KRWF.RimKata
             if (closeCombatContext)
             {
                 return UsesRangedCandidateLimit(cycle)
-                    ? CloseCombatRangedCandidateRange
+                    ? CloseCombatRangedCandidateCellRadius
                     : RimKataRangeUtility.ResolveEffectiveRange(
                         pawn,
                         cycle.weapon,
                         verb);
             }
 
-            return FullRangeForCycle(pawn, cycle, verb);
+            return AutomaticCandidateCellRadiusForCycle(pawn, cycle, verb);
         }
 
-        private static float FullRangeForCycle(
+        private static float AutomaticCandidateCellRadiusForCycle(
             Pawn pawn,
             RimKataWeaponCycleState cycle,
             Verb verb)
@@ -1327,7 +1342,7 @@ namespace KRWF.RimKata
             {
                 return Mathf.Max(
                     0f,
-                    RimKataRangeUtility.ResolveCandidateRange(
+                    RimKataRangeUtility.ResolveCandidateCellRadius(
                         pawn,
                         cycle.weapon,
                         verb));

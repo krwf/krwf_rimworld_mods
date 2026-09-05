@@ -39,11 +39,14 @@ $rkRangedValidity = Get-CSharpBlock $rkSecondarySource 'private static bool Rang
 $rkMultiSelect = Get-CSharpBlock $rkSecondarySource 'public static class RimKataMultiSelectAttackGizmoUtility'
 $rkFactsLookup = Get-CSharpBlock $rkMultiSelect 'GetSelectedAttackGizmoFacts()'
 $rkFactsBuild = Get-CSharpBlock $rkMultiSelect 'BuildSelectedAttackGizmoFacts(List<object> selected)'
-$rkResolveCandidate = Get-CSharpBlock $rkRangeSource 'public static float ResolveCandidateRange('
-$rkCandidatePadding = Get-CSharpBlock $rkRangeSource 'internal static float ApplyCandidateCellPadding('
-$rkCandidateApply = Get-CSharpBlock $rkRangeSource 'private static float ApplyCandidateRange('
+$rkResolveCandidateCellRadius = Get-CSharpBlock $rkRangeSource 'public static float ResolveCandidateCellRadius('
+$rkCandidateCellRadiusPadding = Get-CSharpBlock $rkRangeSource 'internal static float ApplyCandidateCellRadiusPadding('
+$rkResolveLogicalCandidateRange = Get-CSharpBlock $rkRangeSource 'internal static float ResolveLogicalCandidateRange('
+$rkBegin = Get-CSharpBlock $rkSharedSearchSource 'internal static bool Begin('
 $rkAdvance = Get-CSharpBlock $rkSharedSearchSource 'internal static bool Advance('
-$rkVisualRange = Get-CSharpBlock $rkVisualSource 'private static float AutomaticSearchVisualRange('
+$rkMaximumLogicalRing = Get-CSharpBlock $rkSharedSearchSource 'private static int MaximumLogicalRingFromCellRadius('
+$rkCycleCellRadius = Get-CSharpBlock $rkSharedSearchSource 'private static float CandidateCellRadiusForCycle('
+$rkVisualCellRadius = Get-CSharpBlock $rkVisualSource 'private static float AutomaticSearchVisualCellRadius('
 $rkSquadPatch = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnAttackGizmoUtility_RimKataSquadRange'
 $rkSquadPostfix = Get-CSharpBlock $rkSquadPatch 'public static void Postfix(ref Gizmo __result)'
 
@@ -99,35 +102,49 @@ if ([regex]::Matches($rkSquadPostfix, 'GetSelectedAttackGizmoFacts').Count -ne 1
 }
 
 if ($rkRangeSource -notmatch 'CandidateCellRadiusPadding\s*=\s*0\.7f' -or
-    [regex]::Matches($rkResolveCandidate, 'ResolveEffectiveRange').Count -ne 1 -or
-    [regex]::Matches($rkResolveCandidate, 'ApplyCandidateRange').Count -ne 1 -or
-    $rkResolveCandidate -notmatch 'verb\?\.IsMeleeAttack\s*==\s*false' -or
-    [regex]::Matches($rkResolveCandidate, 'ApplyCandidateCellPadding').Count -ne 1) {
-    throw 'Actual ranged candidate radius no longer applies one weapon-bounded +0.7 correction.'
+    $rkRangeSource -match '\bResolveCandidateRange\s*\(' -or
+    [regex]::Matches($rkResolveCandidateCellRadius, 'ResolveEffectiveRange').Count -ne 1 -or
+    [regex]::Matches($rkResolveCandidateCellRadius, 'ResolveLogicalCandidateRange').Count -ne 1 -or
+    $rkResolveCandidateCellRadius -notmatch 'verb\?\.IsMeleeAttack\s*==\s*false' -or
+    [regex]::Matches($rkResolveCandidateCellRadius, 'ApplyCandidateCellRadiusPadding').Count -ne 1) {
+    throw 'Logical candidate range and actual candidate cell radius are no longer separated.'
 }
 
-if ($rkCandidatePadding -notmatch 'effectiveRange\s*<=\s*0f' -or
-    $rkCandidatePadding -notmatch 'candidateRange\s*<=\s*0f' -or
-    $rkCandidatePadding -notmatch 'Mathf\.Min\([\s\S]*?effectiveRange,[\s\S]*?candidateRange\s*\+\s*CandidateCellRadiusPadding\)') {
+if ($rkCandidateCellRadiusPadding -notmatch 'effectiveWeaponRange\s*<=\s*0f' -or
+    $rkCandidateCellRadiusPadding -notmatch 'logicalCandidateRange\s*<=\s*0f' -or
+    $rkCandidateCellRadiusPadding -notmatch 'Mathf\.Min\([\s\S]*?effectiveWeaponRange,[\s\S]*?logicalCandidateRange\s*\+\s*CandidateCellRadiusPadding\)') {
     throw 'Candidate cell padding no longer preserves zero and effective-weapon caps.'
 }
 
-if ($rkVisualRange -match '0\.7f|Padding|ApplyCandidateRange' -or
-    [regex]::Matches($rkVisualRange, 'ResolveEffectiveRange').Count -ne 1 -or
-    [regex]::Matches($rkVisualRange, 'ResolveCandidateRange').Count -ne 1) {
-    throw 'Automatic-search visual no longer shares the actual candidate-range resolver.'
+if ($rkVisualCellRadius -match '0\.7f|Padding|ResolveLogicalCandidateRange' -or
+    [regex]::Matches($rkVisualCellRadius, 'ResolveEffectiveRange').Count -ne 1 -or
+    [regex]::Matches($rkVisualCellRadius, 'ResolveCandidateCellRadius').Count -ne 1) {
+    throw 'Automatic-search visual no longer shares the actual candidate cell radius.'
 }
 
-if ($rkSharedSearchSource -notmatch 'private const float ApiRadiusPadding\s*=\s*[\r\n\s]*RimKataRangeUtility\.CandidateCellRadiusPadding;' -or
-    $rkAdvance -notmatch 'Mathf\.Min\([\s\S]*?outerRing\s*\+\s*ApiRadiusPadding,[\s\S]*?maximumRange\)' -or
-    $rkSharedSearchSource -notmatch 'ResolveCandidateRange\(' -or
-    [regex]::Matches($rkTargetingSource, 'ResolveCandidateRange\(').Count -ne 2 -or
-    [regex]::Matches($rkControllerSource, 'ResolveCandidateRange\(').Count -ne 3) {
-    throw 'Actual target collection, continuation, or validation no longer shares the padded candidate range.'
+if ($rkSharedSearchSource -notmatch 'private const float CandidateCellRadiusPadding\s*=\s*[\r\n\s]*RimKataRangeUtility\.CandidateCellRadiusPadding;' -or
+    $rkSharedSearchSource -notmatch 'CloseCombatRangedCandidateCellRadius\s*=\s*1\.7f' -or
+    $rkBegin -notmatch 'MaximumLogicalRingFromCellRadius\([\s\S]*?maximumCellRadius\)' -or
+    $rkAdvance -notmatch 'MaximumLogicalRingFromCellRadius\([\s\S]*?maximumCellRadius\)' -or
+    $rkAdvance -notmatch 'Mathf\.Min\([\s\S]*?outerRing\s*\+\s*CandidateCellRadiusPadding,[\s\S]*?maximumCellRadius\)' -or
+    $rkMaximumLogicalRing -notmatch 'candidateCellRadius\s*-\s*CandidateCellRadiusPadding' -or
+    $rkCycleCellRadius -notmatch 'closeCombatContext[\s\S]*?UsesRangedCandidateLimit\(cycle\)[\s\S]*?CloseCombatRangedCandidateCellRadius' -or
+    [regex]::Matches($rkSharedSearchSource, 'ResolveCandidateCellRadius\(').Count -ne 1 -or
+    [regex]::Matches($rkTargetingSource, 'ResolveCandidateCellRadius\(').Count -ne 2 -or
+    [regex]::Matches($rkControllerSource, 'ResolveCandidateCellRadius\(').Count -ne 3) {
+    throw 'Shared search no longer keeps logical rings and candidate cell radii distinct.'
+}
+
+if ($rkSharedSearchSource -notmatch 'public float maximumCandidateCellRadius;' -or
+    $rkSharedSearchSource -match 'public float effectiveMaximumRange;' -or
+    $rkTargetingSource -notmatch 'MaximumAutomaticCandidateCellRadius\(' -or
+    $rkTargetingSource -match 'MaximumAutomaticSearchRange\(' -or
+    $rkControllerSource -match 'TargetWithinAutomaticSearchRange\(|LongestAutomaticRangeVerb\(') {
+    throw 'An ambiguous automatic-search range name returned to a cell-radius path.'
 }
 
 if ($rkInterceptionSource -notmatch 'ResolveEffectiveRange\(' -or
-    $rkInterceptionSource -match 'ResolveCandidateRange\(|ApplyCandidateCellPadding\(') {
+    $rkInterceptionSource -match 'ResolveCandidateCellRadius\(|ApplyCandidateCellRadiusPadding\(') {
     throw 'Exact-range interception unexpectedly inherited automatic candidate padding.'
 }
 
@@ -143,6 +160,8 @@ namespace UnityEngine
     {
         public static float Min(float left, float right) { return Math.Min(left, right); }
         public static float Max(float left, float right) { return Math.Max(left, right); }
+        public static int Max(int left, int right) { return Math.Max(left, right); }
+        public static int CeilToInt(float value) { return (int)Math.Ceiling(value); }
     }
 }
 
@@ -245,11 +264,24 @@ namespace KRWF.RimKata
             return weapon == null ? 0f : weapon.range;
         }
 
-        $rkResolveCandidate
+        $rkResolveCandidateCellRadius
 
-        $rkCandidatePadding
+        $rkCandidateCellRadiusPadding
 
-        $rkCandidateApply
+        $rkResolveLogicalCandidateRange
+    }
+
+    public static class RimKataSharedTargetSearch
+    {
+        private const float CandidateCellRadiusPadding =
+            RimKataRangeUtility.CandidateCellRadiusPadding;
+
+        $rkMaximumLogicalRing
+
+        public static int LogicalRingFromCellRadius(float candidateCellRadius)
+        {
+            return MaximumLogicalRingFromCellRadius(candidateCellRadius);
+        }
     }
 
     public static class RimKataWeaponSlotUtility
@@ -329,47 +361,54 @@ namespace KRWF.RimKata
 
             RimKataMod.Settings = new RimKataSettings();
             var ranged = Weapon(30f, new Verb());
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveLogicalCandidateRange(
+                    30f) - 12f) < 0.0001f,
+                "short logical candidate range remains twelve");
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 12.7f) < 0.0001f,
                 "short candidate radius includes cell padding");
 
             ranged.range = 12.4f;
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 12.4f) < 0.0001f,
                 "candidate padding cannot exceed weapon range");
 
             ranged.range = 12f;
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 12f) < 0.0001f,
                 "exact weapon boundary remains exact");
 
             ranged.range = 30f;
             ranged.verb.IsMeleeAttack = true;
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 12f) < 0.0001f,
                 "ranged cell padding does not enter melee candidate calls");
 
             ranged.verb.IsMeleeAttack = false;
             RimKataMod.Settings.candidateRangeMode =
                 RimKataCandidateRangeMode.Unlimited;
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 30f) < 0.0001f,
                 "unlimited candidate radius remains weapon limited");
 
             RimKataMod.Settings.candidateRangeMode =
                 RimKataCandidateRangeMode.Custom;
             RimKataMod.Settings.customCandidateRange = 15f;
-            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateRange(
+            Check(Math.Abs(RimKataRangeUtility.ResolveCandidateCellRadius(
                     pawn, ranged, ranged.verb) - 15.7f) < 0.0001f,
                 "custom candidate radius includes cell padding");
 
-            Check(RimKataRangeUtility.ApplyCandidateCellPadding(24f, 0f) == 0f,
+            Check(RimKataRangeUtility.ApplyCandidateCellRadiusPadding(
+                    24f, 0f) == 0f,
                 "zero candidate range remains disabled");
-            Check(RimKataRangeUtility.ApplyCandidateCellPadding(0f, 12f) == 0f,
+            Check(RimKataRangeUtility.ApplyCandidateCellRadiusPadding(
+                    0f, 12f) == 0f,
                 "zero effective range remains disabled");
 
             float paddedShort =
-                RimKataRangeUtility.ApplyCandidateCellPadding(30f, 12f);
+                RimKataRangeUtility.ApplyCandidateCellRadiusPadding(
+                    30f,
+                    12f);
             float diagonalCellSquared = 12f * 12f + 4f * 4f;
             Check(diagonalCellSquared > 12f * 12f
                     && diagonalCellSquared <= paddedShort * paddedShort,
@@ -378,6 +417,13 @@ namespace KRWF.RimKata
             float outsideCellSquared = 13f * 13f;
             Check(outsideCellSquared > paddedShort * paddedShort,
                 "cell offset 13,0 remains outside the padded short search radius");
+
+            Check(RimKataSharedTargetSearch.LogicalRingFromCellRadius(12.7f) == 12,
+                "short candidate cell radius maps back to logical ring twelve");
+            Check(RimKataSharedTargetSearch.LogicalRingFromCellRadius(1.7f) == 1,
+                "close candidate cell radius maps to one logical ring");
+            Check(RimKataSharedTargetSearch.LogicalRingFromCellRadius(12.4f) == 12,
+                "weapon-clipped cell radius keeps logical ring twelve");
 
             return checks;
         }

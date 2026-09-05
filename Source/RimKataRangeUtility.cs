@@ -29,6 +29,8 @@ namespace KRWF.RimKata
 
     public static class RimKataRangeUtility
     {
+        // Settings resolve to a logical limit capped by effective weapon range.
+        // Radial cell queries use this extra envelope around that limit.
         internal const float CandidateCellRadiusPadding = 0.7f;
 
         private sealed class CachedWeaponRange
@@ -108,32 +110,36 @@ namespace KRWF.RimKata
             get => CachedBands;
         }
 
-        public static float ResolveCandidateRange(
+        public static float ResolveCandidateCellRadius(
             Pawn pawn,
             ThingWithComps weapon,
             Verb verb)
         {
-            float effectiveRange = ResolveEffectiveRange(pawn, weapon, verb);
-            float candidateRange = ApplyCandidateRange(effectiveRange);
+            float effectiveWeaponRange = ResolveEffectiveRange(
+                pawn,
+                weapon,
+                verb);
+            float logicalCandidateRange = ResolveLogicalCandidateRange(
+                effectiveWeaponRange);
             return verb?.IsMeleeAttack == false
-                ? ApplyCandidateCellPadding(
-                    effectiveRange,
-                    candidateRange)
-                : candidateRange;
+                ? ApplyCandidateCellRadiusPadding(
+                    effectiveWeaponRange,
+                    logicalCandidateRange)
+                : logicalCandidateRange;
         }
 
-        internal static float ApplyCandidateCellPadding(
-            float effectiveRange,
-            float candidateRange)
+        internal static float ApplyCandidateCellRadiusPadding(
+            float effectiveWeaponRange,
+            float logicalCandidateRange)
         {
-            if (effectiveRange <= 0f || candidateRange <= 0f)
+            if (effectiveWeaponRange <= 0f || logicalCandidateRange <= 0f)
             {
                 return 0f;
             }
 
             return Mathf.Min(
-                effectiveRange,
-                candidateRange + CandidateCellRadiusPadding);
+                effectiveWeaponRange,
+                logicalCandidateRange + CandidateCellRadiusPadding);
         }
 
         public static float ResolveEffectiveRange(
@@ -208,21 +214,22 @@ namespace KRWF.RimKata
             return Mathf.Max(0f, verb?.EffectiveRange ?? 0f);
         }
 
-        private static float ApplyCandidateRange(float effectiveRange)
+        internal static float ResolveLogicalCandidateRange(
+            float effectiveWeaponRange)
         {
             RimKataSettings settings = RimKataMod.Settings;
             if (settings == null)
             {
                 return RuntimeBandsAvailable
-                    ? Mathf.Min(effectiveRange, CurrentBands.Short)
-                    : effectiveRange;
+                    ? Mathf.Min(effectiveWeaponRange, CurrentBands.Short)
+                    : effectiveWeaponRange;
             }
 
             if (!RuntimeBandsAvailable
                 && (settings.candidateRangeMode != RimKataCandidateRangeMode.Custom
                     || settings.customCandidateRange <= 0f))
             {
-                return effectiveRange;
+                return effectiveWeaponRange;
             }
 
             float configuredRange;
@@ -236,7 +243,7 @@ namespace KRWF.RimKata
                     configuredRange = bands.Long;
                     break;
                 case RimKataCandidateRangeMode.Unlimited:
-                    configuredRange = effectiveRange;
+                    configuredRange = effectiveWeaponRange;
                     break;
                 case RimKataCandidateRangeMode.Custom:
                     configuredRange = settings.customCandidateRange > 0f
@@ -248,7 +255,9 @@ namespace KRWF.RimKata
                     break;
             }
 
-            return Mathf.Min(effectiveRange, Mathf.Max(0f, configuredRange));
+            return Mathf.Min(
+                effectiveWeaponRange,
+                Mathf.Max(0f, configuredRange));
         }
 
         public static float PresetRange(RimKataCandidateRangeMode mode)
