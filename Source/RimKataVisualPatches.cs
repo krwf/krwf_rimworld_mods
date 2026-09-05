@@ -385,8 +385,8 @@ namespace KRWF.RimKata
         {
             RimKataCarryDrawContext previous = current;
             current = default(RimKataCarryDrawContext);
-            RimKataGunReadyDrawContext renderContext =
-                RimKataGunReadyDrawUtility.Current;
+            ref readonly RimKataGunReadyDrawContext renderContext =
+                ref RimKataGunReadyDrawUtility.Current;
             if (renderContext.scoped)
             {
                 if (renderContext.active
@@ -525,8 +525,8 @@ namespace KRWF.RimKata
             }
             else
             {
-                RimKataGunReadyDrawContext renderContext =
-                    RimKataGunReadyDrawUtility.Current;
+                ref readonly RimKataGunReadyDrawContext renderContext =
+                    ref RimKataGunReadyDrawUtility.Current;
                 if (renderContext.scoped)
                 {
                     if (!renderContext.active)
@@ -1668,8 +1668,8 @@ namespace KRWF.RimKata
             __state = visualAngleOffset;
             visualAngleOffset = 0f;
 
-            RimKataGunReadyDrawContext renderContext =
-                RimKataGunReadyDrawUtility.Current;
+            ref readonly RimKataGunReadyDrawContext renderContext =
+                ref RimKataGunReadyDrawUtility.Current;
             if (renderContext.portrait
                 || !(eq is ThingWithComps weapon)
                 || !RimKataResponseVisualParticipantCache
@@ -1793,142 +1793,174 @@ namespace KRWF.RimKata
     internal static class RimKataGunReadyDrawUtility
     {
         [ThreadStatic] private static RimKataGunReadyDrawContext current;
+        [ThreadStatic] private static int scopeDepth;
+        [ThreadStatic] private static RimKataGunReadyDrawContext[] nestedContexts;
 
-        public static RimKataGunReadyDrawContext Current => current;
+        public static ref readonly RimKataGunReadyDrawContext Current => ref current;
 
-        public static RimKataGunReadyDrawContext Push(Pawn pawn, PawnRenderFlags flags)
+        public static int Push(Pawn pawn, PawnRenderFlags flags)
         {
-            RimKataGunReadyDrawContext previous = current;
             bool portrait = (flags & PawnRenderFlags.Portrait) != 0;
-            current = new RimKataGunReadyDrawContext
+            int scopeToken = EnterScope(portrait);
+            try
             {
-                scoped = true,
-                portrait = portrait
-            };
-            if (portrait || pawn?.Spawned != true)
-            {
-                return previous;
-            }
+                if (portrait || pawn?.Spawned != true)
+                {
+                    return scopeToken;
+                }
 
-            if (pawn.equipment?.Primary == null)
-            {
-                return previous;
-            }
+                if (pawn.equipment?.Primary == null)
+                {
+                    return scopeToken;
+                }
 
-            bool rimKataUser = RimKataVisualUtility
-                .TryGetCachedWorldLoadout(
-                    pawn,
-                    out ThingWithComps primary,
-                    out ThingWithComps rawSecondary);
-            bool statePresent = RimKataCombatStatePresenceCache.Contains(
-                pawn,
-                pawn.Map);
-            bool responseParticipant = false;
-            ThingWithComps participantPrimary = null;
-            ThingWithComps participantSecondary = null;
-            ThingWithComps secondary = rimKataUser
-                && RimKataVisualUtility.IsSecondaryUsable(
-                    pawn,
-                    primary,
-                    rawSecondary)
-                        ? rawSecondary
-                        : null;
-            if (statePresent && (!rimKataUser || secondary == null))
-            {
-                responseParticipant = RimKataVisualUtility
-                    .TryGetResponseParticipantLoadout(
+                bool rimKataUser = RimKataVisualUtility
+                    .TryGetCachedWorldLoadout(
                         pawn,
-                        out participantPrimary,
-                        out participantSecondary);
-            }
-
-            if (!rimKataUser)
-            {
-                if (!responseParticipant)
-                {
-                    return previous;
-                }
-
-                primary = participantPrimary;
-                secondary = participantSecondary;
-            }
-
-            bool mayNeedGunReadyTarget = rimKataUser
-                && MayNeedGunReadyTarget(pawn, statePresent);
-            bool gunReadyCandidate = mayNeedGunReadyTarget
-                && !pawn.Dead
-                && !pawn.Downed
-                && !pawn.IsBurning()
-                && primary != null
-                && pawn.carryTracker?.CarriedThing == null
-                && (flags & PawnRenderFlags.NeverAimWeapon) == 0
-                && !(pawn.stances?.curStance is Stance_Busy);
-            bool needsActiveContext = secondary != null
-                || responseParticipant
-                || gunReadyCandidate;
-            if (!needsActiveContext)
-            {
-                return previous;
-            }
-
-            RimKataVisualSnapshot snapshot =
-                default(RimKataVisualSnapshot);
-            bool snapshotActive = statePresent
-                && (secondary != null || responseParticipant)
-                && RimKataVisualUtility.TryGetCachedResponseSnapshot(
+                        out ThingWithComps primary,
+                        out ThingWithComps rawSecondary);
+                bool statePresent = RimKataCombatStatePresenceCache.Contains(
                     pawn,
-                    responseParticipant,
-                    out snapshot);
-            RimKataGunReadyDrawContext next =
-                new RimKataGunReadyDrawContext
+                    pawn.Map);
+                bool responseParticipant = false;
+                ThingWithComps participantPrimary = null;
+                ThingWithComps participantSecondary = null;
+                ThingWithComps secondary = rimKataUser
+                    && RimKataVisualUtility.IsSecondaryUsable(
+                        pawn,
+                        primary,
+                        rawSecondary)
+                            ? rawSecondary
+                            : null;
+                if (statePresent && (!rimKataUser || secondary == null))
                 {
-                    scoped = true,
-                    active = true,
-                    pawn = pawn,
-                    primary = primary,
-                    secondary = secondary,
-                    snapshotActive = snapshotActive,
-                    snapshot = snapshot
-                };
-            current = next;
-            if (!gunReadyCandidate)
-            {
-                return previous;
-            }
-
-            RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
-            if (component?.TryGetGunReadyTarget(pawn, out LocalTargetInfo target) != true)
-            {
-                return previous;
-            }
-
-            if (!RimKataEligibility.TryGetEnabledCombatVerb(pawn, out Verb _))
-            {
-                return previous;
-            }
-
-            float aimAngle = pawn.Rotation.AsAngle;
-            Vector3 targetPosition;
-            if (target.IsValid)
-            {
-                targetPosition = target.HasThing && target.Thing.Spawned
-                    ? target.Thing.DrawPos
-                    : target.Cell.ToVector3Shifted();
-                Vector3 aimVector = targetPosition - pawn.DrawPos;
-                if (aimVector.sqrMagnitude > 0.001f)
-                {
-                    aimAngle = aimVector.AngleFlat();
+                    responseParticipant = RimKataVisualUtility
+                        .TryGetResponseParticipantLoadout(
+                            pawn,
+                            out participantPrimary,
+                            out participantSecondary);
                 }
+
+                if (!rimKataUser)
+                {
+                    if (!responseParticipant)
+                    {
+                        return scopeToken;
+                    }
+
+                    primary = participantPrimary;
+                    secondary = participantSecondary;
+                }
+
+                bool mayNeedGunReadyTarget = rimKataUser
+                    && MayNeedGunReadyTarget(pawn, statePresent);
+                bool gunReadyCandidate = mayNeedGunReadyTarget
+                    && !pawn.Dead
+                    && !pawn.Downed
+                    && !pawn.IsBurning()
+                    && primary != null
+                    && pawn.carryTracker?.CarriedThing == null
+                    && (flags & PawnRenderFlags.NeverAimWeapon) == 0
+                    && !(pawn.stances?.curStance is Stance_Busy);
+                bool needsActiveContext = secondary != null
+                    || responseParticipant
+                    || gunReadyCandidate;
+                if (!needsActiveContext)
+                {
+                    return scopeToken;
+                }
+
+                bool snapshotActive = statePresent
+                    && (secondary != null || responseParticipant)
+                    && RimKataVisualUtility.TryGetCachedResponseSnapshot(
+                        pawn,
+                        responseParticipant,
+                        out current.snapshot);
+                current.pawn = pawn;
+                current.primary = primary;
+                current.secondary = secondary;
+                current.snapshotActive = snapshotActive;
+                current.active = true;
+                if (!gunReadyCandidate)
+                {
+                    return scopeToken;
+                }
+
+                RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
+                if (component?.TryGetGunReadyTarget(pawn, out LocalTargetInfo target) != true)
+                {
+                    return scopeToken;
+                }
+
+                if (!RimKataEligibility.TryGetEnabledCombatVerb(pawn, out Verb _))
+                {
+                    return scopeToken;
+                }
+
+                float aimAngle = pawn.Rotation.AsAngle;
+                Vector3 targetPosition;
+                if (target.IsValid)
+                {
+                    targetPosition = target.HasThing && target.Thing.Spawned
+                        ? target.Thing.DrawPos
+                        : target.Cell.ToVector3Shifted();
+                    Vector3 aimVector = targetPosition - pawn.DrawPos;
+                    if (aimVector.sqrMagnitude > 0.001f)
+                    {
+                        aimAngle = aimVector.AngleFlat();
+                    }
+                }
+                else if (RimKataDodgeMovementUtility.TryGetCurrentMovementDirection(pawn, out IntVec3 direction))
+                {
+                    aimAngle = direction.ToVector3().AngleFlat();
+                }
+
+                current.aimAngle = aimAngle;
+                current.gunReady = true;
+                return scopeToken;
             }
-            else if (RimKataDodgeMovementUtility.TryGetCurrentMovementDirection(pawn, out IntVec3 direction))
+            catch
             {
-                aimAngle = direction.ToVector3().AngleFlat();
+                Pop(scopeToken);
+                throw;
+            }
+        }
+
+        private static int EnterScope(bool portrait)
+        {
+            int previousDepth = scopeDepth;
+            if (previousDepth > 0)
+            {
+                EnsureNestedContextCapacity(previousDepth);
+                nestedContexts[previousDepth - 1] = current;
+                current = default(RimKataGunReadyDrawContext);
             }
 
-            next.gunReady = true;
-            next.aimAngle = aimAngle;
-            current = next;
-            return previous;
+            scopeDepth = previousDepth + 1;
+            current.scoped = true;
+            current.portrait = portrait;
+            current.active = false;
+            current.gunReady = false;
+            return scopeDepth;
+        }
+
+        private static void EnsureNestedContextCapacity(int requiredLength)
+        {
+            if (nestedContexts != null
+                && nestedContexts.Length >= requiredLength)
+            {
+                return;
+            }
+
+            int newLength = nestedContexts == null
+                ? 2
+                : nestedContexts.Length * 2;
+            while (newLength < requiredLength)
+            {
+                newLength *= 2;
+            }
+
+            Array.Resize(ref nestedContexts, newLength);
         }
 
         private static bool MayNeedGunReadyTarget(
@@ -1939,9 +1971,42 @@ namespace KRWF.RimKata
                 || statePresent;
         }
 
-        public static void Pop(RimKataGunReadyDrawContext previous)
+        public static void Pop(int scopeToken)
         {
-            current = previous;
+            if (scopeToken <= 0)
+            {
+                return;
+            }
+
+            if (scopeDepth != scopeToken)
+            {
+                current = default(RimKataGunReadyDrawContext);
+                scopeDepth = 0;
+                if (nestedContexts != null)
+                {
+                    Array.Clear(
+                        nestedContexts,
+                        0,
+                        nestedContexts.Length);
+                }
+
+                return;
+            }
+
+            int previousDepth = scopeToken - 1;
+            if (previousDepth == 0)
+            {
+                current = default(RimKataGunReadyDrawContext);
+            }
+            else
+            {
+                int nestedIndex = previousDepth - 1;
+                current = nestedContexts[nestedIndex];
+                nestedContexts[nestedIndex] =
+                    default(RimKataGunReadyDrawContext);
+            }
+
+            scopeDepth = previousDepth;
         }
     }
 
@@ -1951,14 +2016,15 @@ namespace KRWF.RimKata
         public static void Prefix(
             Pawn pawn,
             PawnRenderFlags flags,
-            out RimKataGunReadyDrawContext __state)
+            out int __state)
         {
+            __state = 0;
             __state = RimKataGunReadyDrawUtility.Push(pawn, flags);
         }
 
         public static Exception Finalizer(
             Exception __exception,
-            RimKataGunReadyDrawContext __state)
+            int __state)
         {
             RimKataGunReadyDrawUtility.Pop(__state);
             return __exception;
@@ -1970,7 +2036,8 @@ namespace KRWF.RimKata
     {
         public static void Postfix(Pawn pawn, ref bool __result)
         {
-            RimKataGunReadyDrawContext context = RimKataGunReadyDrawUtility.Current;
+            ref readonly RimKataGunReadyDrawContext context =
+                ref RimKataGunReadyDrawUtility.Current;
             if (context.gunReady && context.pawn == pawn)
             {
                 __result = true;
@@ -2008,7 +2075,8 @@ namespace KRWF.RimKata
             Vector3 drawPos,
             float equipmentDrawDistanceFactor)
         {
-            RimKataGunReadyDrawContext context = RimKataGunReadyDrawUtility.Current;
+            ref readonly RimKataGunReadyDrawContext context =
+                ref RimKataGunReadyDrawUtility.Current;
             if (!context.gunReady || context.primary != weapon)
             {
                 return true;
