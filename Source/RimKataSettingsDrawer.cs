@@ -540,7 +540,7 @@ namespace KRWF.RimKata
         private static string CreepJoinerGeneChoiceLabel(RimKataCreepJoinerGeneChoice choice)
         {
             GeneDef geneDef = choice == RimKataCreepJoinerGeneChoice.RimKata
-                ? RimKataDefOf.RimKata_Gene
+                ? RimKataDefOf.RimKata_G
                 : RimKataAnomalyUtility.DependencyGeneDef;
             if (geneDef != null)
             {

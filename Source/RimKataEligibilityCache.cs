@@ -80,8 +80,8 @@ namespace KRWF.RimKata
             bool gene =
                 ModsConfig.BiotechActive
                 && pawn.genes != null
-                && RimKataDefOf.RimKata_Gene != null
-                && pawn.genes.HasActiveGene(RimKataDefOf.RimKata_Gene);
+                && RimKataDefOf.RimKata_G != null
+                && pawn.genes.HasActiveGene(RimKataDefOf.RimKata_G);
 
             bool ampoule =
                 RimKataDefOf.RimKata_A_Effect != null
@@ -480,8 +480,8 @@ namespace KRWF.RimKata
 
             entry.hasRimKataGene = ModsConfig.BiotechActive
                 && pawn.genes != null
-                && RimKataDefOf.RimKata_Gene != null
-                && pawn.genes.HasActiveGene(RimKataDefOf.RimKata_Gene);
+                && RimKataDefOf.RimKata_G != null
+                && pawn.genes.HasActiveGene(RimKataDefOf.RimKata_G);
             entry.rimKataGeneKnown = true;
         }
 

@@ -220,7 +220,7 @@ namespace KRWF.RimKata
         {
             RimKataSettings settings = RimKataMod.Settings;
             GeneDef geneDef = settings?.creepJoinerGeneChoice == RimKataCreepJoinerGeneChoice.RimKata
-                ? RimKataDefOf.RimKata_Gene
+                ? RimKataDefOf.RimKata_G
                 : RimKataAnomalyUtility.DependencyGeneDef;
             if (__result?.genes == null
                 || geneDef == null

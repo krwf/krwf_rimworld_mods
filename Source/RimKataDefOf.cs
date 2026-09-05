@@ -7,7 +7,7 @@ namespace KRWF.RimKata
     public static class RimKataDefOf
     {
         [MayRequireBiotech]
-        public static GeneDef RimKata_Gene;
+        public static GeneDef RimKata_G;
         public static HediffDef RimKata_A_Effect;
         [MayRequireRoyalty]
         public static AbilityDef RimKata_P;
