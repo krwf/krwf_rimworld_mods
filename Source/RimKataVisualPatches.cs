@@ -2104,17 +2104,22 @@ namespace KRWF.RimKata
 
         public static void Postfix(ref Gizmo __result)
         {
-            if (!(__result is Command_Target command)
-                || !RimKataMultiSelectAttackGizmoUtility
-                    .HasSelectedPawnWithAutomaticSearchRange())
+            if (!(__result is Command_Target command))
+            {
+                return;
+            }
+
+            RimKataMultiSelectAttackGizmoUtility.SelectedAttackGizmoFacts
+                selectedFacts = RimKataMultiSelectAttackGizmoUtility
+                    .GetSelectedAttackGizmoFacts();
+            if (!selectedFacts.HasAutomaticSearchRange)
             {
                 return;
             }
 
             Action<LocalTargetInfo> originalAction = command.action;
             if (originalAction != null
-                && RimKataMultiSelectAttackGizmoUtility
-                    .HasSelectedPawnWithActiveRimKataAttack())
+                && selectedFacts.HasCombatCapableUser)
             {
                 command.action = target =>
                     RimKataAttackGizmoTargetContext.InvokeSquad(
@@ -2122,8 +2127,7 @@ namespace KRWF.RimKata
                         target);
             }
 
-            if (RimKataMultiSelectAttackGizmoUtility
-                .ShouldUseUnifiedAttackGizmo())
+            if (selectedFacts.UseUnifiedAttackGizmo)
             {
                 command.onUpdate = DrawSelectedUnifiedRanges;
             }

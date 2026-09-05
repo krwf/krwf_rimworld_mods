@@ -56,7 +56,8 @@ namespace KRWF.RimKata
 
     internal static class RimKataSharedTargetSearch
     {
-        private const float ApiRadiusPadding = 0.7f;
+        private const float ApiRadiusPadding =
+            RimKataRangeUtility.CandidateCellRadiusPadding;
         private const float RadiusEpsilon = 0.001f;
         private const float CloseCombatRangedCandidateRange = 1.7f;
         private const int TouchCandidateLimit = 8;

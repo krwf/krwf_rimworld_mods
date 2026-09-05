@@ -29,6 +29,8 @@ namespace KRWF.RimKata
 
     public static class RimKataRangeUtility
     {
+        internal const float CandidateCellRadiusPadding = 0.7f;
+
         private sealed class CachedWeaponRange
         {
             public ThingWithComps weapon;
@@ -111,8 +113,27 @@ namespace KRWF.RimKata
             ThingWithComps weapon,
             Verb verb)
         {
-            return ApplyCandidateRange(
-                ResolveEffectiveRange(pawn, weapon, verb));
+            float effectiveRange = ResolveEffectiveRange(pawn, weapon, verb);
+            float candidateRange = ApplyCandidateRange(effectiveRange);
+            return verb?.IsMeleeAttack == false
+                ? ApplyCandidateCellPadding(
+                    effectiveRange,
+                    candidateRange)
+                : candidateRange;
+        }
+
+        internal static float ApplyCandidateCellPadding(
+            float effectiveRange,
+            float candidateRange)
+        {
+            if (effectiveRange <= 0f || candidateRange <= 0f)
+            {
+                return 0f;
+            }
+
+            return Mathf.Min(
+                effectiveRange,
+                candidateRange + CandidateCellRadiusPadding);
         }
 
         public static float ResolveEffectiveRange(

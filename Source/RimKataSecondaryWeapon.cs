@@ -577,6 +577,19 @@ namespace KRWF.RimKata
             return RimKataSecondaryWeaponRegistry.CurrentRegistry?.Get(pawn);
         }
 
+        internal static ThingWithComps SecondaryWeaponWithVerifiedAccess(
+            Pawn pawn)
+        {
+            if (RimKataEligibilityCache.TryGetRegisteredSecondaryWeapon(
+                    pawn,
+                    out ThingWithComps secondary))
+            {
+                return secondary;
+            }
+
+            return SecondaryWeapon(pawn);
+        }
+
         public static bool IsSecondaryWeapon(Pawn pawn, Thing thing)
         {
             return thing != null && SecondaryWeapon(pawn) == thing;
@@ -762,13 +775,36 @@ namespace KRWF.RimKata
 
             ThingWithComps primary = PrimaryWeapon(pawn);
             ThingWithComps secondary = CanUseSecondarySlot(pawn)
-                ? SecondaryWeapon(pawn)
+                ? SecondaryWeaponWithVerifiedAccess(pawn)
                 : null;
+            return BestRangedCombatVerb(
+                pawn,
+                target,
+                primary,
+                secondary,
+                null);
+        }
+
+        internal static Verb BestRangedCombatVerb(
+            Pawn pawn,
+            Thing target,
+            ThingWithComps primary,
+            ThingWithComps secondary,
+            bool? targetAdjacent)
+        {
             Verb primaryVerb = CombatVerb(pawn, primary);
             Verb secondaryVerb = CombatVerb(pawn, secondary);
 
-            bool primaryValid = RangedVerbCanAttack(pawn, primaryVerb, target);
-            bool secondaryValid = RangedVerbCanAttack(pawn, secondaryVerb, target);
+            bool primaryValid = RangedVerbCanAttack(
+                pawn,
+                primaryVerb,
+                target,
+                ref targetAdjacent);
+            bool secondaryValid = RangedVerbCanAttack(
+                pawn,
+                secondaryVerb,
+                target,
+                ref targetAdjacent);
             if (primaryValid && secondaryValid)
             {
                 if (target != null)
@@ -795,7 +831,11 @@ namespace KRWF.RimKata
                     : null;
         }
 
-        private static bool RangedVerbCanAttack(Pawn pawn, Verb verb, Thing target)
+        private static bool RangedVerbCanAttack(
+            Pawn pawn,
+            Verb verb,
+            Thing target,
+            ref bool? targetAdjacent)
         {
             if (verb == null
                 || verb.IsMeleeAttack
@@ -809,7 +849,17 @@ namespace KRWF.RimKata
                 return verb.Available();
             }
 
-            bool adjacent = pawn.CanReachImmediate(target, PathEndMode.Touch);
+            bool adjacent;
+            if (targetAdjacent.HasValue)
+            {
+                adjacent = targetAdjacent.Value;
+            }
+            else
+            {
+                adjacent = pawn.CanReachImmediate(target, PathEndMode.Touch);
+                targetAdjacent = adjacent;
+            }
+
             bool available = adjacent
                 ? RimKataEligibility.IsRangedVerbAvailableInCloseCombat(pawn, verb)
                 : verb.Available();
@@ -2111,83 +2161,133 @@ namespace KRWF.RimKata
 
     public static class RimKataMultiSelectAttackGizmoUtility
     {
+        internal readonly struct SelectedAttackGizmoFacts
+        {
+            public readonly bool HasAutomaticSearchRange;
+            public readonly bool HasCombatCapableUser;
+            public readonly bool UseUnifiedAttackGizmo;
+
+            public SelectedAttackGizmoFacts(
+                bool hasAutomaticSearchRange,
+                bool hasCombatCapableUser,
+                bool useUnifiedAttackGizmo)
+            {
+                HasAutomaticSearchRange = hasAutomaticSearchRange;
+                HasCombatCapableUser = hasCombatCapableUser;
+                UseUnifiedAttackGizmo = useUnifiedAttackGizmo;
+            }
+        }
+
+        private static int factsFrame = -1;
+        private static int factsRawEvent = int.MinValue;
+        private static List<object> factsSelection;
+        private static int factsCount = -1;
+        private static object factsFirst;
+        private static object factsLast;
+        private static SelectedAttackGizmoFacts cachedFacts;
+
         public static bool ShouldUseUnifiedAttackGizmo()
         {
-            List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
-            if (selectedPawns == null || selectedPawns.Count < 2)
+            List<object> selected =
+                Find.Selector?.SelectedObjectsListForReading;
+            if (selected == null || selected.Count < 2)
             {
                 return false;
             }
 
-            int selectedPlayerPawns = 0;
-            bool hasUsableSecondary = false;
-            for (int i = 0; i < selectedPawns.Count; i++)
+            return GetSelectedAttackGizmoFacts().UseUnifiedAttackGizmo;
+        }
+
+        internal static SelectedAttackGizmoFacts
+            GetSelectedAttackGizmoFacts()
+        {
+            List<object> selected =
+                Find.Selector?.SelectedObjectsListForReading;
+            Event currentEvent = Event.current;
+            int frame = Time.frameCount;
+            int rawEvent = currentEvent == null
+                ? -1
+                : (int)currentEvent.rawType;
+            int count = selected?.Count ?? 0;
+            object first = count > 0 ? selected[0] : null;
+            object last = count > 0 ? selected[count - 1] : null;
+            if (factsFrame == frame
+                && factsRawEvent == rawEvent
+                && ReferenceEquals(factsSelection, selected)
+                && factsCount == count
+                && ReferenceEquals(factsFirst, first)
+                && ReferenceEquals(factsLast, last))
             {
-                Pawn pawn = selectedPawns[i];
-                if (pawn?.Spawned != true
+                return cachedFacts;
+            }
+
+            factsFrame = frame;
+            factsRawEvent = rawEvent;
+            factsSelection = selected;
+            factsCount = count;
+            factsFirst = first;
+            factsLast = last;
+            cachedFacts = BuildSelectedAttackGizmoFacts(selected);
+            return cachedFacts;
+        }
+
+        private static SelectedAttackGizmoFacts
+            BuildSelectedAttackGizmoFacts(List<object> selected)
+        {
+            if (selected == null)
+            {
+                return default(SelectedAttackGizmoFacts);
+            }
+
+            int selectedPlayerPawns = 0;
+            bool hasAutomaticSearchRange = false;
+            bool hasCombatCapableUser = false;
+            bool hasUsableSecondary = false;
+            for (int i = 0; i < selected.Count; i++)
+            {
+                if (!(selected[i] is Pawn pawn)
+                    || pawn.Spawned != true
                     || !pawn.IsPlayerControlled)
                 {
                     continue;
                 }
 
                 selectedPlayerPawns++;
-                if (!hasUsableSecondary
-                    && RimKataEligibility.CanBeginGunKataAttack(pawn)
-                    && RimKataAutomaticRangeVisualUtility
-                        .CanDrawAutomaticSearchRange(pawn)
-                    && RimKataWeaponSlotUtility.CanUseSecondarySlot(pawn)
-                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) != null)
+                if (selectedPlayerPawns >= 2
+                    && hasAutomaticSearchRange
+                    && hasCombatCapableUser
+                    && hasUsableSecondary)
                 {
-                    hasUsableSecondary = true;
+                    break;
+                }
+
+                bool canBeginAttack =
+                    RimKataEligibility.CanBeginGunKataAttack(pawn);
+                if (canBeginAttack)
+                {
+                    hasAutomaticSearchRange = true;
+                    hasCombatCapableUser = true;
+                    if (!hasUsableSecondary
+                        && RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                            pawn,
+                            true)
+                        && RimKataWeaponSlotUtility
+                            .SecondaryWeaponWithVerifiedAccess(pawn) != null)
+                    {
+                        hasUsableSecondary = true;
+                    }
+                }
+                else if (!hasAutomaticSearchRange
+                    && RimKataEligibility.HasRimKataAccess(pawn))
+                {
+                    hasAutomaticSearchRange = true;
                 }
             }
 
-            return selectedPlayerPawns >= 2 && hasUsableSecondary;
-        }
-
-        public static bool HasSelectedPawnWithAutomaticSearchRange()
-        {
-            List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
-            if (selectedPawns == null)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < selectedPawns.Count; i++)
-            {
-                Pawn pawn = selectedPawns[i];
-                if (pawn?.Spawned == true
-                    && pawn.IsPlayerControlled
-                    && RimKataAutomaticRangeVisualUtility
-                        .CanDrawAutomaticSearchRange(pawn))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public static bool HasSelectedPawnWithActiveRimKataAttack()
-        {
-            List<Pawn> selectedPawns = Find.Selector?.SelectedPawns;
-            if (selectedPawns == null)
-            {
-                return false;
-            }
-
-            for (int i = 0; i < selectedPawns.Count; i++)
-            {
-                Pawn pawn = selectedPawns[i];
-                if (pawn?.Spawned == true
-                    && pawn.IsPlayerControlled
-                    && RimKataEligibility.CanBeginGunKataAttack(pawn))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return new SelectedAttackGizmoFacts(
+                hasAutomaticSearchRange,
+                hasCombatCapableUser,
+                selectedPlayerPawns >= 2 && hasUsableSecondary);
         }
     }
 

@@ -226,7 +226,7 @@ namespace KRWF.RimKata
                 float range = RimKataRangeUtility.ResolveEffectiveRange(pawn, verb.EquipmentSource, verb);
                 rangeSquared = range * range;
             }
-            // Keep the existing full-weapon cell range, without candidate +0.7.
+            // Interception uses exact weapon range; candidate padding does not apply.
             return pawn.Position.DistanceToSquared(point.ToIntVec3()) <= rangeSquared;
         }
 

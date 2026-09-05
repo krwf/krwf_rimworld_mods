@@ -1749,18 +1749,23 @@ namespace KRWF.RimKata
         {
             if (__instance?.Map == null
                 || __instance.InMentalState
-                || !RimKataEligibility.CanBeginGunKataAttack(__instance)
-                || !RimKataWeaponSlotUtility.CanUseSecondarySlot(__instance)
-                || (__0 != null
-                    && __instance.CanReachImmediate(__0, PathEndMode.Touch)))
+                || !RimKataEligibility.CanBeginGunKataAttack(__instance))
             {
                 return;
             }
 
             ThingWithComps primary = RimKataWeaponSlotUtility.PrimaryWeapon(
                 __instance);
-            ThingWithComps secondary = RimKataWeaponSlotUtility.SecondaryWeapon(
-                __instance);
+            if (!RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                    __instance,
+                    primary,
+                    true))
+            {
+                return;
+            }
+
+            ThingWithComps secondary = RimKataWeaponSlotUtility
+                .SecondaryWeaponWithVerifiedAccess(__instance);
             ThingWithComps resultWeapon = __result?.EquipmentSource as ThingWithComps;
             if (__result != null
                 && resultWeapon != primary
@@ -1769,9 +1774,19 @@ namespace KRWF.RimKata
                 return;
             }
 
+            bool targetAdjacent = __0 != null
+                && __instance.CanReachImmediate(__0, PathEndMode.Touch);
+            if (targetAdjacent)
+            {
+                return;
+            }
+
             Verb pairVerb = RimKataWeaponSlotUtility.BestRangedCombatVerb(
                 __instance,
-                __0);
+                __0,
+                primary,
+                secondary,
+                __0 != null ? (bool?)false : null);
             if (pairVerb != null)
             {
                 __result = pairVerb;
