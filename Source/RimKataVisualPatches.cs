@@ -1503,6 +1503,13 @@ namespace KRWF.RimKata
                 return;
             }
 
+            if (!RimKataCombatStatePresenceCache.Contains(
+                    ___pawn,
+                    ___pawn?.Map))
+            {
+                return;
+            }
+
             if (___pawn?.stances?.curStance
                     is Stance_RimKataAim movingAim
                 && movingAim.TryGetCachedMovementDirection(

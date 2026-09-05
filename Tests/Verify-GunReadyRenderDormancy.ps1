@@ -38,6 +38,8 @@ $rkResponseSnapshot = Get-CSharpBlock $rkVisualSource 'public static bool TryGet
 $rkPush = Get-CSharpBlock $rkVisualSource 'public static RimKataGunReadyDrawContext Push('
 $rkCandidate = Get-CSharpBlock $rkVisualSource 'private static bool MayNeedGunReadyTarget('
 $rkCombatIndicators = Get-CSharpBlock $rkVisualSource 'public static void DrawCombatIndicators('
+$rkDodgeOffset = Get-CSharpBlock $rkVisualSource 'public static class Patch_PawnRenderer_RimKataDodgeOffset'
+$rkDodgeOffsetPrefix = Get-CSharpBlock $rkDodgeOffset 'public static void Prefix('
 $rkIndicatorCandidate = Get-CSharpBlock $rkControllerSource 'internal static bool MayNeedCombatIndicatorFrame('
 $rkIndicatorFrame = Get-CSharpBlock $rkControllerSource 'GetCombatIndicatorFrameData('
 $rkIndicatorWeaponFrame = Get-CSharpBlock $rkControllerSource 'private static RimKataCombatIndicatorWeaponFrame'
@@ -134,6 +136,20 @@ if ($rkIndicatorCandidate -notmatch 'RimKataCombatStatePresenceCache\.Contains\(
     $rkIndicatorCandidate -notmatch 'TryGetPotentialVanillaRangedCooldown\(' -or
     $rkIndicatorCandidate -match 'StateFor|GetComponent|GetState|RimKataEligibility|CombatVerb|TryGetUiLoadout') {
     throw 'Combat-indicator candidate gate regained a deep state, eligibility, or loadout lookup.'
+}
+
+$rkDodgePhaseGate = Get-Index $rkDodgeOffsetPrefix 'phase == DrawPhase.EnsureInitialized'
+$rkDodgePresenceGate = Get-Index $rkDodgeOffsetPrefix 'RimKataCombatStatePresenceCache.Contains('
+$rkDodgeAimRead = Get-Index $rkDodgeOffsetPrefix 'Stance_RimKataAim movingAim'
+$rkDodgeSnapshotRead = Get-Index $rkDodgeOffsetPrefix 'TryGetCachedActiveSnapshot('
+if (-not ($rkDodgePhaseGate -lt $rkDodgePresenceGate -and
+          $rkDodgePresenceGate -lt $rkDodgeAimRead -and
+          $rkDodgeAimRead -lt $rkDodgeSnapshotRead) -or
+    [regex]::Matches($rkDodgeOffsetPrefix, 'RimKataCombatStatePresenceCache\.Contains').Count -ne 1 -or
+    $rkDodgeOffsetPrefix -notmatch 'if\s*\(phase\s*==\s*DrawPhase\.EnsureInitialized\)\s*\{\s*return;\s*\}' -or
+    $rkDodgeOffsetPrefix -notmatch 'if\s*\(\s*!RimKataCombatStatePresenceCache\.Contains\(\s*___pawn,\s*___pawn\?\.Map\s*\)\s*\)\s*\{\s*return;\s*\}' -or
+    $rkDodgeOffsetPrefix -match 'GetComponent|GetState|StateFor|RimKataEligibility|CombatVerb|TryGetEnabledCombatVerb') {
+    throw 'Dodge-offset render gate no longer rejects stateless pawns before aim and snapshot reads.'
 }
 
 if ($rkVanillaCooldownCandidate -notmatch 'Stance_Cooldown' -or
@@ -253,4 +269,4 @@ namespace KRWF.RimKata
 
 Add-Type -TypeDefinition $rkHarness -Language CSharp
 $rkPassed = [KRWF.RimKata.GunReadyPresenceChecks]::Run()
-"PASS: $rkPassed executable state-presence assertions + 13 gun-ready and 8 combat-indicator render dormancy source-boundary assertions; in-game profiler comparison remains required."
+"PASS: $rkPassed executable state-presence assertions + gun-ready, combat-indicator, and dodge-offset render dormancy source-boundary assertions; in-game profiler comparison remains required."
