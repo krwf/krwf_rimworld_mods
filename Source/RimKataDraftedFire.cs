@@ -215,65 +215,15 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool ordinaryAttackAllowed =
-                RimKataEligibility.CanBeginGunKataAttack(pawn);
-            if (!ordinaryAttackAllowed)
+            if (!existingStateKnown)
             {
-                if (!existingStateKnown)
-                {
-                    state = StateFor(pawn, false);
-                    existingStateKnown = true;
-                }
-                if (!RimKataDualWeaponController.CanContinueProjectileInterception(
-                        pawn,
-                        state))
-                {
-                    ResetIfActive(pawn, state);
-                    return;
-                }
+                state = StateFor(pawn, false);
             }
 
-            bool randomAttackEnabled =
-                RimKataMod.Settings?.randomAttackEnabled != false;
-
-            bool movementSearch = false;
-            if (automaticRangedFireAllowed && ordinaryAttackAllowed)
-            {
-                state ??= StateFor(pawn, true);
-                movementSearch = RimKataDualWeaponController
-                    .NotifyDraftedMovementCell(
-                        pawn,
-                        state,
-                        true);
-            }
-            else if (state == null)
-            {
-                return;
-            }
-
-            bool combatDemand = movementSearch
-                || RimKataDualWeaponController.HasCombatContinuity(
-                    pawn,
-                    state,
-                    randomAttackEnabled);
-
-            if (!combatDemand)
-            {
-                ResetIfActive(pawn, state);
-                if (pawn.pather?.Moving != true
-                    || !RimKataDualWeaponController
-                        .HasAutomaticMovementSearchPotential(pawn))
-                {
-                    state.ClearDraftedMovementSearchTracking();
-                }
-
-                return;
-            }
-
-            Thing requestedCloseTarget =
-                ordinaryAttackAllowed
-                    ? state.closeAttackRequestTarget
-                    : null;
+            // This adapter preserves the player's current Job and command context.
+            // Eligibility, movement search, continuity and weapon plans belong to
+            // the shared controller, exactly as they do for a dedicated combat Job.
+            Thing requestedCloseTarget = state?.closeAttackRequestTarget;
             bool closePlayerForced = false;
             bool closeKillIncappedTarget = false;
             if (requestedCloseTarget != null)
@@ -284,38 +234,16 @@ namespace KRWF.RimKata
                     out closeKillIncappedTarget);
             }
 
-            Thing immediateCloseTarget =
-                ordinaryAttackAllowed
-                    ? RimKataDualWeaponController.ResolveImmediateCloseTarget(
-                        pawn,
-                        state,
-                        requestedCloseTarget,
-                        closePlayerForced,
-                        closeKillIncappedTarget)
-                    : null;
-            bool closeContext = immediateCloseTarget != null;
-
-            if (!RimKataDualWeaponController.HasUsableWeapon(
-                    pawn,
-                    closeContext,
-                    true))
-            {
-                ResetIfActive(pawn, state);
-
-                return;
-            }
-
-            state.draftedFireActive = true;
-
             RimKataDualWeaponController.TickWithKnownState(
                 pawn,
                 state,
-                immediateCloseTarget,
+                null,
                 closePlayerForced,
                 closeKillIncappedTarget,
-                immediateCloseTarget,
-                true,
-                automaticRangedFireAllowed);
+                null,
+                false,
+                automaticRangedFireAllowed,
+                false);
         }
 
         public static bool TryApplyResponseCooldown(
@@ -335,8 +263,6 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            state.draftedFireActive = true;
             return RimKataDualWeaponController.TryApplyResponseCooldown(pawn, weapon, selectedVerb, focus);
         }
 
@@ -417,10 +343,6 @@ namespace KRWF.RimKata
             }
 
             state.RequestCloseAttack(target);
-            if (pawn.Drafted)
-            {
-                state.draftedFireActive = true;
-            }
 
             return state.CloseAttackRequestActive;
         }

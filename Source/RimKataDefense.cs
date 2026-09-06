@@ -368,7 +368,8 @@ namespace KRWF.RimKata
 
             if (component?.IsRangedDodgeDelayActive(defender) == true)
             {
-                if (!component.CanTryAdditionalDodge(defender)
+                if (RimKataMod.Settings?.tumbleEnabled == false
+                    || !component.CanTryAdditionalDodge(defender)
                     || !RimKataCombatMath.RollConfiguredChance(
                         defender,
                         RimKataChanceKind.RangedDodge))
@@ -377,8 +378,7 @@ namespace KRWF.RimKata
                 }
 
                 bool closeCombatDodge = component.IsCloseCombatActive(defender);
-                bool playTumble = !closeCombatDodge
-                    && RimKataMod.Settings?.tumbleEnabled != false;
+                bool playTumble = !closeCombatDodge;
                 if (!component.TryBeginAdditionalDodge(defender, playTumble))
                 {
                     return false;

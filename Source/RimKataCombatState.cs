@@ -365,6 +365,7 @@ namespace KRWF.RimKata
         public int closeDodgeTotalTicks;
         public float closeDodgeStartAngle;
         public Thing closeCombatTrigger;
+        // Retained for old saves; live combat does not maintain a drafted-only latch.
         public bool draftedFireActive;
         public IntVec3 draftedMovementSearchCell = IntVec3.Invalid;
         public bool draftedMovementSearchTriggerPending;
@@ -438,9 +439,10 @@ namespace KRWF.RimKata
         // Close combat is live state, not timed memory.
         public bool CloseCombatActive => TryGetLiveCloseCombatTrigger(out Thing _);
         public bool DraftedFireActive => pawn != null && draftedFireActive;
-        public bool DraftedMovementSearchTracking => pawn?.Drafted == true
+        // Keep serialized names, but movement search belongs to every combat entry.
+        public bool DraftedMovementSearchTracking => pawn != null
             && draftedMovementSearchCell.IsValid;
-        public bool DraftedMovementSearchTriggerPending => pawn?.Drafted == true
+        public bool DraftedMovementSearchTriggerPending => pawn != null
             && draftedMovementSearchTriggerPending;
         public bool MovementFireContinuityActive
         {

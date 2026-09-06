@@ -80,7 +80,7 @@
   <KRWF_RimKata_FeatureTargetRush>Charge</KRWF_RimKata_FeatureTargetRush>
   <KRWF_RimKata_FeatureResponse>parrying</KRWF_RimKata_FeatureResponse>
   <KRWF_RimKata_FeatureRangedDodge>Ranged dodge</KRWF_RimKata_FeatureRangedDodge>
-  <KRWF_RimKata_Featuretumble>somersault</KRWF_RimKata_Featuretumble>
+  <KRWF_RimKata_FeatureTumble>somersault</KRWF_RimKata_FeatureTumble>
   <KRWF_RimKata_EnableFriendlyPawnEffects>Apply RimKata effects to non-hostile pawns</KRWF_RimKata_EnableFriendlyPawnEffects>
   <KRWF_RimKata_EnableHostilePawnEffects>Apply RimKata effects to hostile pawns</KRWF_RimKata_EnableHostilePawnEffects>
   <KRWF_RimKata_CooldownVanillaBreakdown>Vanilla ranged cooldown multiplier calculation:</KRWF_RimKata_CooldownVanillaBreakdown>

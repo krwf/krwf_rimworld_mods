@@ -373,8 +373,9 @@ namespace KRWF.RimKata
                     pawn,
                     assignedTarget);
             }
-            RimKataDualWeaponController.NotifyDraftedMovementCell(pawn);
-            if (!RimKataDualWeaponController.CanContinueWeaponCycles(pawn))
+            RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
+            RimKataPawnCombatState state = component?.GetState(pawn, false);
+            if (!RimKataDualWeaponController.PrepareWeaponCycleTick(pawn, ref state))
             {
                 EndRimKataJobWith(JobCondition.Succeeded);
                 return;
@@ -396,12 +397,15 @@ namespace KRWF.RimKata
                 }
                 else
                 {
-                    RimKataDualWeaponController.Tick(
+                    RimKataDualWeaponController.TickWithKnownState(
                         pawn,
+                        state,
                         null,
                         IsPlayerForced,
                         job.killIncappedTarget,
-                        false);
+                        null,
+                        false,
+                        true);
 
                     if (TryAdoptContinuationTarget(out assignedTarget))
                     {
@@ -434,9 +438,6 @@ namespace KRWF.RimKata
             }
 
             MaintainCombatNormalSpeedRequest(assignedTarget);
-            RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
-            RimKataPawnCombatState state = component?.GetState(pawn, false);
-
             bool assignedTargetInTouchRange = assignedTargetValid && pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch);
 
             Thing immediateCloseTarget =
