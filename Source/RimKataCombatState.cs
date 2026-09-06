@@ -2616,6 +2616,22 @@ namespace KRWF.RimKata
             }
         }
 
+        internal bool IsDualEngagementActive(Pawn pawn)
+        {
+            if (pawn?.Map != map)
+            {
+                return false;
+            }
+
+            lock (statesLock)
+            {
+                return statesByPawn.TryGetValue(
+                        pawn,
+                        out RimKataPawnCombatState state)
+                    && state.dualEngagementActive;
+            }
+        }
+
         private void RebuildStateIndex()
         {
             RimKataResponseVisualParticipantCache.ClearForMap(map);

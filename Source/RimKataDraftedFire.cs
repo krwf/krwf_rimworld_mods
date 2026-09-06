@@ -55,6 +55,24 @@ namespace KRWF.RimKata
 
     public static class RimKataDraftedFireController
     {
+        internal static bool IsDraftedCombatSequenceActiveForUi(
+            Pawn pawn,
+            JobDef jobDef)
+        {
+            Map map = pawn?.Map;
+            if (pawn?.Drafted != true
+                || map == null
+                || pawn.InMentalState
+                || !IsAutomaticFireJob(jobDef)
+                || !RimKataCombatStatePresenceCache.Contains(pawn, map))
+            {
+                return false;
+            }
+
+            return map.GetComponent<RimKataMapComponent>()
+                ?.IsDualEngagementActive(pawn) == true;
+        }
+
         public static void Tick(Pawn pawn)
         {
             if (pawn?.Drafted == true)

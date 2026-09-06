@@ -184,7 +184,8 @@ namespace KRWF.RimKata
             nameof(JobDefOf.AttackStatic));
         private static readonly MethodInfo IsAttackJobMethod = AccessTools.Method(
             typeof(Patch_ColonistBarColonistDrawer_RimKataAttackIcon),
-            nameof(IsAttackJob));
+            nameof(IsAttackJob),
+            new[] { typeof(JobDef), typeof(Pawn) });
 
         public static IEnumerable<CodeInstruction> Transpiler(
             IEnumerable<CodeInstruction> instructions)
@@ -215,19 +216,26 @@ namespace KRWF.RimKata
                 return codes;
             }
 
-            codes[comparisonIndex].opcode = OpCodes.Call;
-            codes[comparisonIndex].operand = IsAttackJobMethod;
-            codes[comparisonIndex + 1].opcode =
-                codes[comparisonIndex + 1].opcode == OpCodes.Bne_Un
+            CodeInstruction comparison = codes[comparisonIndex];
+            CodeInstruction branch = codes[comparisonIndex + 1];
+            comparison.opcode = OpCodes.Ldarg_2;
+            comparison.operand = null;
+            codes.Insert(
+                comparisonIndex + 1,
+                new CodeInstruction(OpCodes.Call, IsAttackJobMethod));
+            branch.opcode =
+                branch.opcode == OpCodes.Bne_Un
                     ? OpCodes.Brfalse
                     : OpCodes.Brfalse_S;
             return codes;
         }
 
-        public static bool IsAttackJob(JobDef jobDef)
+        public static bool IsAttackJob(JobDef jobDef, Pawn pawn)
         {
             return jobDef == JobDefOf.AttackStatic
-                || jobDef == RimKataDefOf.RimKata_Attack;
+                || jobDef == RimKataDefOf.RimKata_Attack
+                || RimKataDraftedFireController
+                    .IsDraftedCombatSequenceActiveForUi(pawn, jobDef);
         }
     }
 }
