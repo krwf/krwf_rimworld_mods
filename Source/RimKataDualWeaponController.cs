@@ -1103,6 +1103,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            if (HasDormantMovingHostileWakeWork(pawn))
+            {
+                return false;
+            }
+
             ThingWithComps primary =
                 RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
             ThingWithComps secondary =
@@ -1150,32 +1155,12 @@ namespace KRWF.RimKata
 
             RimKataPawnCombatState state = StateFor(pawn, true);
             BindCurrentWeapons(pawn, state, true);
-            bool accepted = false;
-            for (int i = 0; i < movingHostiles.Count; i++)
-            {
-                Pawn target = movingHostiles[i];
-                if (target == null
-                    || (!IsDormantMovingHostileCandidate(
-                            pawn,
-                            target,
-                            primary,
-                            primaryVerb)
-                        && !IsDormantMovingHostileCandidate(
-                            pawn,
-                            target,
-                            secondary,
-                            secondaryVerb)))
-                {
-                    continue;
-                }
-
-                accepted |= RimKataSharedTargetSearch
-                    .TryAddKnownAutomaticTarget(
-                        pawn,
-                        state,
-                        target,
-                        true);
-            }
+            bool accepted = RimKataSharedTargetSearch
+                .TryAddKnownAutomaticTarget(
+                    pawn,
+                    state,
+                    firstCandidate,
+                    true);
 
             if (!accepted)
             {
@@ -1199,6 +1184,14 @@ namespace KRWF.RimKata
             state.dualLastDrivenTick = -1;
             RefreshDualEngagementState(pawn, state, true);
             return true;
+        }
+
+        internal static bool HasDormantMovingHostileWakeWork(Pawn pawn)
+        {
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            return state?.dualEngagementActive == true
+                || HasMovementFireCombatWork(state)
+                || state?.sharedTargetSearch?.KeepsCombatAlive == true;
         }
 
         private static bool IsDormantMovingHostileCandidate(

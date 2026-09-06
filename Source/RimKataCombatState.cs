@@ -1594,6 +1594,7 @@ namespace KRWF.RimKata
 
         public override void MapComponentTick()
         {
+            RimKataDormantHostileMovementRegistry.ProcessPending(map);
             TickProjectileScheduler();
             lock (statesLock)
             {

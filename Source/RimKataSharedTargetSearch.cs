@@ -220,15 +220,6 @@ namespace KRWF.RimKata
                 innerCellRadius,
                 outerCellRadius,
                 outerRing);
-            if (Prefs.DevMode && RimKataDebugHUD.SearchRangeEnabled)
-            {
-                RimKataDebugHUD.RecordActualSearchRing(
-                    pawn,
-                    pawn.Map,
-                    center,
-                    innerCellRadius,
-                    outerCellRadius);
-            }
 
             search.completedRing = outerRing;
             UpdateCollectionClosure(
@@ -520,57 +511,156 @@ namespace KRWF.RimKata
             float innerRadius,
             float outerRadius)
         {
+            Map map = pawn.Map;
             float innerSquared = innerRadius < 0f
                 ? -1f
                 : innerRadius * innerRadius;
             float outerSquared = outerRadius * outerRadius;
-            if (outerRadius <= GenRadial.MaxRadialPatternRadius)
-            {
-                int startIndex = innerRadius < 0f
-                    ? 0
-                    : GenRadial.NumCellsInRadius(innerRadius);
-                int endIndex = GenRadial.NumCellsInRadius(outerRadius);
-                for (int i = startIndex; i < endIndex; i++)
-                {
-                    IntVec3 offset = GenRadial.RadialPattern[i];
-                    float distanceSquared = offset.LengthHorizontalSquared;
-                    if (distanceSquared <= innerSquared
-                        || distanceSquared > outerSquared)
-                    {
-                        continue;
-                    }
+            bool recordSearchCells = Prefs.DevMode
+                && RimKataDebugHUD.SearchRangeEnabled
+                && RimKataDebugHUD.TryBeginActualSearchCellRecording(
+                    pawn,
+                    map);
 
-                    IntVec3 cell = center + offset;
-                    if (cell.InBounds(pawn.Map))
-                    {
-                        CollectAutomaticTargetsInCell(
-                            pawn,
-                            combatState,
-                            cell);
-                    }
+            int radiusExtent = Mathf.FloorToInt(outerRadius);
+            int maximumMapXOffset = Mathf.Max(
+                Mathf.Abs(center.x),
+                Mathf.Abs(map.Size.x - 1 - center.x));
+            int maximumMapZOffset = Mathf.Max(
+                Mathf.Abs(center.z),
+                Mathf.Abs(map.Size.z - 1 - center.z));
+            int maximumAbsZ = Mathf.Min(radiusExtent, maximumMapZOffset);
+            int outerX = Mathf.Min(radiusExtent, maximumMapXOffset);
+            int innerX = innerRadius < 0f
+                ? -1
+                : Mathf.Min(
+                    Mathf.FloorToInt(innerRadius),
+                    maximumMapXOffset);
+
+            for (int absZ = 0; absZ <= maximumAbsZ; absZ++)
+            {
+                long zSquared = (long)absZ * absZ;
+                while (outerX >= 0
+                    && (float)((long)outerX * outerX + zSquared)
+                        > outerSquared)
+                {
+                    outerX--;
                 }
+
+                if (outerX < 0)
+                {
+                    break;
+                }
+
+                while (innerX >= 0
+                    && (float)((long)innerX * innerX + zSquared)
+                        > innerSquared)
+                {
+                    innerX--;
+                }
+
+                CollectAutomaticTargetsInRingRow(
+                    pawn,
+                    combatState,
+                    map,
+                    center,
+                    center.z + absZ,
+                    outerX,
+                    innerX,
+                    recordSearchCells);
+                if (absZ > 0)
+                {
+                    CollectAutomaticTargetsInRingRow(
+                        pawn,
+                        combatState,
+                        map,
+                        center,
+                        center.z - absZ,
+                        outerX,
+                        innerX,
+                        recordSearchCells);
+                }
+            }
+        }
+
+        private static void CollectAutomaticTargetsInRingRow(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            Map map,
+            IntVec3 center,
+            int z,
+            int outerX,
+            int innerX,
+            bool recordSearchCells)
+        {
+            if ((uint)z >= (uint)map.Size.z)
+            {
                 return;
             }
 
-            int extent = Mathf.CeilToInt(outerRadius);
-            int minX = Mathf.Max(0, center.x - extent);
-            int maxX = Mathf.Min(pawn.Map.Size.x - 1, center.x + extent);
-            int minZ = Mathf.Max(0, center.z - extent);
-            int maxZ = Mathf.Min(pawn.Map.Size.z - 1, center.z + extent);
-            for (int z = minZ; z <= maxZ; z++)
+            int minimumX = Mathf.Max(-outerX, -center.x);
+            int maximumX = Mathf.Min(
+                outerX,
+                map.Size.x - 1 - center.x);
+            if (minimumX > maximumX)
             {
-                for (int x = minX; x <= maxX; x++)
+                return;
+            }
+
+            if (innerX < 0)
+            {
+                CollectAutomaticTargetsInRingRowSegment(
+                    pawn,
+                    combatState,
+                    map,
+                    center.x,
+                    z,
+                    minimumX,
+                    maximumX,
+                    recordSearchCells);
+                return;
+            }
+
+            CollectAutomaticTargetsInRingRowSegment(
+                pawn,
+                combatState,
+                map,
+                center.x,
+                z,
+                minimumX,
+                Mathf.Min(maximumX, -innerX - 1),
+                recordSearchCells);
+            CollectAutomaticTargetsInRingRowSegment(
+                pawn,
+                combatState,
+                map,
+                center.x,
+                z,
+                Mathf.Max(minimumX, innerX + 1),
+                maximumX,
+                recordSearchCells);
+        }
+
+        private static void CollectAutomaticTargetsInRingRowSegment(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            Map map,
+            int centerX,
+            int z,
+            int minimumX,
+            int maximumX,
+            bool recordSearchCells)
+        {
+            for (int x = minimumX; x <= maximumX; x++)
+            {
+                IntVec3 cell = new IntVec3(centerX + x, 0, z);
+                CollectAutomaticTargetsInCell(
+                    pawn,
+                    combatState,
+                    cell);
+                if (recordSearchCells)
                 {
-                    IntVec3 cell = new IntVec3(x, 0, z);
-                    float distanceSquared = center.DistanceToSquared(cell);
-                    if (distanceSquared > innerSquared
-                        && distanceSquared <= outerSquared)
-                    {
-                        CollectAutomaticTargetsInCell(
-                            pawn,
-                            combatState,
-                            cell);
-                    }
+                    RimKataDebugHUD.RecordActualSearchCell(map, cell);
                 }
             }
         }
@@ -584,8 +674,7 @@ namespace KRWF.RimKata
             for (int i = 0; i < things.Count; i++)
             {
                 Thing candidate = things[i];
-                if (candidate is Projectile
-                    || !RimKataTargeting.IsValidAutomaticAttackTarget(
+                if (!RimKataTargeting.IsValidAutomaticAttackTarget(
                         pawn,
                         candidate))
                 {

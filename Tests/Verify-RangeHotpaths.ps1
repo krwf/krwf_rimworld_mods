@@ -963,4 +963,4 @@ namespace KRWF.RimKata
 
 Add-Type -TypeDefinition $rkHarness -Language CSharp
 $rkPassed = [KRWF.RimKata.RangeHotpathChecks]::Run()
-"PASS: $rkPassed executable pair/candidate-range assertions + selected-gizmo cache and shared search/visual source-boundary assertions; in-game profiler, target acquisition, and ring-shape checks remain required."
+"PASS: $rkPassed executable pair/candidate-range assertions + selected-gizmo cache and shared search/visual source-boundary assertions; exact ring shape is covered by Verify-SharedSearchRingCells.ps1, while in-game profiler and target acquisition remain required."

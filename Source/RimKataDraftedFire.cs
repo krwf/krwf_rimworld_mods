@@ -242,7 +242,9 @@ namespace KRWF.RimKata
             if (!combatDemand)
             {
                 ResetIfActive(pawn, state);
-                if (pawn.pather?.Moving != true)
+                if (pawn.pather?.Moving != true
+                    || !RimKataDualWeaponController
+                        .HasAutomaticMovementSearchPotential(pawn))
                 {
                     state.ClearDraftedMovementSearchTracking();
                 }
@@ -572,16 +574,14 @@ namespace KRWF.RimKata
     {
         private sealed class MapEntry
         {
-            internal readonly HashSet<Pawn> movingHostiles =
-                new HashSet<Pawn>();
             internal readonly HashSet<Pawn> receivers =
+                new HashSet<Pawn>();
+            internal readonly HashSet<Pawn> pendingHostiles =
                 new HashSet<Pawn>();
             internal readonly List<Pawn> hostileSnapshot =
                 new List<Pawn>();
             internal readonly List<Pawn> receiverSnapshot =
                 new List<Pawn>();
-            internal readonly List<Pawn> singleHostile =
-                new List<Pawn>(1);
         }
 
         private static readonly ConditionalWeakTable<Map, MapEntry> ByMap =
@@ -642,8 +642,45 @@ namespace KRWF.RimKata
             if (map != null
                 && ByMap.TryGetValue(map, out MapEntry entry))
             {
-                entry.movingHostiles.Remove(pawn);
+                entry.receivers.Remove(pawn);
+                entry.pendingHostiles.Remove(pawn);
             }
+        }
+
+        internal static void ProcessPending(Map map)
+        {
+            if (map == null
+                || !ByMap.TryGetValue(map, out MapEntry entry))
+            {
+                return;
+            }
+
+            if (Find.TickManager?.slower?.ForcedNormalSpeed != false)
+            {
+                entry.pendingHostiles.Clear();
+                return;
+            }
+
+            if (entry.pendingHostiles.Count == 0)
+            {
+                return;
+            }
+
+            BuildLiveReceiverSnapshot(map, entry);
+            BuildPendingHostileSnapshot(map, entry);
+            for (int i = 0;
+                i < entry.receiverSnapshot.Count
+                    && entry.hostileSnapshot.Count > 0;
+                i++)
+            {
+                RimKataDualWeaponController.TryReceiveDormantMovingHostiles(
+                    entry.receiverSnapshot[i],
+                    entry.hostileSnapshot);
+            }
+
+            entry.pendingHostiles.Clear();
+            entry.hostileSnapshot.Clear();
+            entry.receiverSnapshot.Clear();
         }
 
         private static void NotifyPathMovement(Pawn pawn)
@@ -660,15 +697,12 @@ namespace KRWF.RimKata
                 && pawn.HostileTo(Faction.OfPlayer);
             if (hostileToPlayer)
             {
-                MapEntry entry = ByMap.GetValue(map, CreateEntry);
-                if (!IsLiveMovingHostile(pawn, map))
+                if (IsLiveMovingHostile(pawn, map)
+                    && ByMap.TryGetValue(map, out MapEntry entry)
+                    && entry.receivers.Count > 0)
                 {
-                    entry.movingHostiles.Remove(pawn);
-                    return;
+                    entry.pendingHostiles.Add(pawn);
                 }
-
-                entry.movingHostiles.Add(pawn);
-                DispatchHostileMovement(map, entry, pawn);
                 return;
             }
 
@@ -684,49 +718,17 @@ namespace KRWF.RimKata
             }
             else
             {
-                existing.movingHostiles.Remove(pawn);
+                existing.pendingHostiles.Remove(pawn);
             }
 
             if (IsLiveReceiverMember(pawn, map)
                 && RimKataEligibility.HasRimKataAccess(pawn))
             {
                 existing.receivers.Add(pawn);
-                DispatchReceiverMovement(map, existing, pawn);
             }
             else
             {
                 existing.receivers.Remove(pawn);
-            }
-        }
-
-        private static void DispatchHostileMovement(
-            Map map,
-            MapEntry entry,
-            Pawn hostile)
-        {
-            BuildLiveReceiverSnapshot(map, entry);
-            entry.singleHostile.Clear();
-            entry.singleHostile.Add(hostile);
-            for (int i = 0; i < entry.receiverSnapshot.Count; i++)
-            {
-                RimKataDualWeaponController.TryReceiveDormantMovingHostiles(
-                    entry.receiverSnapshot[i],
-                    entry.singleHostile);
-            }
-            entry.singleHostile.Clear();
-        }
-
-        private static void DispatchReceiverMovement(
-            Map map,
-            MapEntry entry,
-            Pawn receiver)
-        {
-            BuildLiveHostileSnapshot(map, entry);
-            if (entry.hostileSnapshot.Count > 0)
-            {
-                RimKataDualWeaponController.TryReceiveDormantMovingHostiles(
-                    receiver,
-                    entry.hostileSnapshot);
             }
         }
 
@@ -753,26 +755,17 @@ namespace KRWF.RimKata
             }
         }
 
-        private static void BuildLiveHostileSnapshot(
+        private static void BuildPendingHostileSnapshot(
             Map map,
             MapEntry entry)
         {
             entry.hostileSnapshot.Clear();
-            foreach (Pawn hostile in entry.movingHostiles)
+            foreach (Pawn hostile in entry.pendingHostiles)
             {
-                entry.hostileSnapshot.Add(hostile);
-            }
-
-            for (int i = entry.hostileSnapshot.Count - 1; i >= 0; i--)
-            {
-                Pawn hostile = entry.hostileSnapshot[i];
                 if (IsLiveMovingHostile(hostile, map))
                 {
-                    continue;
+                    entry.hostileSnapshot.Add(hostile);
                 }
-
-                entry.hostileSnapshot.RemoveAt(i);
-                entry.movingHostiles.Remove(hostile);
             }
         }
 
@@ -784,7 +777,8 @@ namespace KRWF.RimKata
                 && !pawn.Dead
                 && pawn.Map == map
                 && pawn.IsPlayerControlled
-                && pawn.Drafted;
+                && pawn.Drafted
+                && pawn.pather?.Moving == true;
         }
 
         private static bool IsLiveMovingHostile(Pawn pawn, Map map)

@@ -49,17 +49,15 @@ namespace KRWF.RimKata
         private static Map searchMeshMap;
         private static int searchMeshTick = -1;
 
-        private struct ActualSearchRing
+        private struct ActualSearchCell
         {
             public Map map;
-            public IntVec3 origin;
-            public float innerRadius;
-            public float outerRadius;
-            public int tick;
+            public IntVec3 cell;
         }
 
-        private static readonly List<ActualSearchRing> ActualSearchRings =
-            new List<ActualSearchRing>();
+        private static readonly List<ActualSearchCell> ActualSearchCells =
+            new List<ActualSearchCell>();
+        private static int actualSearchCellTick = -1;
 
         private struct RPopup
         {
@@ -288,7 +286,8 @@ namespace KRWF.RimKata
 
         private static void ClearSearchRangeData()
         {
-            ActualSearchRings.Clear();
+            ActualSearchCells.Clear();
+            actualSearchCellTick = -1;
             SearchCells.Clear();
             UniqueSearchCells.Clear();
             SearchMeshVertices.Clear();
@@ -305,41 +304,42 @@ namespace KRWF.RimKata
             RefreshGuiRegistration(Current.Game);
         }
 
-        public static void RecordActualSearchRing(
+        internal static bool TryBeginActualSearchCellRecording(
             Pawn owner,
-            Map map,
-            IntVec3 origin,
-            float innerRadius,
-            float outerRadius)
+            Map map)
         {
-            if (!Prefs.DevMode
-                || !SearchRangeEnabled
+            if (owner == null
                 || RimKataEligibility.IsHostileToPlayerFaction(owner)
                 || map == null
                 || map.Disposed
-                || !origin.IsValid
-                || outerRadius <= 0f
-                || innerRadius >= outerRadius)
+                || owner.Map != map)
             {
-                return;
+                return false;
             }
 
             int currentTick = Find.TickManager?.TicksGame ?? -1;
             if (currentTick < 0)
             {
-                return;
+                return false;
             }
 
-            PruneActualSearchRings(currentTick);
-            ActualSearchRings.Add(new ActualSearchRing
+            if (actualSearchCellTick != currentTick)
+            {
+                ActualSearchCells.Clear();
+                actualSearchCellTick = currentTick;
+            }
+
+            searchMeshTick = -1;
+            return true;
+        }
+
+        internal static void RecordActualSearchCell(Map map, IntVec3 cell)
+        {
+            ActualSearchCells.Add(new ActualSearchCell
             {
                 map = map,
-                origin = origin,
-                innerRadius = innerRadius,
-                outerRadius = outerRadius,
-                tick = currentTick
+                cell = cell
             });
-            searchMeshTick = -1;
         }
 
         internal static void DisableForDeveloperMode()
@@ -576,20 +576,19 @@ namespace KRWF.RimKata
                 searchMeshTick = currentTick;
                 SearchCells.Clear();
                 UniqueSearchCells.Clear();
-                PruneActualSearchRings(currentTick);
-                for (int i = 0; i < ActualSearchRings.Count; i++)
+                if (actualSearchCellTick == currentTick)
                 {
-                    ActualSearchRing ring = ActualSearchRings[i];
-                    if (ring.map != map)
+                    for (int i = 0; i < ActualSearchCells.Count; i++)
                     {
-                        continue;
-                    }
+                        ActualSearchCell searchCell = ActualSearchCells[i];
+                        if (searchCell.map != map
+                            || !UniqueSearchCells.Add(searchCell.cell))
+                        {
+                            continue;
+                        }
 
-                    AppendSearchRingCells(
-                        map,
-                        ring.origin,
-                        ring.innerRadius,
-                        ring.outerRadius);
+                        SearchCells.Add(searchCell.cell);
+                    }
                 }
 
                 BuildSearchMesh(graphics.Mesh, SearchCells);
@@ -605,71 +604,6 @@ namespace KRWF.RimKata
                 Matrix4x4.identity,
                 graphics.CellMaterial,
                 0);
-        }
-
-        private static void PruneActualSearchRings(int currentTick)
-        {
-            for (int i = ActualSearchRings.Count - 1; i >= 0; i--)
-            {
-                if (ActualSearchRings[i].tick != currentTick)
-                {
-                    ActualSearchRings.RemoveAt(i);
-                }
-            }
-        }
-
-        private static void AppendSearchRingCells(
-            Map map,
-            IntVec3 center,
-            float innerRadius,
-            float outerRadius)
-        {
-            float innerSquared = innerRadius < 0f
-                ? -1f
-                : innerRadius * innerRadius;
-            float outerSquared = outerRadius * outerRadius;
-            if (outerRadius <= GenRadial.MaxRadialPatternRadius)
-            {
-                int startIndex = innerRadius < 0f
-                    ? 0
-                    : GenRadial.NumCellsInRadius(innerRadius);
-                int endIndex = GenRadial.NumCellsInRadius(outerRadius);
-                for (int i = startIndex; i < endIndex; i++)
-                {
-                    IntVec3 offset = GenRadial.RadialPattern[i];
-                    int distanceSquared = offset.LengthHorizontalSquared;
-                    IntVec3 cell = center + offset;
-                    if (distanceSquared > innerSquared
-                        && distanceSquared <= outerSquared
-                        && cell.InBounds(map)
-                        && UniqueSearchCells.Add(cell))
-                    {
-                        SearchCells.Add(cell);
-                    }
-                }
-
-                return;
-            }
-
-            int extent = Mathf.CeilToInt(outerRadius);
-            int minX = Mathf.Max(0, center.x - extent);
-            int maxX = Mathf.Min(map.Size.x - 1, center.x + extent);
-            int minZ = Mathf.Max(0, center.z - extent);
-            int maxZ = Mathf.Min(map.Size.z - 1, center.z + extent);
-            for (int z = minZ; z <= maxZ; z++)
-            {
-                for (int x = minX; x <= maxX; x++)
-                {
-                    IntVec3 cell = new IntVec3(x, 0, z);
-                    int distanceSquared = center.DistanceToSquared(cell);
-                    if (distanceSquared > innerSquared
-                        && distanceSquared <= outerSquared
-                        && UniqueSearchCells.Add(cell))
-                    {
-                        SearchCells.Add(cell);
-                    }
-                }
-            }
         }
 
         private static void BuildSearchMesh(
