@@ -538,6 +538,8 @@ namespace KRWF.RimKata
             object oldCanHitNonTargetPawns = CanHitNonTargetPawnsField.GetValue(verb);
             object oldPreventFriendlyFire = PreventFriendlyFireField.GetValue(verb);
             object oldNonInterruptingSelfCast = NonInterruptingSelfCastField.GetValue(verb);
+            Stance_RimKataAim aimBeforeShot =
+                pawn.stances?.curStance as Stance_RimKataAim;
 
             LocalTargetInfo castTarget = target;
             if (closeShot
@@ -606,15 +608,24 @@ namespace KRWF.RimKata
                 if (ownedBusy != null
                     && pawn.stances?.curStance == ownedBusy)
                 {
-                    RimKataAutomaticCastSuppressionState suppression =
-                        RimKataAutomaticCastSuppression.Push(pawn);
-                    try
+                    if (aimBeforeShot != null)
                     {
-                        pawn.stances.SetStance(new Stance_Mobile());
+                        // Restore the existing aim without publishing an intermediate
+                        // stance change. The shared pass reconciles aim after both shots.
+                        pawn.stances.curStance = aimBeforeShot;
                     }
-                    finally
+                    else
                     {
-                        RimKataAutomaticCastSuppression.Pop(suppression);
+                        RimKataAutomaticCastSuppressionState suppression =
+                            RimKataAutomaticCastSuppression.Push(pawn);
+                        try
+                        {
+                            pawn.stances.SetStance(new Stance_Mobile());
+                        }
+                        finally
+                        {
+                            RimKataAutomaticCastSuppression.Pop(suppression);
+                        }
                     }
                 }
             }

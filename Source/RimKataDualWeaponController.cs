@@ -6816,7 +6816,8 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (pawn.stances.curStance is Stance_Busy)
+            if (pawn.stances.curStance is Stance_Busy
+                && !(pawn.stances.curStance is Stance_RimKataAim))
             {
                 return;
             }
@@ -6846,7 +6847,10 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            pawn.stances.SetStance(new Stance_Mobile());
+            if (verb == null || !target.IsValid)
+            {
+                pawn.stances.SetStance(new Stance_Mobile());
+            }
             return false;
         }
 
