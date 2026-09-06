@@ -75,175 +75,12 @@ namespace KRWF.RimKata
 
         public static void Tick(Pawn pawn)
         {
-            if (pawn?.Drafted == true)
-            {
-                TickDualWeaponController(pawn, null, false, false);
-                return;
-            }
-
-            StateFor(pawn, false)?.ClearDraftedMovementSearchTracking();
+            RimKataDualWeaponController.TickCombat(pawn, true);
         }
 
         public static void ProcessJobTrackerTick(Pawn pawn)
         {
-            if (pawn == null)
-            {
-                return;
-            }
-
-            if (pawn.InMentalState)
-            {
-                return;
-            }
-
-            // The dedicated JobDriver owns the combat tick.  This postfix only
-            // needs to service the rare hand-off request while that Job is live.
-            if (pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
-            {
-                if (RimKataPendingFollowupTickCache.Contains(pawn))
-                {
-                    RimKataDualWeaponController
-                        .TryConsumePendingDedicatedFollowupJob(pawn);
-                }
-
-                return;
-            }
-
-            if (pawn.Drafted)
-            {
-                bool moving = pawn.pather?.Moving == true;
-                Map map = pawn.Map;
-                bool statePresent =
-                    RimKataCombatStatePresenceCache.Contains(pawn, map);
-                if (!statePresent
-                    && (!moving
-                        || !RimKataDualWeaponController
-                            .HasAutomaticMovementSearchPotential(pawn)))
-                {
-                    return;
-                }
-
-                RimKataPawnCombatState state = StateFor(pawn, false);
-                if (state?.dedicatedFollowupJobPending == true)
-                {
-                    RimKataDualWeaponController
-                        .TryConsumePendingDedicatedFollowupJob(pawn, state);
-                }
-
-                // New combat work is published by the attack, movement,
-                // defensive-response, and projectile-wake entry points before
-                // it reaches this per-tick driver.  A state-less moving pawn
-                // only falls through when the map actually has an automatic
-                // attack or interception candidate to wake for.
-                if (state == null && !moving)
-                {
-                    return;
-                }
-
-                TickDualWeaponController(pawn, state, true, true);
-                return;
-            }
-
-            if (RimKataPendingFollowupTickCache.Contains(pawn))
-            {
-                RimKataDualWeaponController.TryConsumePendingDedicatedFollowupJob(
-                    pawn);
-            }
-        }
-
-        private static void TickDualWeaponController(
-            Pawn pawn,
-            RimKataPawnCombatState state,
-            bool existingStateKnown,
-            bool mentalStateKnownFalse)
-        {
-            if (pawn == null
-                || (!mentalStateKnownFalse && pawn.InMentalState)
-                || pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
-            {
-                return;
-            }
-
-            if (!pawn.Drafted)
-            {
-                return;
-            }
-
-            JobDef currentJobDef = pawn.CurJobDef;
-            if (!IsAutomaticFireJob(currentJobDef))
-            {
-                if (!existingStateKnown)
-                {
-                    state = StateFor(pawn, false);
-                    existingStateKnown = true;
-                }
-                state?.ClearDraftedMovementSearchTracking();
-                if (state?.dedicatedFollowupJobPending == true
-                    && state.dedicatedFollowupJobPlayerForced)
-                {
-                    return;
-                }
-
-                ResetIfActive(pawn, state);
-                return;
-            }
-
-            bool automaticRangedFireAllowed = pawn.drafter?.FireAtWill == true;
-            if (!automaticRangedFireAllowed)
-            {
-                if (!existingStateKnown)
-                {
-                    state = StateFor(pawn, false);
-                    existingStateKnown = true;
-                }
-                state?.ClearDraftedMovementSearchTracking();
-                if (state == null)
-                {
-                    return;
-                }
-            }
-
-            if (pawn.IsBurning())
-            {
-                if (!existingStateKnown)
-                {
-                    state = StateFor(pawn, false);
-                    existingStateKnown = true;
-                }
-                state?.ClearDraftedMovementSearchTracking();
-                CancelForFire(pawn, state);
-                return;
-            }
-
-            if (!existingStateKnown)
-            {
-                state = StateFor(pawn, false);
-            }
-
-            // This adapter preserves the player's current Job and command context.
-            // Eligibility, movement search, continuity and weapon plans belong to
-            // the shared controller, exactly as they do for a dedicated combat Job.
-            Thing requestedCloseTarget = state?.closeAttackRequestTarget;
-            bool closePlayerForced = false;
-            bool closeKillIncappedTarget = false;
-            if (requestedCloseTarget != null)
-            {
-                state.TryGetForcedAttackRequestContext(
-                    requestedCloseTarget,
-                    out closePlayerForced,
-                    out closeKillIncappedTarget);
-            }
-
-            RimKataDualWeaponController.TickWithKnownState(
-                pawn,
-                state,
-                null,
-                closePlayerForced,
-                closeKillIncappedTarget,
-                null,
-                false,
-                automaticRangedFireAllowed,
-                false);
+            RimKataDualWeaponController.TickCombat(pawn, true);
         }
 
         public static bool TryApplyResponseCooldown(
@@ -268,18 +105,7 @@ namespace KRWF.RimKata
 
         public static void CancelForFire(Pawn pawn)
         {
-            CancelForFire(pawn, StateFor(pawn, false));
-        }
-
-        private static void CancelForFire(
-            Pawn pawn,
-            RimKataPawnCombatState state)
-        {
-            state?.CancelOffenseForFire();
-            if (pawn?.stances?.curStance is Stance_RimKataAim)
-            {
-                pawn.stances.SetStance(new Stance_Mobile());
-            }
+            RimKataDualWeaponController.CancelOffenseForFire(pawn, StateFor(pawn, false));
         }
 
         public static bool ShouldReplacePhysicalMeleeAttack(
@@ -441,28 +267,6 @@ namespace KRWF.RimKata
             return pawn?.Map?.GetComponent<RimKataMapComponent>()?.GetState(pawn, create);
         }
 
-        private static void ClearAimStance(Pawn pawn)
-        {
-            if (pawn?.stances?.curStance is Stance_RimKataAim)
-            {
-                pawn.stances.SetStance(new Stance_Mobile());
-            }
-        }
-
-        private static void ResetIfActive(Pawn pawn, RimKataPawnCombatState state)
-        {
-            if (state == null
-                || (!state.DraftedFireActive
-                    && !state.WeaponCyclesActive
-                    && !(pawn?.stances?.curStance is Stance_RimKataAim)))
-            {
-                return;
-            }
-
-            state.CancelDraftedFire(false);
-            RimKataDualWeaponController.DeactivateNonJobCycleWork(pawn);
-            ClearAimStance(pawn);
-        }
     }
 
     [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.JobTrackerTick))]

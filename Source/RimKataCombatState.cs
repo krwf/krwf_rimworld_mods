@@ -1647,23 +1647,6 @@ namespace KRWF.RimKata
                         RimKataDualWeaponController
                             .CancelOffenseForMentalState(state.pawn, state);
                     }
-                    else if (!state.temporaryInactive)
-                    {
-                        if (!state.pawn.Drafted)
-                        {
-                            state.CancelDraftedFire(false);
-                            if (state.pawn.CurJobDef != RimKataDefOf.RimKata_Attack)
-                            {
-                                state.ClearDraftedMovementSearchTracking();
-                                RimKataDualWeaponController.DeactivateNonJobCycleWork(
-                                    state.pawn);
-                                if (state.pawn.stances?.curStance is Stance_RimKataAim)
-                                {
-                                    state.pawn.stances.SetStance(new Stance_Mobile());
-                                }
-                            }
-                        }
-                    }
 
                     if (!state.pawn.Dead
                         && !state.pawn.Downed

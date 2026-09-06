@@ -335,52 +335,39 @@ namespace KRWF.RimKata
 
         private void CombatTick()
         {
-            if (pawn?.InMentalState == true)
-            {
-                EndRimKataJobWith(JobCondition.InterruptForced);
-                return;
-            }
+            RimKataDualWeaponController.TickCombat(pawn, false);
+        }
 
-            if (RimKataDualWeaponController
-                .ConsumeLoadoutInvalidatedCombatJob(pawn, job))
-            {
-                EndRimKataJobWith(JobCondition.InterruptForced);
-                return;
-            }
-
-            if (pawn != null && pawn.IsBurning())
-            {
-                CancelForFire();
-                EndRimKataJobWith(JobCondition.InterruptForced);
-                return;
-            }
-
-            if (RimKataTemporaryInactivity.IsInactive(pawn))
-            {
-                EndRimKataJobWith(JobCondition.InterruptForced);
-                return;
-            }
-
+        internal Thing PrepareAssignedTarget(
+            RimKataPawnCombatState state,
+            out bool assignedTargetValid,
+            out bool weaponScopedFocusJob)
+        {
             Thing assignedTarget = AssignedTarget;
-            bool weaponScopedFocusJob =
+            weaponScopedFocusJob =
                 RimKataDualWeaponController.IsWeaponScopedFocusJob(
                     pawn,
+                    state,
                     assignedTarget);
-            bool assignedTargetValid = IsValidAssignedTarget(assignedTarget);
+            assignedTargetValid = IsValidAssignedTarget(assignedTarget);
             if (assignedTargetValid)
             {
                 RimKataDualWeaponController.RefreshDedicatedTargetContinuity(
                     pawn,
+                    state,
                     assignedTarget);
             }
-            RimKataMapComponent component = pawn.Map.GetComponent<RimKataMapComponent>();
-            RimKataPawnCombatState state = component?.GetState(pawn, false);
-            if (!RimKataDualWeaponController.PrepareWeaponCycleTick(pawn, ref state))
-            {
-                EndRimKataJobWith(JobCondition.Succeeded);
-                return;
-            }
+            return assignedTarget;
+        }
 
+        internal void TickPreparedCombat(
+            RimKataMapComponent component,
+            RimKataPawnCombatState state,
+            Thing assignedTarget,
+            bool assignedTargetValid,
+            bool weaponScopedFocusJob,
+            bool allowAutomaticRangedFire)
+        {
             if (!assignedTargetValid)
             {
                 if (weaponScopedFocusJob)
@@ -397,7 +384,7 @@ namespace KRWF.RimKata
                 }
                 else
                 {
-                    RimKataDualWeaponController.TickWithKnownState(
+                    RimKataDualWeaponController.TickPreparedWeaponCycles(
                         pawn,
                         state,
                         null,
@@ -405,7 +392,7 @@ namespace KRWF.RimKata
                         job.killIncappedTarget,
                         null,
                         false,
-                        true);
+                        allowAutomaticRangedFire);
 
                     if (TryAdoptContinuationTarget(out assignedTarget))
                     {
@@ -425,13 +412,15 @@ namespace KRWF.RimKata
                 }
             }
 
-            RimKataDualWeaponController
+            bool closeTargetResolutionKnown = RimKataDualWeaponController
                 .ReconcileCloseCombatBeforeContinuityCheck(
                     pawn,
+                    state,
                     assignedTarget,
                     IsPlayerForced,
-                    job.killIncappedTarget);
-            if (!RimKataDualWeaponController.IsDedicatedFollowupActive(pawn))
+                    job.killIncappedTarget,
+                    out Thing immediateCloseTarget);
+            if (!RimKataDualWeaponController.HasCombatContinuity(pawn, state))
             {
                 EndRimKataJobWith(JobCondition.Succeeded);
                 return;
@@ -440,13 +429,15 @@ namespace KRWF.RimKata
             MaintainCombatNormalSpeedRequest(assignedTarget);
             bool assignedTargetInTouchRange = assignedTargetValid && pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch);
 
-            Thing immediateCloseTarget =
-                RimKataDualWeaponController.ResolveImmediateCloseTarget(
+            if (!closeTargetResolutionKnown)
+            {
+                immediateCloseTarget = RimKataDualWeaponController.ResolveImmediateCloseTarget(
                     pawn,
                     state,
                     assignedTarget,
                     IsPlayerForced,
                     job.killIncappedTarget);
+            }
 
             if (RimKataDodgeMovementUtility.CalculateIsActive(
                     pawn,
@@ -456,7 +447,7 @@ namespace KRWF.RimKata
                     state,
                     assignedTarget,
                     immediateCloseTarget,
-                    true);
+                    allowAutomaticRangedFire);
                 return;
             }
 
@@ -469,7 +460,7 @@ namespace KRWF.RimKata
                 if (!canRush && !CanAttackWithoutRushing(assignedTarget))
                 {
                     pawn.pather?.StopDead();
-                    TickAdvancingFire(state, assignedTarget);
+                    TickCombatFire(state, assignedTarget, null, allowAutomaticRangedFire);
                     return;
                 }
 
@@ -480,7 +471,7 @@ namespace KRWF.RimKata
                     EnsurePathToAssignedTarget();
                 }
 
-                TickAdvancingFire(state, assignedTarget);
+                TickCombatFire(state, assignedTarget, null, allowAutomaticRangedFire);
                 return;
             }
 
@@ -490,26 +481,7 @@ namespace KRWF.RimKata
             }
 
             pawn.pather.StopDead();
-            TickCloseCombat(state, assignedTarget, immediateCloseTarget);
-        }
-
-        private void TickAdvancingFire(
-            RimKataPawnCombatState state,
-            Thing assignedTarget)
-        {
-            TickCombatFire(state, assignedTarget, null, true);
-        }
-
-        private void TickCloseCombat(
-            RimKataPawnCombatState state,
-            Thing assignedTarget,
-            Thing resolvedCloseTarget)
-        {
-            TickCombatFire(
-                state,
-                assignedTarget,
-                resolvedCloseTarget,
-                true);
+            TickCombatFire(state, assignedTarget, immediateCloseTarget, allowAutomaticRangedFire);
         }
 
         private void MaintainCombatNormalSpeedRequest(Thing assignedTarget)
@@ -531,17 +503,17 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state,
             Thing assignedTarget,
             Thing resolvedCloseTarget,
-            bool closeTargetResolutionKnown)
+            bool allowAutomaticRangedFire)
         {
-            RimKataDualWeaponController.TickWithKnownState(
+            RimKataDualWeaponController.TickPreparedWeaponCycles(
                 pawn,
                 state,
                 assignedTarget,
                 IsPlayerForced,
                 job.killIncappedTarget,
                 resolvedCloseTarget,
-                closeTargetResolutionKnown,
-                true);
+                true,
+                allowAutomaticRangedFire);
         }
 
         private void ClearAimStance()
@@ -552,7 +524,7 @@ namespace KRWF.RimKata
             }
         }
 
-        private void EndRimKataJobWith(JobCondition condition)
+        internal void EndRimKataJobWith(JobCondition condition)
         {
             endingJob = true;
             EndJobWith(condition);
@@ -570,13 +542,20 @@ namespace KRWF.RimKata
             }
         }
 
-        private void CancelForFire()
+        internal void CancelForFire(RimKataPawnCombatState state = null)
         {
             warmupTicksRemaining = -1;
             cooldownTicksRemaining = 0;
             ClearPlannedAttack();
             ClearAimStance();
-            RimKataDraftedFireController.CancelForFire(pawn);
+            if (state != null)
+            {
+                RimKataDualWeaponController.CancelOffenseForFire(pawn, state);
+            }
+            else
+            {
+                RimKataDraftedFireController.CancelForFire(pawn);
+            }
         }
 
         private void EnsurePathToAssignedTarget(
