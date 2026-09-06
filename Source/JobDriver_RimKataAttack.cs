@@ -1749,6 +1749,12 @@ namespace KRWF.RimKata
             Thing __0,
             ref Verb __result)
         {
+            if (__0 == null
+                && RimKataGunReadyDrawUtility.IsDrawingEquipmentFor(__instance))
+            {
+                return;
+            }
+
             if (__instance?.Map == null
                 || __instance.InMentalState
                 || !RimKataEligibility.CanBeginGunKataAttack(__instance))

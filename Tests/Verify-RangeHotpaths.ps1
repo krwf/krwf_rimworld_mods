@@ -33,6 +33,8 @@ function Get-Index([string] $source, [string] $marker) {
 }
 
 $rkPairPatch = Get-CSharpBlock $rkAttackSource 'public static class Patch_Pawn_TryGetAttackVerb_RimKataPairRange'
+$rkPairPostfix = Get-CSharpBlock $rkPairPatch 'public static void Postfix('
+$rkPairRenderGate = Get-CSharpBlock $rkPairPostfix 'if (__0 == null'
 $rkSecondaryLookup = Get-CSharpBlock $rkSecondarySource 'internal static ThingWithComps SecondaryWeaponWithVerifiedAccess('
 $rkKnownPair = Get-CSharpBlock $rkSecondarySource 'internal static Verb BestRangedCombatVerb('
 $rkRangedValidity = Get-CSharpBlock $rkSecondarySource 'private static bool RangedVerbCanAttack('
@@ -79,6 +81,17 @@ if ([regex]::Matches($rkPairPatch, 'CanBeginGunKataAttack').Count -ne 1 -or
     [regex]::Matches($rkPairPatch, 'CanReachImmediate').Count -ne 1 -or
     $rkPairPatch -notmatch 'BestRangedCombatVerb\([\s\S]*?primary,[\s\S]*?secondary,[\s\S]*?\(bool\?\)false') {
     throw 'Pair-range Postfix regained duplicate eligibility, loadout, or adjacency work.'
+}
+
+$rkPairRenderGateIndex = Get-Index $rkPairPostfix 'if (__0 == null'
+$rkPairEligibilityIndex = Get-Index $rkPairPostfix 'RimKataEligibility.CanBeginGunKataAttack'
+if ([regex]::Matches($rkPairPostfix, '__0\s*==\s*null').Count -ne 1 -or
+    [regex]::Matches($rkPairPostfix, 'RimKataGunReadyDrawUtility\.IsDrawingEquipmentFor').Count -ne 1 -or
+    $rkPairRenderGate -notmatch '__0\s*==\s*null\s*&&\s*RimKataGunReadyDrawUtility\.IsDrawingEquipmentFor\(__instance\)' -or
+    $rkPairRenderGate -match '\|\|' -or
+    [regex]::Matches($rkPairRenderGate, 'return;').Count -ne 1 -or
+    $rkPairRenderGateIndex -ge $rkPairEligibilityIndex) {
+    throw 'Pair-range render dormancy no longer skips only targetless equipment-render calls.'
 }
 
 if ($rkSecondaryLookup -notmatch 'TryGetRegisteredSecondaryWeapon' -or
@@ -433,6 +446,33 @@ namespace KRWF.RimKata
         $rkRangedValidity
     }
 
+    public static class RimKataGunReadyDrawUtility
+    {
+        public static bool Scoped;
+        public static Pawn ScopePawn;
+        public static int Calls;
+
+        public static bool IsDrawingEquipmentFor(Pawn pawn)
+        {
+            Calls++;
+            return pawn != null
+                && Scoped
+                && object.ReferenceEquals(ScopePawn, pawn);
+        }
+    }
+
+    public static class PairRangeRenderGateHarness
+    {
+        public static int DeepCalls;
+
+        public static void Run(Pawn __instance, Thing __0)
+        {
+            $rkPairRenderGate
+
+            DeepCalls++;
+        }
+    }
+
     public static class UndraftedSecondaryGizmoHarness
     {
         public static void Apply(
@@ -550,6 +590,37 @@ namespace KRWF.RimKata
 
         public static int Run()
         {
+            var renderPawn = new Pawn();
+            var otherPawn = new Pawn();
+            RimKataGunReadyDrawUtility.Scoped = true;
+            RimKataGunReadyDrawUtility.ScopePawn = renderPawn;
+            RimKataGunReadyDrawUtility.Calls = 0;
+            PairRangeRenderGateHarness.DeepCalls = 0;
+            PairRangeRenderGateHarness.Run(renderPawn, null);
+            Check(PairRangeRenderGateHarness.DeepCalls == 0
+                    && RimKataGunReadyDrawUtility.Calls == 1,
+                "targetless equipment-render lookup stops before pair-range work");
+
+            PairRangeRenderGateHarness.Run(otherPawn, null);
+            Check(PairRangeRenderGateHarness.DeepCalls == 1
+                    && RimKataGunReadyDrawUtility.Calls == 2,
+                "targetless lookup for another Pawn remains active");
+
+            RimKataGunReadyDrawUtility.Calls = 0;
+            PairRangeRenderGateHarness.DeepCalls = 0;
+            PairRangeRenderGateHarness.Run(renderPawn, new Thing());
+            Check(PairRangeRenderGateHarness.DeepCalls == 1
+                    && RimKataGunReadyDrawUtility.Calls == 0,
+                "actual attack target bypasses the render-scope probe");
+
+            RimKataGunReadyDrawUtility.Scoped = false;
+            RimKataGunReadyDrawUtility.Calls = 0;
+            PairRangeRenderGateHarness.DeepCalls = 0;
+            PairRangeRenderGateHarness.Run(renderPawn, null);
+            Check(PairRangeRenderGateHarness.DeepCalls == 1
+                    && RimKataGunReadyDrawUtility.Calls == 1,
+                "non-render targetless lookup remains active");
+
             Find.TickManager = new TickManager { TicksGame = 100 };
             var registry = new SecondaryRegistryLookupHarness();
             var registryPawn = new Pawn();

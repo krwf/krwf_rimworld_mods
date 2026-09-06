@@ -35,7 +35,9 @@ $rkRemove = Get-CSharpBlock $rkCombatSource 'private void RemoveStateAt('
 $rkMapRemoved = Get-CSharpBlock $rkCombatSource 'public override void MapRemoved()'
 $rkVisualLoadout = Get-CSharpBlock $rkVisualSource 'private static bool TryGetVisualLoadout('
 $rkResponseSnapshot = Get-CSharpBlock $rkVisualSource 'public static bool TryGetCachedResponseSnapshot('
+$rkGunReadyContext = Get-CSharpBlock $rkVisualSource 'public struct RimKataGunReadyDrawContext'
 $rkGunReadyUtility = Get-CSharpBlock $rkVisualSource 'internal static class RimKataGunReadyDrawUtility'
+$rkIsDrawingEquipmentFor = Get-CSharpBlock $rkGunReadyUtility 'public static bool IsDrawingEquipmentFor('
 $rkCarryUtility = Get-CSharpBlock $rkVisualSource 'internal static class RimKataCarryDrawUtility'
 $rkCarryPush = Get-CSharpBlock $rkCarryUtility 'public static int Push('
 $rkCarryEnterScope = Get-CSharpBlock $rkCarryUtility 'private static int EnterScope('
@@ -191,6 +193,8 @@ if ($rkGunReadyPatch -match 'RimKataGunReadyDrawContext\s+__state' -or
 
 $rkEnterCall = Get-Index $rkPush 'int scopeToken = EnterScope(portrait);'
 $rkTryStart = Get-Index $rkPush 'try'
+$rkScopePawnPublish = Get-Index $rkPush 'current.scopePawn = pawn;'
+$rkPortraitGate = Get-Index $rkPush 'if (portrait || pawn?.Spawned != true)'
 $rkStatePresence = Get-Index $rkPush 'RimKataCombatStatePresenceCache.Contains('
 $rkResponseProbe = Get-Index $rkPush 'TryGetResponseParticipantLoadout('
 $rkCandidateCall = Get-Index $rkPush 'MayNeedGunReadyTarget(pawn, statePresent)'
@@ -212,7 +216,10 @@ $rkAimPublish = Get-Index $rkPush 'current.aimAngle = aimAngle;'
 $rkGunReadyPublish = Get-Index $rkPush 'current.gunReady = true;'
 $rkDirectPublishPattern = 'current\.(pawn|primary|secondary|snapshotActive|active|aimAngle|gunReady)\s*='
 if ([regex]::Matches($rkPush, $rkDirectPublishPattern).Count -ne 7 -or
+    [regex]::Matches($rkPush, 'current\.scopePawn\s*=\s*pawn;').Count -ne 1 -or
     -not ($rkEnterCall -lt $rkTryStart -and
+          $rkTryStart -lt $rkScopePawnPublish -and
+          $rkScopePawnPublish -lt $rkPortraitGate -and
           $rkStatePresence -lt $rkResponseProbe -and
           $rkStatePresence -lt $rkCandidateCall -and
           $rkStatePresence -lt $rkSnapshotProbe -and
@@ -233,6 +240,14 @@ if ([regex]::Matches($rkPush, $rkDirectPublishPattern).Count -ne 7 -or
           $rkVerb -lt $rkAimPublish -and
           $rkAimPublish -lt $rkGunReadyPublish)) {
     throw 'Gun-ready shared-state gates or direct context publications moved across a required boundary.'
+}
+
+if ([regex]::Matches($rkGunReadyContext, 'public\s+Pawn\s+scopePawn;').Count -ne 1 -or
+    $rkIsDrawingEquipmentFor -notmatch 'pawn\s*!=\s*null' -or
+    $rkIsDrawingEquipmentFor -notmatch 'current\.scoped' -or
+    $rkIsDrawingEquipmentFor -notmatch '(?:object\.)?ReferenceEquals\(current\.scopePawn,\s*pawn\)' -or
+    $rkIsDrawingEquipmentFor -match 'current\.(active|gunReady|portrait|pawn)\b') {
+    throw 'Gun-ready render scope no longer identifies only the exact DrawEquipment Pawn.'
 }
 
 if ([regex]::Matches($rkPush, 'RimKataCombatStatePresenceCache\.Contains').Count -ne 1) {
@@ -271,7 +286,6 @@ if ($rkPush -notmatch 'bool\s+needsActiveContext\s*=\s*secondary != null\s*\|\|\
     throw 'Gun-ready render path regained an active context for an irrelevant armed pawn.'
 }
 
-$rkPortraitGate = Get-Index $rkPush 'if (portrait || pawn?.Spawned != true)'
 if (-not ($rkEnterCall -lt $rkPortraitGate -and
           $rkPortraitGate -lt $rkPrimaryGate) -or
     $rkEnterScope -notmatch 'current\.scoped\s*=\s*true;' -or
@@ -608,6 +622,7 @@ namespace KRWF.RimKata
         public bool portrait;
         public bool active;
         public bool gunReady;
+        public Pawn scopePawn;
         public int marker;
         public object heldReference;
     }
@@ -623,6 +638,8 @@ namespace KRWF.RimKata
         $rkEnsureNestedCapacity
 
         $rkPop
+
+        $rkIsDrawingEquipmentFor
 
         private static int checks;
 
@@ -660,6 +677,7 @@ namespace KRWF.RimKata
                     || nestedContexts[index].portrait
                     || nestedContexts[index].active
                     || nestedContexts[index].gunReady
+                    || nestedContexts[index].scopePawn != null
                     || nestedContexts[index].marker != 0
                     || nestedContexts[index].heldReference != null)
                 {
@@ -675,6 +693,7 @@ namespace KRWF.RimKata
             int scopeToken = EnterScope(portrait);
             try
             {
+                current.scopePawn = new Pawn();
                 Publish(999, new object());
                 throw new InvalidOperationException("scope failure");
             }
@@ -686,26 +705,38 @@ namespace KRWF.RimKata
             checks = 0;
             ResetScope();
 
+            var outerPawn = new Pawn();
+            var otherPawn = new Pawn();
             int topToken = EnterScope(false);
+            current.scopePawn = outerPawn;
             Check(topToken == 1 && scopeDepth == 1,
                 "top-level scope uses an integer depth token");
             Check(current.scoped && !current.portrait
-                    && !current.active && !current.gunReady,
+                    && !current.active && !current.gunReady
+                    && IsDrawingEquipmentFor(outerPawn)
+                    && !IsDrawingEquipmentFor(otherPawn),
                 "top-level scope publishes only its inactive header");
             Check(nestedContexts == null,
                 "top-level scope does not allocate or save a context");
 
             object outerReference = new object();
             Publish(11, outerReference);
+            var nestedPawn = new Pawn();
             int nestedToken = EnterScope(true);
+            current.scopePawn = nestedPawn;
             Check(nestedToken == 2 && scopeDepth == 2,
                 "nested scope increments the depth token");
             Check(current.scoped && current.portrait
                     && !current.active && !current.gunReady
-                    && current.marker == 0 && current.heldReference == null,
+                    && current.marker == 0 && current.heldReference == null
+                    && IsDrawingEquipmentFor(nestedPawn)
+                    && !IsDrawingEquipmentFor(outerPawn),
                 "nested scope starts from a cleared context");
             Check(nestedContexts != null
                     && nestedContexts[0].marker == 11
+                    && object.ReferenceEquals(
+                        nestedContexts[0].scopePawn,
+                        outerPawn)
                     && object.ReferenceEquals(
                         nestedContexts[0].heldReference,
                         outerReference),
@@ -721,15 +752,19 @@ namespace KRWF.RimKata
 
             Pop(nestedToken);
             Check(scopeDepth == 1 && current.marker == 11
-                    && object.ReferenceEquals(current.heldReference, outerReference),
+                    && object.ReferenceEquals(current.heldReference, outerReference)
+                    && IsDrawingEquipmentFor(outerPawn),
                 "nested Pop restores the immediately preceding context");
             Check(nestedContexts[0].marker == 0
                     && nestedContexts[0].heldReference == null
+                    && nestedContexts[0].scopePawn == null
                     && !nestedContexts[0].scoped,
                 "nested Pop clears its saved slot");
             Pop(topToken);
             Check(scopeDepth == 0 && !current.scoped
-                    && current.marker == 0 && current.heldReference == null,
+                    && current.scopePawn == null
+                    && current.marker == 0 && current.heldReference == null
+                    && !IsDrawingEquipmentFor(outerPawn),
                 "top-level Pop clears the current context");
 
             bool topLevelRethrew = false;
@@ -742,10 +777,13 @@ namespace KRWF.RimKata
                 topLevelRethrew = true;
             }
             Check(topLevelRethrew && scopeDepth == 0 && !current.scoped
+                    && current.scopePawn == null
                     && current.marker == 0 && current.heldReference == null,
                 "top-level Push failure pops its scope and rethrows");
 
             topToken = EnterScope(false);
+            outerPawn = new Pawn();
+            current.scopePawn = outerPawn;
             outerReference = new object();
             Publish(31, outerReference);
             bool nestedRethrew = false;
@@ -759,10 +797,12 @@ namespace KRWF.RimKata
             }
             Check(nestedRethrew && scopeDepth == 1
                     && current.marker == 31
-                    && object.ReferenceEquals(current.heldReference, outerReference),
+                    && object.ReferenceEquals(current.heldReference, outerReference)
+                    && IsDrawingEquipmentFor(outerPawn),
                 "nested Push failure restores its outer scope and rethrows");
             Check(nestedContexts[0].marker == 0
-                    && nestedContexts[0].heldReference == null,
+                    && nestedContexts[0].heldReference == null
+                    && nestedContexts[0].scopePawn == null,
                 "nested Push failure clears its saved slot");
             Pop(topToken);
 
@@ -803,6 +843,7 @@ namespace KRWF.RimKata
             Publish(52, new object());
             Pop(topToken);
             Check(scopeDepth == 0 && !current.scoped
+                    && current.scopePawn == null
                     && current.marker == 0 && current.heldReference == null
                     && NestedSlotsAreClear(),
                 "mismatched Pop fails closed and clears all scope state");

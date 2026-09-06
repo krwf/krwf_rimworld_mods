@@ -1856,6 +1856,7 @@ namespace KRWF.RimKata
         public bool portrait;
         public bool active;
         public bool gunReady;
+        public Pawn scopePawn;
         public Pawn pawn;
         public ThingWithComps primary;
         public ThingWithComps secondary;
@@ -1872,12 +1873,20 @@ namespace KRWF.RimKata
 
         public static ref readonly RimKataGunReadyDrawContext Current => ref current;
 
+        public static bool IsDrawingEquipmentFor(Pawn pawn)
+        {
+            return pawn != null
+                && current.scoped
+                && ReferenceEquals(current.scopePawn, pawn);
+        }
+
         public static int Push(Pawn pawn, PawnRenderFlags flags)
         {
             bool portrait = (flags & PawnRenderFlags.Portrait) != 0;
             int scopeToken = EnterScope(portrait);
             try
             {
+                current.scopePawn = pawn;
                 if (portrait || pawn?.Spawned != true)
                 {
                     return scopeToken;
