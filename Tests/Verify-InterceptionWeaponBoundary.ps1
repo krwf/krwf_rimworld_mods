@@ -21,6 +21,9 @@ function Get-CSharpBlock([string] $source, [string] $marker) {
 $rkQueue = Get-CSharpBlock $rkController 'public static void QueueIdleProjectileSearch('
 $rkCanWake = Get-CSharpBlock $rkController 'internal static bool CanReceiveProjectileWake('
 $rkBusyAttack = Get-CSharpBlock $rkController 'private static bool HasBusyAttackStance('
+$rkCanWakeNow = Get-CSharpBlock $rkController 'internal static bool CanReceiveIdleProjectileWakeNow('
+$rkWakeRange = Get-CSharpBlock $rkController 'internal static float ProjectileWakeRange('
+$rkSeedProjectile = Get-CSharpBlock $rkController 'private static bool TrySeedIdleProjectileCandidate('
 $rkCanStartWake = Get-CSharpBlock $rkController 'private static bool CanStartQueuedProjectileWake('
 $rkClearQueued = Get-CSharpBlock $rkController 'private static void ClearQueuedInterceptionCandidate('
 $rkCanConsumePending = Get-CSharpBlock $rkController 'private static bool CanConsumePendingDedicatedFollowupRequest('
@@ -47,6 +50,10 @@ $rkSelect = Get-CSharpBlock $rkSearch 'internal static bool TrySelectCandidate('
 $rkRange = Get-CSharpBlock $rkSearch 'private static float ProjectileRangeForCycle('
 $rkCycle = Get-CSharpBlock $rkSearch 'private static RimKataWeaponCycleState CycleForVerb('
 $rkAppend = Get-CSharpBlock $rkCombat 'internal void AppendValidHostileProjectiles('
+$rkTryGetProjectile = Get-CSharpBlock $rkCombat 'internal bool TryGetValidHostileProjectile('
+$rkTraversal = Get-CSharpBlock $rkCombat 'private void StartProjectileWakeTraversal()'
+$rkPotentialWake = Get-CSharpBlock $rkCombat 'private bool CanPotentiallyWakeForProjectile('
+$rkPotentialWakeRange = Get-CSharpBlock $rkCombat 'private static float PotentialProjectileWakeRange('
 $rkPrepareRules = @(
     '(?s)!ordinaryWeaponEnabled\s*&&\s*\(!\(verb is Verb_LaunchProjectile\).*?\|\| !HasActiveInterceptionWork\(pawn, cycle\)',
     'focusedTargetControlsCycle\s*=\s*ordinaryWeaponEnabled\s*&&\s*PrepareFocusedTarget',
@@ -73,8 +80,23 @@ using System;
 using System.Collections.Generic;
 namespace InterceptionWeaponBoundaryChecks {
     public enum WorkTags { Violent }
-    public struct IntVec3 { public static IntVec3 Invalid = new IntVec3(); }
-    public class Thing { public Map Map; public bool valid = true, Spawned = true, Destroyed; }
+    public struct IntVec3 {
+        public static IntVec3 Invalid = new IntVec3();
+        public int x, z;
+        public IntVec3(int x, int z) { this.x = x; this.z = z; }
+        public float DistanceToSquared(IntVec3 other) {
+            int dx = x - other.x, dz = z - other.z;
+            return dx * dx + dz * dz;
+        }
+    }
+    public static class Mathf {
+        public static float Max(float left, float right) { return left > right ? left : right; }
+    }
+    public class Thing {
+        public Map Map;
+        public IntVec3 Position;
+        public bool valid = true, Spawned = true, Destroyed;
+    }
     public sealed class ThingDef { public bool allowed = true; }
     public sealed class ThingWithComps : Thing { public ThingDef def = new ThingDef(); public Verb verb; }
     public class Verb { public Thing EquipmentSource; public bool IsMeleeAttack, Bursting, usable = true; }
@@ -123,19 +145,23 @@ namespace InterceptionWeaponBoundaryChecks {
         public Lord GetLord() { return lord; }
         public Job CurJob = new Job { def = JobDefOf.Wait };
         public JobDef CurJobDef { get { return CurJob == null ? null : CurJob.def; } }
-        public ThingWithComps primary, secondary;
+        public ThingWithComps primary, secondary, registeredSecondary;
         public RimKataPawnCombatState state;
-        public IntVec3 Position;
         public bool Awake() { return awake; }
         public bool IsBurning() { return burning; }
         public bool WorkTagIsDisabled(WorkTags tag) { return violenceDisabled; }
     }
-    public sealed class Settings { public bool explosiveInterceptionEnabled = true, randomAttackEnabled; }
+    public sealed class Settings {
+        public bool explosiveInterceptionEnabled = true, randomAttackEnabled;
+        public bool accessRestrictionsDisabled;
+    }
     public static class RimKataMod { public static Settings Settings = new Settings(); }
     public static class RimKataEligibility {
         public static bool RandomAttackEnabledForPawn(Pawn pawn) { return RimKataMod.Settings.randomAttackEnabled; }
         public static bool HasActiveRimKataAccess(Pawn pawn) {
-            return pawn != null && pawn.access && !pawn.inactive;
+            return pawn != null
+                && (pawn.access || RimKataMod.Settings.accessRestrictionsDisabled)
+                && !pawn.inactive;
         }
         $rkCanBegin
         $rkCanIntercept
@@ -149,7 +175,17 @@ namespace InterceptionWeaponBoundaryChecks {
     public static class RimKataWeaponSlotUtility {
         public static ThingWithComps PrimaryWeapon(Pawn pawn) { return pawn.primary; }
         public static ThingWithComps SecondaryWeapon(Pawn pawn) { return pawn.secondary; }
-        public static bool CanUseSecondarySlot(Pawn pawn) { return pawn.secondaryAllowed; }
+        public static ThingWithComps SecondaryWeaponWithVerifiedAccess(Pawn pawn) {
+            return pawn.registeredSecondary;
+        }
+        public static bool CanUseSecondarySlot(Pawn pawn) {
+            return CanUseSecondarySlot(pawn, pawn.primary, false);
+        }
+        public static bool CanUseSecondarySlot(Pawn pawn, ThingWithComps primary, bool accessVerified) {
+            return pawn != null && pawn.secondaryAllowed
+                && (accessVerified || RimKataEligibility.HasActiveRimKataAccess(pawn))
+                && primary?.def?.allowed == true;
+        }
         public static Verb CombatVerb(Pawn pawn, ThingWithComps weapon) { pawn.verbReads++; return weapon?.verb; }
     }
     public static class RimKataRangeUtility {
@@ -163,7 +199,16 @@ namespace InterceptionWeaponBoundaryChecks {
         public static bool IsAutomaticEnemy(Pawn pawn, Thing target) { return target.valid; }
         public static bool IsValidAutomaticAttackTarget(Pawn pawn, Thing target) { return target?.valid == true; }
         public static bool IsValidExplosiveProjectileForVerb(Pawn pawn, Verb verb, Projectile projectile, float rangeSquared) {
-            pawn.candidateChecks++; return projectile.valid && projectile.hostile && projectile.Map == pawn.Map;
+            pawn.candidateChecks++;
+            return projectile.valid && projectile.hostile && projectile.Map == pawn.Map
+                && pawn.Position.DistanceToSquared(projectile.Position) <= rangeSquared;
+        }
+        public static bool IsPotentialExplosiveProjectile(Projectile projectile, Map map) {
+            return projectile != null && projectile.valid && projectile.Spawned
+                && !projectile.Destroyed && projectile.Map == map;
+        }
+        public static bool IsEnemyProjectileLauncher(Pawn pawn, Projectile projectile) {
+            return projectile?.hostile == true;
         }
     }
     public static class RimKataInterceptionTrajectory {
@@ -173,17 +218,29 @@ namespace InterceptionWeaponBoundaryChecks {
     }
     public sealed class Map {
         public readonly RimKataMapComponent component;
+        public readonly MapPawns mapPawns = new MapPawns();
         public Map() { component = new RimKataMapComponent(this); }
         public T GetComponent<T>() where T : class { return component as T; }
+    }
+    public sealed class MapPawns {
+        public readonly List<Pawn> AllPawnsSpawned = new List<Pawn>();
     }
     public sealed class RimKataMapComponent {
         private readonly Map map;
         public readonly List<Projectile> activeExplosiveProjectiles = new List<Projectile>();
+        public readonly List<Pawn> projectileWakeTraversal = new List<Pawn>();
+        private int projectileWakeTraversalIndex;
+        private bool projectileWakeTraversalActive;
         public RimKataMapComponent(Map map) { this.map = map; }
         public bool HasActiveExplosiveProjectiles { get { return activeExplosiveProjectiles.Count != 0; } }
-        public bool HasHostileExplosiveProjectileOnMapFor(Pawn pawn) {
-            return activeExplosiveProjectiles.Exists(p => p.valid && p.hostile && p.Map == pawn.Map);
+        public bool StartProjectileWakeTraversalForCheck() {
+            StartProjectileWakeTraversal();
+            return projectileWakeTraversalActive && projectileWakeTraversalIndex == 0;
         }
+        $rkTraversal
+        $rkPotentialWake
+        $rkPotentialWakeRange
+        $rkTryGetProjectile
         $rkAppend
     }
     public sealed class RimKataWeaponCycleState {
@@ -264,10 +321,15 @@ namespace InterceptionWeaponBoundaryChecks {
         }
         private static void NormalizeInvalidInterceptionState(Pawn pawn, RimKataPawnCombatState state) { }
         private static bool HasCombatContinuity(Pawn pawn, RimKataPawnCombatState state) { return pawn.continuity; }
-        private static void BindCurrentWeapons(Pawn pawn, RimKataPawnCombatState state) {
+        private static void BindCurrentWeapons(Pawn pawn, RimKataPawnCombatState state, bool accessVerified = false) {
             pawn.binds++;
             state.primaryWeaponCycle.weapon = pawn.primary;
-            state.secondaryWeaponCycle.weapon = pawn.secondary;
+            state.secondaryWeaponCycle.weapon = RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                    pawn, pawn.primary, accessVerified)
+                ? accessVerified
+                    ? RimKataWeaponSlotUtility.SecondaryWeaponWithVerifiedAccess(pawn)
+                    : RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
+                : null;
         }
         private static void TryCacheSharedCandidate(Pawn pawn, RimKataPawnCombatState state, RimKataWeaponCycleState cycle, Thing preferred) {
             pawn.caches++;
@@ -285,6 +347,9 @@ namespace InterceptionWeaponBoundaryChecks {
         $rkQueue
         $rkCanWake
         $rkBusyAttack
+        $rkCanWakeNow
+        $rkWakeRange
+        $rkSeedProjectile
         $rkCanStartWake
         $rkClearQueued
         $rkCanConsumePending
@@ -306,17 +371,40 @@ namespace InterceptionWeaponBoundaryChecks {
         }
         private static Pawn Create(bool allowed, bool withProjectile) {
             RimKataMod.Settings = new Settings();
-            var pawn = new Pawn { Map = new Map(), state = new RimKataPawnCombatState() };
+            var pawn = new Pawn {
+                Map = new Map(),
+                Position = new IntVec3(0, 0),
+                state = new RimKataPawnCombatState()
+            };
             pawn.primary = new ThingWithComps { def = new ThingDef { allowed = allowed } };
             pawn.primary.verb = new Verb_LaunchProjectile { EquipmentSource = pawn.primary };
             pawn.state.primaryWeaponCycle.weapon = pawn.primary;
-            if (withProjectile) pawn.Map.component.activeExplosiveProjectiles.Add(new Projectile { Map = pawn.Map });
+            pawn.Map.mapPawns.AllPawnsSpawned.Add(pawn);
+            if (withProjectile) pawn.Map.component.activeExplosiveProjectiles.Add(
+                new Projectile { Map = pawn.Map, Position = new IntVec3(5, 0) });
+            return pawn;
+        }
+        private static Pawn CreateWithUnapprovedRegisteredSecondary(bool withProjectile) {
+            var pawn = Create(true, withProjectile);
+            pawn.primary.verb = new Verb { EquipmentSource = pawn.primary };
+            var secondary = new ThingWithComps {
+                def = new ThingDef { allowed = false }
+            };
+            secondary.verb = new Verb_LaunchProjectile { EquipmentSource = secondary };
+            pawn.secondary = secondary;
+            pawn.registeredSecondary = secondary;
             return pawn;
         }
         private static bool Select(Pawn pawn, Thing preferred, out Thing target, out bool interception) {
             return RimKataSharedTargetSearch.TrySelectCandidate(pawn, pawn.state, pawn.primary.verb, preferred, out target, out interception);
         }
         public static int Run() {
+            var unapprovedPrimaryPrefilter = Create(false, true);
+            Check(unapprovedPrimaryPrefilter.Map.component.StartProjectileWakeTraversalForCheck()
+                    && unapprovedPrimaryPrefilter.Map.component.projectileWakeTraversal.Contains(
+                        unapprovedPrimaryPrefilter),
+                "Unapproved primary remains a projectile-wake prefilter receiver");
+
             var unapproved = Create(false, true);
             Check(!RimKataEligibility.CanBeginGunKataAttack(unapproved), "Unapproved ordinary attack remains forbidden");
             Check(RimKataEligibility.CanUseProjectileInterception(unapproved), "Unapproved weapon can enter interception eligibility");
@@ -337,6 +425,29 @@ namespace InterceptionWeaponBoundaryChecks {
             unapproved.state.primaryWeaponCycle.plannedTarget.valid = false;
             Check(!RimKataDualWeaponController.CanContinueWeaponCycles(unapproved, unapproved.state),
                 "Dead interception target cannot authorize unapproved continuation");
+
+            var unapprovedSecondaryPrefilter = CreateWithUnapprovedRegisteredSecondary(true);
+            Check(unapprovedSecondaryPrefilter.Map.component.StartProjectileWakeTraversalForCheck()
+                    && unapprovedSecondaryPrefilter.Map.component.projectileWakeTraversal.Contains(
+                        unapprovedSecondaryPrefilter),
+                "Unapproved registered secondary remains a projectile-wake prefilter receiver");
+            var unapprovedSecondary = CreateWithUnapprovedRegisteredSecondary(true);
+            RimKataDualWeaponController.QueueIdleProjectileSearch(unapprovedSecondary);
+            Check(!unapprovedSecondary.state.primaryWeaponCycle.cachedCandidateInterception
+                    && unapprovedSecondary.state.secondaryWeaponCycle.cachedCandidateInterception
+                    && unapprovedSecondary.followups == 1,
+                "Unapproved registered secondary passes the exact projectile probe and is seeded");
+
+            var unrestricted = Create(false, true);
+            unrestricted.access = false;
+            RimKataMod.Settings.accessRestrictionsDisabled = true;
+            Check(RimKataEligibility.CanUseProjectileInterception(unrestricted)
+                    && unrestricted.Map.component.StartProjectileWakeTraversalForCheck(),
+                "Disabled access restrictions admit an otherwise unqualified unapproved primary to the prefilter");
+            RimKataDualWeaponController.QueueIdleProjectileSearch(unrestricted);
+            Check(unrestricted.state.primaryWeaponCycle.cachedCandidateInterception
+                    && unrestricted.followups == 1,
+                "Disabled access restrictions preserve the exact unapproved-primary interception path");
 
             var randomIdle = Create(false, true);
             RimKataMod.Settings.randomAttackEnabled = true;

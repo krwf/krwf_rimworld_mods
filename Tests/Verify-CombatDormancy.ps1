@@ -50,6 +50,18 @@ $rkExecuteCycle = Get-CSharpBlock $rkControllerSource 'private static int Execut
 $rkCommitVanillaOpening = Get-CSharpBlock $rkControllerSource 'public static void CommitVanillaOpening('
 $rkSharedBegin = Get-CSharpBlock $rkSharedSearchSource 'internal static bool Begin('
 $rkPairRangePatch = Get-CSharpBlock $rkJobDriverSource 'public static class Patch_Pawn_TryGetAttackVerb_RimKataPairRange'
+$rkDormantRegistry = Get-CSharpBlock $rkDraftedSource 'internal static class RimKataDormantHostileMovementRegistry'
+$rkDormantPathMovement = Get-CSharpBlock $rkDormantRegistry 'private static void NotifyPathMovement('
+$rkDormantHostileDispatch = Get-CSharpBlock $rkDormantRegistry 'private static void DispatchHostileMovement('
+$rkDormantReceiverDispatch = Get-CSharpBlock $rkDormantRegistry 'private static void DispatchReceiverMovement('
+$rkDormantLiveHostile = Get-CSharpBlock $rkDormantRegistry 'private static bool IsLiveMovingHostile('
+$rkDormantPathStarted = Get-CSharpBlock $rkDraftedSource 'public static class Patch_PawnPathFollower_RimKataDormantPathStarted'
+$rkDormantPathCell = Get-CSharpBlock $rkDraftedSource 'public static class Patch_PawnPathFollower_RimKataDormantPathCell'
+$rkDormantPathStopped = Get-CSharpBlock $rkDraftedSource 'public static class Patch_PawnPathFollower_RimKataDormantPathStopped'
+$rkDormantReceiver = Get-CSharpBlock $rkControllerSource 'internal static bool TryReceiveDormantMovingHostiles('
+$rkDormantCandidate = Get-CSharpBlock $rkControllerSource 'private static bool IsDormantMovingHostileCandidate('
+$rkAddAutomaticCandidate = Get-CSharpBlock $rkControllerSource 'public bool AddAutomaticCandidate('
+$rkAddValidatedAutomaticTarget = Get-CSharpBlock $rkSharedSearchSource 'private static bool TryAddValidatedAutomaticTargetToCycle('
 
 if ($rkPlayerWeaponCommand -match 'InMentalState' -or
     $rkPlayerMeleeCloseTarget -match 'InMentalState' -or
@@ -179,6 +191,69 @@ if ($rkExplosiveGateIndex -lt 0 -or
 
 if ($rkMovementPotential -match 'forceNormalSpeedUntil|CurTimeSpeed|SignalForceNormalSpeed|TicksGame|NormalSpeedRefreshIntervalTicks|\b600\b') {
     throw 'Movement search must read vanilla ForcedNormalSpeed without copying its timer, selected speed, or signal writer.'
+}
+
+$rkDormantSurface = $rkDormantRegistry + $rkDormantPathStarted +
+    $rkDormantPathCell + $rkDormantPathStopped + $rkDormantReceiver
+if ($rkDraftedSource -notmatch '\[HarmonyPatch\(typeof\(Pawn_PathFollower\), nameof\(Pawn_PathFollower\.StartPath\)\)\]' -or
+    $rkDraftedSource -notmatch '\[HarmonyPatch\(typeof\(Pawn_PathFollower\), "TryEnterNextPathCell"\)\]' -or
+    $rkDraftedSource -notmatch '\[HarmonyPatch\(typeof\(Pawn_PathFollower\), nameof\(Pawn_PathFollower\.StopDead\)\)\]' -or
+    $rkDormantPathStarted -notmatch 'pather\?\.Moving\s*==\s*true[\s\S]*?NotifyPathStarted' -or
+    $rkDormantPathCell -notmatch '__state\s*=\s*___pawn\?\.Position\s*\?\?\s*IntVec3\.Invalid' -or
+    $rkDormantPathCell -notmatch '__state\.IsValid[\s\S]*?___pawn\.Position\s*!=\s*__state[\s\S]*?NotifyPathCellEntered' -or
+    $rkDormantPathStopped -notmatch 'NotifyPathStopped\(___pawn\)') {
+    throw 'Dormant hostile movement must be driven only by path start, real cell entry, and path stop events.'
+}
+
+if ($rkDormantSurface -match 'PatherTick|AllPawnsSpawned|mapPawns|attackTargetsCache|RimKataSharedTargetSearch\.(?:Begin|Restart)|ToList\(|Where\(|Any\(') {
+    throw 'Dormant hostile movement reintroduced a per-tick/global pawn scan, target-cache scan, or ring-search restart.'
+}
+
+if ($rkDormantPathMovement -notmatch 'Find\.TickManager\?\.slower\?\.ForcedNormalSpeed\s*!=\s*false' -or
+    $rkDormantReceiver -notmatch 'Find\.TickManager\?\.slower\?\.ForcedNormalSpeed\s*!=\s*false' -or
+    $rkDormantPathMovement -notmatch 'pawn\.HostileTo\(Faction\.OfPlayer\)' -or
+    $rkDormantLiveHostile -notmatch 'pawn\.pather\?\.Moving\s*==\s*true' -or
+    $rkDormantLiveHostile -notmatch 'pawn\.HostileTo\(Faction\.OfPlayer\)' -or
+    $rkDormantLiveHostile -match 'MovingNow') {
+    throw 'Dormant hostile movement must run only while vanilla ForcedNormalSpeed is false and retain only actually moving player-hostile pawns.'
+}
+
+if ([regex]::Matches(
+        $rkDormantRegistry,
+        'readonly\s+HashSet<Pawn>\s+').Count -ne 2 -or
+    $rkDormantRegistry -notmatch 'HashSet<Pawn>\s+movingHostiles' -or
+    $rkDormantRegistry -notmatch 'HashSet<Pawn>\s+receivers' -or
+    $rkDormantHostileDispatch -notmatch 'BuildLiveReceiverSnapshot[\s\S]*?receiverSnapshot[\s\S]*?TryReceiveDormantMovingHostiles' -or
+    $rkDormantReceiverDispatch -notmatch 'BuildLiveHostileSnapshot[\s\S]*?hostileSnapshot[\s\S]*?TryReceiveDormantMovingHostiles' -or
+    $rkDormantPathMovement -notmatch 'DispatchHostileMovement\(map, entry, pawn\)' -or
+    $rkDormantPathMovement -notmatch 'DispatchReceiverMovement\(map, existing, pawn\)') {
+    throw 'Dormant movement must use separate small receiver/hostile registries and dispatch in both movement directions.'
+}
+
+$rkFirstCandidateIndex = $rkDormantReceiver.IndexOf(
+    'Thing firstCandidate = null;',
+    [StringComparison]::Ordinal)
+$rkNoCandidateIndex = $rkDormantReceiver.IndexOf(
+    'if (firstCandidate == null)',
+    [StringComparison]::Ordinal)
+$rkDormantStateCreateIndex = $rkDormantReceiver.IndexOf(
+    'StateFor(pawn, true)',
+    [StringComparison]::Ordinal)
+if ($rkFirstCandidateIndex -lt 0 -or
+    $rkNoCandidateIndex -le $rkFirstCandidateIndex -or
+    $rkDormantStateCreateIndex -le $rkNoCandidateIndex -or
+    $rkDormantReceiver.Substring(0, $rkDormantStateCreateIndex) -notmatch 'primary[\s\S]*?secondary[\s\S]*?IsDormantMovingHostileCandidate' -or
+    $rkDormantCandidate -notmatch 'ResolveCandidateCellRadius' -or
+    $rkDormantCandidate -notmatch 'DistanceToSquared' -or
+    $rkDormantCandidate -notmatch 'verb\.CanHitTarget\(target\)') {
+    throw 'A dormant movement event can create combat state before a primary or secondary weapon has a hittable in-range target.'
+}
+
+if ($rkDormantReceiver -notmatch 'TryAddKnownAutomaticTarget\([\s\S]*?target,[\s\S]*?true\)' -or
+    $rkAddValidatedAutomaticTarget -notmatch 'cycle\.AddAutomaticCandidate\(target\)' -or
+    $rkAddValidatedAutomaticTarget -match 'automaticCandidateCollectionClosed' -or
+    $rkAddAutomaticCandidate -match 'automaticCandidateCollectionClosed') {
+    throw 'A directly known moving hostile can no longer enter an already closed candidate collection.'
 }
 
 if ($rkSharedScan -match 'ForcedNormalSpeed|HasAutomaticMovementSearchPotential' -or

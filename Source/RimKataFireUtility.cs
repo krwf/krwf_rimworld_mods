@@ -59,12 +59,14 @@ namespace KRWF.RimKata
     {
         internal bool pushed;
         internal Verb previousVerb;
+        internal int previousOriginalBurstCount;
         internal int previousDepth;
     }
 
     public static class RimKataVanillaSingleShotContext
     {
         [ThreadStatic] private static Verb activeVerb;
+        [ThreadStatic] private static int originalBurstCount;
         [ThreadStatic] private static int depth;
 
         public static bool ActiveFor(Verb verb)
@@ -74,16 +76,21 @@ namespace KRWF.RimKata
 
         public static RimKataVanillaSingleShotContextState Push(Verb verb)
         {
+            int nextOriginalBurstCount = ActiveFor(verb)
+                ? originalBurstCount
+                : Mathf.Max(1, verb?.BurstShotCount ?? 1);
             RimKataVanillaSingleShotContextState state =
                 new RimKataVanillaSingleShotContextState
                 {
                     pushed = verb != null,
                     previousVerb = activeVerb,
+                    previousOriginalBurstCount = originalBurstCount,
                     previousDepth = depth
                 };
             if (verb != null)
             {
                 activeVerb = verb;
+                originalBurstCount = nextOriginalBurstCount;
                 depth++;
             }
 
@@ -98,7 +105,22 @@ namespace KRWF.RimKata
             }
 
             activeVerb = state.previousVerb;
+            originalBurstCount = state.previousOriginalBurstCount;
             depth = state.previousDepth;
+        }
+
+        internal static bool TryGetOriginalBurstCount(
+            Verb verb,
+            out int burstCount)
+        {
+            if (ActiveFor(verb))
+            {
+                burstCount = Mathf.Max(1, originalBurstCount);
+                return true;
+            }
+
+            burstCount = 1;
+            return false;
         }
     }
 
@@ -938,6 +960,28 @@ namespace KRWF.RimKata
             }
         }
 
+        public static void Postfix(
+            Verb __instance,
+            RimKataVanillaSingleShotContextState __state)
+        {
+            Pawn pawn = __instance?.CasterPawn;
+            if (!__state.pushed
+                || pawn?.stances?.curStance is not Stance_Cooldown cooldown
+                || cooldown.verb != __instance
+                || !RimKataVanillaSingleShotContext.TryGetOriginalBurstCount(
+                    __instance,
+                    out int originalBurstCount))
+            {
+                return;
+            }
+
+            cooldown.ticksLeft = RimKataCombatMath.CooldownTicksForSingleShot(
+                __instance,
+                pawn,
+                false,
+                originalBurstCount);
+        }
+
         public static Exception Finalizer(
             Exception __exception,
             RimKataVanillaSingleShotContextState __state)
@@ -952,13 +996,22 @@ namespace KRWF.RimKata
     {
         public static void Postfix(Verb ownerVerb, ref float __result)
         {
-            if (RimKataFireContext.ActiveVerb != ownerVerb
-                || RimKataFireContext.OriginalBurstCount <= 1)
+            int burstCount;
+            if (RimKataFireContext.ActiveVerb == ownerVerb)
+            {
+                burstCount = RimKataFireContext.OriginalBurstCount;
+            }
+            else if (!RimKataVanillaSingleShotContext
+                .TryGetOriginalBurstCount(ownerVerb, out burstCount))
             {
                 return;
             }
 
-            int burstCount = RimKataFireContext.OriginalBurstCount;
+            if (burstCount <= 1)
+            {
+                return;
+            }
+
             float originalBurstSpacing = (burstCount - 1) * ownerVerb.TicksBetweenBurstShots / 60f;
             __result = (__result + originalBurstSpacing) / burstCount;
         }

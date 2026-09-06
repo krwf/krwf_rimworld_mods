@@ -456,10 +456,16 @@ namespace KRWF.RimKata
                     CreateRegisteredUser);
                 registeredUser.secondaryWeapon =
                     RimKataSecondaryWeaponRegistry.CurrentRegistry?.Get(pawn);
+                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
+                    pawn,
+                    true);
             }
             else
             {
                 registeredUsers.Remove(pawn);
+                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
+                    pawn,
+                    false);
             }
         }
 
@@ -468,6 +474,9 @@ namespace KRWF.RimKata
             if (pawn != null)
             {
                 registeredUsers.Remove(pawn);
+                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
+                    pawn,
+                    false);
             }
         }
 

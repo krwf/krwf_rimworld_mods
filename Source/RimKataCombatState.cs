@@ -2212,13 +2212,7 @@ namespace KRWF.RimKata
             {
                 Pawn pawn = projectileWakeTraversal[
                     projectileWakeTraversalIndex++];
-                bool hostileProjectile = pawn != null
-                    && HasHostileExplosiveProjectileOnMapFor(pawn);
-                if (hostileProjectile)
-                {
-                    RimKataDualWeaponController.QueueIdleProjectileSearch(
-                        pawn);
-                }
+                RimKataDualWeaponController.QueueIdleProjectileSearch(pawn);
             }
 
             if (projectileWakeTraversalIndex
@@ -2360,8 +2354,7 @@ namespace KRWF.RimKata
             for (int i = 0; i < pawns.Count; i++)
             {
                 Pawn pawn = pawns[i];
-                if (RimKataDualWeaponController.CanReceiveProjectileWake(pawn)
-                    && RimKataEligibility.HasRimKataAccess(pawn))
+                if (CanPotentiallyWakeForProjectile(pawn))
                 {
                     projectileWakeTraversal.Add(pawn);
                 }
@@ -2372,13 +2365,46 @@ namespace KRWF.RimKata
                 projectileWakeTraversal.Count > 0;
         }
 
-        private bool HasHostileExplosiveProjectileOnMapFor(Pawn pawn)
+        private bool CanPotentiallyWakeForProjectile(Pawn pawn)
         {
-            if (pawn?.Map != map)
+            if (pawn?.Map != map
+                || !RimKataDualWeaponController
+                    .CanReceiveIdleProjectileWakeNow(pawn))
             {
                 return false;
             }
 
+            ThingWithComps primary =
+                RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            ThingWithComps secondary = null;
+            if (RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                    pawn,
+                    primary,
+                    true))
+            {
+                secondary = RimKataWeaponSlotUtility
+                    .SecondaryWeaponWithVerifiedAccess(pawn);
+            }
+
+            Verb primaryVerb =
+                RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
+            Verb secondaryVerb =
+                RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
+            if (primaryVerb?.Bursting == true
+                || secondaryVerb?.Bursting == true)
+            {
+                return false;
+            }
+
+            float maximumRange = Mathf.Max(
+                PotentialProjectileWakeRange(pawn, primary, primaryVerb),
+                PotentialProjectileWakeRange(pawn, secondary, secondaryVerb));
+            if (maximumRange <= 0f)
+            {
+                return false;
+            }
+
+            float rangeSquared = maximumRange * maximumRange;
             foreach (Projectile projectile in activeExplosiveProjectiles)
             {
                 if (RimKataTargeting.IsPotentialExplosiveProjectile(
@@ -2386,7 +2412,9 @@ namespace KRWF.RimKata
                         map)
                     && RimKataTargeting.IsEnemyProjectileLauncher(
                         pawn,
-                        projectile))
+                        projectile)
+                    && pawn.Position.DistanceToSquared(projectile.Position)
+                        <= rangeSquared)
                 {
                     return true;
                 }
@@ -2394,6 +2422,56 @@ namespace KRWF.RimKata
 
             return false;
         }
+
+        private static float PotentialProjectileWakeRange(
+            Pawn pawn,
+            ThingWithComps weapon,
+            Verb verb)
+        {
+            return RimKataDualWeaponController.ProjectileWakeRange(
+                pawn,
+                weapon,
+                verb);
+        }
+
+        internal bool TryGetValidHostileProjectile(
+            Pawn pawn,
+            Verb verb,
+            float rangeSquared,
+            out Projectile candidate)
+        {
+            candidate = null;
+            if (pawn?.Map != map
+                || verb == null
+                || verb.IsMeleeAttack
+                || rangeSquared <= 0f
+                || RimKataMod.Settings?.explosiveInterceptionEnabled == false)
+            {
+                return false;
+            }
+
+            foreach (Projectile projectile in activeExplosiveProjectiles)
+            {
+                if (RimKataTargeting.IsValidExplosiveProjectileForVerb(
+                        pawn,
+                        verb,
+                        projectile,
+                        rangeSquared)
+                    && RimKataInterceptionTrajectory.CanIntercept(
+                        pawn,
+                        verb,
+                        projectile,
+                        0,
+                        rangeSquared))
+                {
+                    candidate = projectile;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         internal void AppendValidHostileProjectiles(
             Pawn pawn,
             Verb verb,

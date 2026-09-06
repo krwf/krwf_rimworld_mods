@@ -240,7 +240,7 @@ if ($rkSharedSearchSource -notmatch 'private const float CandidateCellRadiusPadd
     $rkCycleCellRadius -notmatch 'closeCombatContext[\s\S]*?UsesRangedCandidateLimit\(cycle\)[\s\S]*?CloseCombatRangedCandidateCellRadius' -or
     [regex]::Matches($rkSharedSearchSource, 'ResolveCandidateCellRadius\(').Count -ne 1 -or
     [regex]::Matches($rkTargetingSource, 'ResolveCandidateCellRadius\(').Count -ne 2 -or
-    [regex]::Matches($rkControllerSource, 'ResolveCandidateCellRadius\(').Count -ne 3) {
+    [regex]::Matches($rkControllerSource, 'ResolveCandidateCellRadius\(').Count -ne 4) {
     throw 'Shared search no longer keeps logical rings and candidate cell radii distinct.'
 }
 

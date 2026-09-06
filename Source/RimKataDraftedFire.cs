@@ -1,5 +1,6 @@
 using HarmonyLib;
 using RimWorld;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Verse;
 using Verse.AI;
@@ -483,7 +484,7 @@ namespace KRWF.RimKata
             return reasons.Length > 0 ? reasons : "-";
         }
 
-        private static bool IsAutomaticFireJob(JobDef jobDef)
+        internal static bool IsAutomaticFireJob(JobDef jobDef)
         {
             return jobDef == null
                 || jobDef == JobDefOf.Goto
@@ -564,6 +565,280 @@ namespace KRWF.RimKata
             Verb verb = busy?.verb;
             Pawn target = busy?.focusTarg.Pawn;
             RimKataDraftedFireController.NotifyTargetedByHostile(target, ___pawn);
+        }
+    }
+
+    internal static class RimKataDormantHostileMovementRegistry
+    {
+        private sealed class MapEntry
+        {
+            internal readonly HashSet<Pawn> movingHostiles =
+                new HashSet<Pawn>();
+            internal readonly HashSet<Pawn> receivers =
+                new HashSet<Pawn>();
+            internal readonly List<Pawn> hostileSnapshot =
+                new List<Pawn>();
+            internal readonly List<Pawn> receiverSnapshot =
+                new List<Pawn>();
+            internal readonly List<Pawn> singleHostile =
+                new List<Pawn>(1);
+        }
+
+        private static readonly ConditionalWeakTable<Map, MapEntry> ByMap =
+            new ConditionalWeakTable<Map, MapEntry>();
+        private static readonly ConditionalWeakTable<Map, MapEntry>
+            .CreateValueCallback CreateEntry = delegate { return new MapEntry(); };
+
+        internal static void NotifyAccessChanged(Pawn pawn, bool hasAccess)
+        {
+            Map map = pawn?.Map;
+            if (map == null)
+            {
+                return;
+            }
+
+            if (hasAccess && IsLiveReceiverMember(pawn, map))
+            {
+                ByMap.GetValue(map, CreateEntry).receivers.Add(pawn);
+            }
+            else if (ByMap.TryGetValue(map, out MapEntry entry))
+            {
+                entry.receivers.Remove(pawn);
+            }
+        }
+
+        internal static void NotifyDraftStatusChanged(Pawn pawn)
+        {
+            Map map = pawn?.Map;
+            if (map == null)
+            {
+                return;
+            }
+
+            if (IsLiveReceiverMember(pawn, map)
+                && RimKataEligibility.HasRimKataAccess(pawn))
+            {
+                ByMap.GetValue(map, CreateEntry).receivers.Add(pawn);
+            }
+            else if (ByMap.TryGetValue(map, out MapEntry entry))
+            {
+                entry.receivers.Remove(pawn);
+            }
+        }
+
+        internal static void NotifyPathStarted(Pawn pawn)
+        {
+            NotifyPathMovement(pawn);
+        }
+
+        internal static void NotifyPathCellEntered(Pawn pawn)
+        {
+            NotifyPathMovement(pawn);
+        }
+
+        internal static void NotifyPathStopped(Pawn pawn)
+        {
+            Map map = pawn?.Map;
+            if (map != null
+                && ByMap.TryGetValue(map, out MapEntry entry))
+            {
+                entry.movingHostiles.Remove(pawn);
+            }
+        }
+
+        private static void NotifyPathMovement(Pawn pawn)
+        {
+            Map map = pawn?.Map;
+            if (map == null
+                || !pawn.Spawned
+                || Find.TickManager?.slower?.ForcedNormalSpeed != false)
+            {
+                return;
+            }
+
+            bool hostileToPlayer = Faction.OfPlayer != null
+                && pawn.HostileTo(Faction.OfPlayer);
+            if (hostileToPlayer)
+            {
+                MapEntry entry = ByMap.GetValue(map, CreateEntry);
+                if (!IsLiveMovingHostile(pawn, map))
+                {
+                    entry.movingHostiles.Remove(pawn);
+                    return;
+                }
+
+                entry.movingHostiles.Add(pawn);
+                DispatchHostileMovement(map, entry, pawn);
+                return;
+            }
+
+            if (!ByMap.TryGetValue(map, out MapEntry existing))
+            {
+                if (!IsLiveReceiverMember(pawn, map)
+                    || !RimKataEligibility.HasRimKataAccess(pawn))
+                {
+                    return;
+                }
+
+                existing = ByMap.GetValue(map, CreateEntry);
+            }
+            else
+            {
+                existing.movingHostiles.Remove(pawn);
+            }
+
+            if (IsLiveReceiverMember(pawn, map)
+                && RimKataEligibility.HasRimKataAccess(pawn))
+            {
+                existing.receivers.Add(pawn);
+                DispatchReceiverMovement(map, existing, pawn);
+            }
+            else
+            {
+                existing.receivers.Remove(pawn);
+            }
+        }
+
+        private static void DispatchHostileMovement(
+            Map map,
+            MapEntry entry,
+            Pawn hostile)
+        {
+            BuildLiveReceiverSnapshot(map, entry);
+            entry.singleHostile.Clear();
+            entry.singleHostile.Add(hostile);
+            for (int i = 0; i < entry.receiverSnapshot.Count; i++)
+            {
+                RimKataDualWeaponController.TryReceiveDormantMovingHostiles(
+                    entry.receiverSnapshot[i],
+                    entry.singleHostile);
+            }
+            entry.singleHostile.Clear();
+        }
+
+        private static void DispatchReceiverMovement(
+            Map map,
+            MapEntry entry,
+            Pawn receiver)
+        {
+            BuildLiveHostileSnapshot(map, entry);
+            if (entry.hostileSnapshot.Count > 0)
+            {
+                RimKataDualWeaponController.TryReceiveDormantMovingHostiles(
+                    receiver,
+                    entry.hostileSnapshot);
+            }
+        }
+
+        private static void BuildLiveReceiverSnapshot(
+            Map map,
+            MapEntry entry)
+        {
+            entry.receiverSnapshot.Clear();
+            foreach (Pawn receiver in entry.receivers)
+            {
+                entry.receiverSnapshot.Add(receiver);
+            }
+
+            for (int i = entry.receiverSnapshot.Count - 1; i >= 0; i--)
+            {
+                Pawn receiver = entry.receiverSnapshot[i];
+                if (IsLiveReceiverMember(receiver, map))
+                {
+                    continue;
+                }
+
+                entry.receiverSnapshot.RemoveAt(i);
+                entry.receivers.Remove(receiver);
+            }
+        }
+
+        private static void BuildLiveHostileSnapshot(
+            Map map,
+            MapEntry entry)
+        {
+            entry.hostileSnapshot.Clear();
+            foreach (Pawn hostile in entry.movingHostiles)
+            {
+                entry.hostileSnapshot.Add(hostile);
+            }
+
+            for (int i = entry.hostileSnapshot.Count - 1; i >= 0; i--)
+            {
+                Pawn hostile = entry.hostileSnapshot[i];
+                if (IsLiveMovingHostile(hostile, map))
+                {
+                    continue;
+                }
+
+                entry.hostileSnapshot.RemoveAt(i);
+                entry.movingHostiles.Remove(hostile);
+            }
+        }
+
+        private static bool IsLiveReceiverMember(Pawn pawn, Map map)
+        {
+            return pawn != null
+                && !pawn.Destroyed
+                && pawn.Spawned
+                && !pawn.Dead
+                && pawn.Map == map
+                && pawn.IsPlayerControlled
+                && pawn.Drafted;
+        }
+
+        private static bool IsLiveMovingHostile(Pawn pawn, Map map)
+        {
+            return pawn != null
+                && !pawn.Destroyed
+                && pawn.Spawned
+                && !pawn.Dead
+                && pawn.Map == map
+                && pawn.pather?.Moving == true
+                && Faction.OfPlayer != null
+                && pawn.HostileTo(Faction.OfPlayer);
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn_PathFollower), nameof(Pawn_PathFollower.StartPath))]
+    public static class Patch_PawnPathFollower_RimKataDormantPathStarted
+    {
+        public static void Postfix(Pawn ___pawn)
+        {
+            if (___pawn?.pather?.Moving == true)
+            {
+                RimKataDormantHostileMovementRegistry.NotifyPathStarted(
+                    ___pawn);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn_PathFollower), "TryEnterNextPathCell")]
+    public static class Patch_PawnPathFollower_RimKataDormantPathCell
+    {
+        public static void Prefix(Pawn ___pawn, out IntVec3 __state)
+        {
+            __state = ___pawn?.Position ?? IntVec3.Invalid;
+        }
+
+        public static void Postfix(Pawn ___pawn, IntVec3 __state)
+        {
+            if (___pawn?.Spawned == true
+                && __state.IsValid
+                && ___pawn.Position != __state)
+            {
+                RimKataDormantHostileMovementRegistry.NotifyPathCellEntered(
+                    ___pawn);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn_PathFollower), nameof(Pawn_PathFollower.StopDead))]
+    public static class Patch_PawnPathFollower_RimKataDormantPathStopped
+    {
+        public static void Postfix(Pawn ___pawn)
+        {
+            RimKataDormantHostileMovementRegistry.NotifyPathStopped(___pawn);
         }
     }
 }

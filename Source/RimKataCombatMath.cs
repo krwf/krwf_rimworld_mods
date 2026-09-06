@@ -226,15 +226,29 @@ namespace KRWF.RimKata
 
         public static int WarmupTicksForSingleShot(Verb verb)
         {
+            return WarmupTicksForSingleShot(
+                verb,
+                BurstCountForSingleShotTiming(verb));
+        }
+
+        public static int WarmupTicksForSingleShot(
+            Verb verb,
+            int originalBurstCount)
+        {
             if (verb == null)
             {
                 return 0;
             }
 
-            float aimingFactor = verb.CasterPawn?.GetStatValue(StatDefOf.AimingDelayFactor) ?? 1f;
-            float warmupSeconds = Mathf.Max(0f, verb.WarmupTime);
+            originalBurstCount = BurstCountForSingleShotTiming(
+                verb,
+                originalBurstCount);
+            float adjustedWarmupTicks = AdjustedWarmupTicks(verb);
 
-            return Mathf.Max(0, Mathf.RoundToInt(warmupSeconds * aimingFactor * 60f));
+            return Mathf.Max(
+                0,
+                Mathf.RoundToInt(
+                    adjustedWarmupTicks / originalBurstCount));
         }
 
         public static int CooldownTicksForSingleShot(Verb verb, Pawn pawn, bool afterSuccessfulResponse)
@@ -244,9 +258,7 @@ namespace KRWF.RimKata
                 return 0;
             }
 
-            int originalBurstCount = RimKataMod.Settings?.singleShotConversionEnabled == false
-                ? 1
-                : Mathf.Max(1, verb.BurstShotCount);
+            int originalBurstCount = BurstCountForSingleShotTiming(verb);
             return CooldownTicksForSingleShot(
                 verb,
                 pawn,
@@ -265,20 +277,74 @@ namespace KRWF.RimKata
                 return 0;
             }
 
-            originalBurstCount = Mathf.Max(1, originalBurstCount);
-            float ticks = verb.verbProps.AdjustedCooldownTicks(verb, pawn) / (float)originalBurstCount;
+            originalBurstCount = BurstCountForSingleShotTiming(
+                verb,
+                originalBurstCount);
+            float cooldownTicks = verb.verbProps.AdjustedCooldownTicks(verb, pawn);
             RimKataSettings settings = RimKataMod.Settings;
             if (settings != null && RimKataEquipmentUtility.HasEnabledArmor(pawn))
             {
-                ticks *= settings.GetArmorCooldownFactor(pawn);
+                cooldownTicks *= settings.GetArmorCooldownFactor(pawn);
             }
 
             if (settings != null && afterSuccessfulResponse && RimKataEquipmentUtility.IsWeaponEnabled(verb.EquipmentSource?.def))
             {
-                ticks *= settings.GetResponseCooldownFactor(pawn);
+                cooldownTicks *= settings.GetResponseCooldownFactor(pawn);
             }
 
-            return Mathf.Max(1, Mathf.RoundToInt(ticks));
+            // Vanilla burst intervals are separate from cooldown stat modifiers.
+            float burstSpacingTicks = originalBurstCount > 1
+                ? (originalBurstCount - 1) * Mathf.Max(0, verb.TicksBetweenBurstShots)
+                : 0f;
+            float ticks = (cooldownTicks + burstSpacingTicks) / originalBurstCount;
+            if (originalBurstCount <= 1)
+            {
+                return Mathf.Max(1, Mathf.RoundToInt(ticks));
+            }
+
+            // Keep the two integer timers' sum on the nearest whole-tick cycle.
+            float adjustedWarmupTicks = AdjustedWarmupTicks(verb);
+            int warmupTicks = Mathf.Max(
+                0,
+                Mathf.RoundToInt(adjustedWarmupTicks / originalBurstCount));
+            int cycleTicks = Mathf.RoundToInt(
+                (adjustedWarmupTicks + cooldownTicks + burstSpacingTicks)
+                    / originalBurstCount);
+            return Mathf.Max(1, cycleTicks - warmupTicks);
+        }
+
+        private static float AdjustedWarmupTicks(Verb verb)
+        {
+            float aimingFactor = verb.CasterPawn?.GetStatValue(StatDefOf.AimingDelayFactor) ?? 1f;
+            float warmupSeconds = Mathf.Max(0f, verb.WarmupTime);
+            return Mathf.Max(0f, warmupSeconds * aimingFactor * 60f);
+        }
+
+        private static int BurstCountForSingleShotTiming(Verb verb)
+        {
+            if (!UsesConvertedSingleShotTiming(verb))
+            {
+                return 1;
+            }
+
+            // Keep runtime Verb overrides authoritative instead of reading the def field.
+            return Mathf.Max(1, verb.BurstShotCount);
+        }
+
+        private static int BurstCountForSingleShotTiming(
+            Verb verb,
+            int originalBurstCount)
+        {
+            return UsesConvertedSingleShotTiming(verb)
+                ? Mathf.Max(1, originalBurstCount)
+                : 1;
+        }
+
+        private static bool UsesConvertedSingleShotTiming(Verb verb)
+        {
+            return verb != null
+                && !verb.IsMeleeAttack
+                && RimKataMod.Settings?.singleShotConversionEnabled != false;
         }
     }
 

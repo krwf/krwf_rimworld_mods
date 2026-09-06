@@ -398,31 +398,46 @@ namespace KRWF.RimKata
             return target != null;
         }
 
-        internal static void TryAddKnownAutomaticTarget(
+        internal static bool TryAddKnownAutomaticTarget(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             Thing target)
         {
+            return TryAddKnownAutomaticTarget(
+                pawn,
+                combatState,
+                target,
+                false);
+        }
+
+        internal static bool TryAddKnownAutomaticTarget(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            Thing target,
+            bool randomAttackVerified)
+        {
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || combatState == null
-                || !RandomAttackEnabled(pawn)
+                || (!randomAttackVerified
+                    && !RandomAttackEnabled(pawn))
                 || target is Projectile
                 || !RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target))
             {
-                return;
+                return false;
             }
 
-            TryAddValidatedAutomaticTargetToCycle(
+            bool accepted = TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.primaryWeaponCycle,
                 target);
-            TryAddValidatedAutomaticTargetToCycle(
+            return TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.secondaryWeaponCycle,
-                target);
+                target)
+                || accepted;
         }
 
         internal static bool IsValidForVerb(
@@ -676,15 +691,15 @@ namespace KRWF.RimKata
             }
         }
 
-        private static void TryAddValidatedAutomaticTargetToCycle(
+        private static bool TryAddValidatedAutomaticTargetToCycle(
             Pawn pawn,
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
             Thing target)
         {
-            if (cycle?.automaticCandidateCollectionClosed == true)
+            if (cycle == null)
             {
-                return;
+                return false;
             }
 
             Verb verb = CombatVerbForCycle(pawn, cycle);
@@ -692,11 +707,14 @@ namespace KRWF.RimKata
                 pawn,
                 combatState,
                 cycle,
-                verb,
-                target))
+                    verb,
+                    target))
             {
-                cycle.AddAutomaticCandidate(target);
+                return cycle.AddAutomaticCandidate(target)
+                    || cycle.automaticCandidates?.Contains(target) == true;
             }
+
+            return false;
         }
 
         private static bool IsValidAutomaticTargetForCycle(
