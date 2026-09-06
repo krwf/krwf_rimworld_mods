@@ -22,10 +22,15 @@ function Get-CSharpBlock([string] $source, [string] $marker) {
 }
 
 $rkProcessTick = Get-CSharpBlock $rkDraftedSource 'public static void ProcessJobTrackerTick('
+$rkDraftedEntryTick = Get-CSharpBlock $rkDraftedSource 'public static void Tick(Pawn pawn)'
 $rkDraftedTick = Get-CSharpBlock $rkDraftedSource 'private static void TickDualWeaponController('
+$rkControllerPrerequisites = Get-CSharpBlock $rkDraftedSource 'private static bool CanControllerPrerequisites('
 $rkNoDemand = Get-CSharpBlock $rkDraftedTick 'if (!combatDemand)'
+$rkPlayerWeaponCommand = Get-CSharpBlock $rkControllerSource 'public static bool CanUsePlayerWeaponCommand('
+$rkPlayerMeleeCloseTarget = Get-CSharpBlock $rkControllerSource 'public static bool CanNotifyPlayerMeleeCloseTarget('
 $rkMovementNotify = Get-CSharpBlock $rkControllerSource 'internal static bool NotifyDraftedMovementCell('
 $rkMovementQueue = Get-CSharpBlock $rkControllerSource 'public static void QueuePlayerMovementSearch('
+$rkCounterattackControl = Get-CSharpBlock $rkControllerSource 'internal static bool CounterattackControlEnabled('
 $rkMovementPotential = Get-CSharpBlock $rkControllerSource 'internal static bool HasAutomaticMovementSearchPotential('
 $rkMovementCombatWork = Get-CSharpBlock $rkControllerSource 'private static bool HasMovementFireCombatWork('
 $rkPendingMovementSearch = Get-CSharpBlock $rkCombatStateSource 'public void QueueDraftedMovementSearchTrigger()'
@@ -39,10 +44,46 @@ $rkJobCombatTick = Get-CSharpBlock $rkJobDriverSource 'private void CombatTick()
 $rkJobAdvancing = Get-CSharpBlock $rkJobDriverSource 'private void TickAdvancingFire('
 $rkJobClose = Get-CSharpBlock $rkJobDriverSource 'private void TickCloseCombat('
 $rkJobTickFire = Get-CSharpBlock $rkJobDriverSource 'private void TickCombatFire('
+$rkStartJobPatch = Get-CSharpBlock $rkJobDriverSource 'public static class Patch_PawnJobTracker_StartJob_EnemyRimKata'
 $rkCycleWork = Get-CSharpBlock $rkControllerSource 'private static bool HasCycleTargetWork('
 $rkExecuteCycle = Get-CSharpBlock $rkControllerSource 'private static int ExecuteCycle('
 $rkCommitVanillaOpening = Get-CSharpBlock $rkControllerSource 'public static void CommitVanillaOpening('
 $rkSharedBegin = Get-CSharpBlock $rkSharedSearchSource 'internal static bool Begin('
+$rkPairRangePatch = Get-CSharpBlock $rkJobDriverSource 'public static class Patch_Pawn_TryGetAttackVerb_RimKataPairRange'
+
+if ($rkPlayerWeaponCommand -match 'InMentalState' -or
+    $rkPlayerMeleeCloseTarget -match 'InMentalState' -or
+    $rkMovementQueue -match 'InMentalState' -or
+    $rkPairRangePatch -match 'InMentalState') {
+    throw 'A leaf attack-entry path restored a direct mental-state check beside CanBeginGunKataAttack.'
+}
+
+if ($rkControllerPrerequisites -match 'InMentalState|IsBurning' -or
+    $rkControllerPrerequisites -notmatch 'CanBeginGunKataAttack') {
+    throw 'Drafted-fire prerequisites must delegate temporary inactivity to CanBeginGunKataAttack.'
+}
+
+if ([regex]::Matches(
+        $rkCounterattackControl,
+        'CanBeginGunKataAttack').Count -ne 1 -or
+    $rkCounterattackControl -match 'RandomAttackEnabledForPawn' -or
+    $rkCounterattackControl -notmatch 'Settings\?\.randomAttackEnabled') {
+    throw 'Counterattack control must reuse its one attack eligibility result for the random-attack setting.'
+}
+
+if ($rkProcessTick -notmatch 'TickDualWeaponController\(pawn, state, true, true\)' -or
+    $rkDraftedEntryTick -notmatch 'TickDualWeaponController\(pawn, null, false, false\)' -or
+    $rkDraftedTick -notmatch '!mentalStateKnownFalse\s*&&\s*pawn\.InMentalState') {
+    throw 'JobTracker mental-state rejection is no longer forwarded to the drafted-fire controller.'
+}
+
+if ($rkJobCombatTick -notmatch 'InMentalState' -or
+    $rkJobCombatTick -notmatch 'IsBurning\(\)' -or
+    $rkJobCombatTick -notmatch 'RimKataTemporaryInactivity\.IsInactive' -or
+    $rkDraftedTick -notmatch 'IsBurning\(\)[\s\S]*?CancelForFire' -or
+    $rkStartJobPatch -notmatch '___pawn\?\.InMentalState\s*==\s*true') {
+    throw 'Cause-specific Job termination or fire cleanup was removed with the duplicate predicates.'
+}
 
 $rkResetIndex = $rkNoDemand.IndexOf('ResetIfActive(pawn, state);', [StringComparison]::Ordinal)
 $rkMovementClearIndex = $rkNoDemand.IndexOf('state.ClearDraftedMovementSearchTracking();', $rkResetIndex, [StringComparison]::Ordinal)
@@ -295,6 +336,7 @@ namespace CombatDormancyChecks
         public int controllerTicks;
         public int pendingConsumes;
         public bool controllerExistingStateKnown;
+        public bool controllerMentalStateKnownFalse;
         public bool movementSearchPotential;
         public string order = "";
         public Map Map = new Map();
@@ -409,11 +451,13 @@ namespace CombatDormancyChecks
         private static void TickDualWeaponController(
             Pawn pawn,
             RimKataPawnCombatState state,
-            bool existingStateKnown)
+            bool existingStateKnown,
+            bool mentalStateKnownFalse)
         {
             pawn.controllerTicks++;
             pawn.controllerState = state;
             pawn.controllerExistingStateKnown = existingStateKnown;
+            pawn.controllerMentalStateKnownFalse = mentalStateKnownFalse;
             pawn.order += "T";
         }
 
@@ -456,7 +500,8 @@ namespace CombatDormancyChecks
                 && movingWithPotential.stateReads == 1
                 && movingWithPotential.controllerTicks == 1
                 && movingWithPotential.controllerState == null
-                && movingWithPotential.controllerExistingStateKnown,
+                && movingWithPotential.controllerExistingStateKnown
+                && movingWithPotential.controllerMentalStateKnownFalse,
                 "state-less movement still wakes when an attack or interception candidate exists");
 
             var retained = new Pawn {
@@ -466,7 +511,9 @@ namespace CombatDormancyChecks
             };
             RimKataDraftedFireController.ProcessJobTrackerTick(retained);
             Check(retained.presenceReads == 1 && retained.stateReads == 1
-                && retained.controllerTicks == 1 && retained.controllerState == retained.state,
+                && retained.controllerTicks == 1
+                && retained.controllerState == retained.state
+                && retained.controllerMentalStateKnownFalse,
                 "existing combat state retains controller processing while stationary");
 
             var staleMarker = new Pawn { Drafted = true, presence = true };
@@ -481,7 +528,10 @@ namespace CombatDormancyChecks
                 state = new RimKataPawnCombatState { dedicatedFollowupJobPending = true }
             };
             RimKataDraftedFireController.ProcessJobTrackerTick(followup);
-            Check(followup.pendingConsumes == 1 && followup.controllerTicks == 1 && followup.order == "CT",
+            Check(followup.pendingConsumes == 1
+                    && followup.controllerTicks == 1
+                    && followup.controllerMentalStateKnownFalse
+                    && followup.order == "CT",
                 "drafted pending followup is consumed before controller processing");
 
             var dedicated = new Pawn {
@@ -795,4 +845,4 @@ namespace MovementCombatGateChecks
 
 Add-Type -TypeDefinition $rkMovementGateHarness -Language CSharp
 $rkMovementGatePassed = [MovementCombatGateChecks.Checks]::Run()
-"PASS: $rkPassed executable dormancy assertions + $rkMovementGatePassed executable movement-gate assertions + 19 source-boundary checks; production methods with minimal fixtures, not an in-game performance test."
+"PASS: $rkPassed executable dormancy assertions + $rkMovementGatePassed executable movement-gate assertions + expanded source-boundary checks; production methods with minimal fixtures, not an in-game performance test."

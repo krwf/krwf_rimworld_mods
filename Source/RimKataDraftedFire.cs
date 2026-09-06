@@ -58,7 +58,7 @@ namespace KRWF.RimKata
         {
             if (pawn?.Drafted == true)
             {
-                TickDualWeaponController(pawn, null, false);
+                TickDualWeaponController(pawn, null, false, false);
                 return;
             }
 
@@ -121,7 +121,7 @@ namespace KRWF.RimKata
                     return;
                 }
 
-                TickDualWeaponController(pawn, state, true);
+                TickDualWeaponController(pawn, state, true, true);
                 return;
             }
 
@@ -135,10 +135,11 @@ namespace KRWF.RimKata
         private static void TickDualWeaponController(
             Pawn pawn,
             RimKataPawnCombatState state,
-            bool existingStateKnown)
+            bool existingStateKnown,
+            bool mentalStateKnownFalse)
         {
             if (pawn == null
-                || pawn.InMentalState
+                || (!mentalStateKnownFalse && pawn.InMentalState)
                 || pawn.CurJobDef == RimKataDefOf.RimKata_Attack)
             {
                 return;
@@ -308,7 +309,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!CanControllerPrerequisites(pawn, true))
+            if (!CanControllerPrerequisites(pawn))
             {
                 return false;
             }
@@ -426,14 +427,10 @@ namespace KRWF.RimKata
             }
         }
 
-        private static bool CanControllerPrerequisites(
-            Pawn pawn,
-            bool burningKnownFalse = false)
+        private static bool CanControllerPrerequisites(Pawn pawn)
         {
             return pawn?.Drafted == true
-                && !pawn.InMentalState
                 && IsAutomaticFireJob(pawn.CurJobDef)
-                && (burningKnownFalse || !pawn.IsBurning())
                 && RimKataEligibility.CanBeginGunKataAttack(pawn);
         }
 

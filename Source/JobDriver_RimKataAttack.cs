@@ -1756,7 +1756,6 @@ namespace KRWF.RimKata
             }
 
             if (__instance?.Map == null
-                || __instance.InMentalState
                 || !RimKataEligibility.CanBeginGunKataAttack(__instance))
             {
                 return;

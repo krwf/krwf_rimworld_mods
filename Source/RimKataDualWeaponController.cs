@@ -885,7 +885,6 @@ namespace KRWF.RimKata
         public static bool CanUsePlayerWeaponCommand(Pawn pawn, Verb verb)
         {
             if (pawn?.Map == null
-                || pawn.InMentalState
                 || verb == null
                 || verb.IsMeleeAttack
                 || !pawn.IsPlayerControlled
@@ -954,7 +953,6 @@ namespace KRWF.RimKata
             Thing target)
         {
             return pawn?.Map != null
-                && !pawn.InMentalState
                 && pawn.IsPlayerControlled
                 && RimKataEligibility.CanBeginGunKataAttack(pawn)
                 && HasUsableWeapon(pawn, true, true)
@@ -1185,7 +1183,6 @@ namespace KRWF.RimKata
         public static void QueuePlayerMovementSearch(Pawn pawn)
         {
             if (pawn?.Map == null
-                || pawn.InMentalState
                 || pawn.Drafted != true
                 || pawn.drafter?.FireAtWill != true
                 || (pawn.CurJobDef != JobDefOf.Goto
@@ -1485,7 +1482,7 @@ namespace KRWF.RimKata
         {
             return pawn != null
                 && RimKataEligibility.CanBeginGunKataAttack(pawn)
-                && (RimKataEligibility.RandomAttackEnabledForPawn(pawn)
+                && (RimKataMod.Settings?.randomAttackEnabled != false
                     || RimKataMod.Settings?.targetRushEnabled != false);
         }
 
