@@ -41,6 +41,21 @@ $rkSecondaryGizmoIterator = Get-CSharpBlock $rkSecondaryGizmoPatch 'private stat
 $rkSecondaryGizmoEligibilityGate = Get-CSharpBlock $rkSecondaryGizmoIterator 'if (!RimKataEligibility.CanBeginGunKataAttack(pawn))'
 $rkSecondaryGizmoBranch = Get-CSharpBlock $rkSecondaryGizmoIterator 'else if (weapon == secondary)'
 $rkUndraftedSecondaryGate = Get-CSharpBlock $rkSecondaryGizmoBranch 'if (!pawn.Drafted && command.Disabled)'
+$rkSecondaryRegistry = Get-CSharpBlock $rkSecondarySource 'public sealed class RimKataSecondaryWeaponRegistry'
+$rkGetRegistered = Get-CSharpBlock $rkSecondaryRegistry 'public ThingWithComps GetRegistered(Pawn pawn)'
+$rkSetRegistered = Get-CSharpBlock $rkSecondaryRegistry 'public void Set(Pawn pawn, ThingWithComps weapon)'
+$rkRemoveRegistered = Get-CSharpBlock $rkSecondaryRegistry 'private void RemoveAt(int index)'
+$rkTryCachedRegistered = Get-CSharpBlock $rkSecondaryRegistry 'private bool TryGetCachedRegisteredWeapon('
+$rkCacheRegisteredWithTickMarker = @'
+private void CacheRegisteredWeapon(
+            Pawn pawn,
+            ThingWithComps weapon,
+            int currentTick)
+'@
+$rkCacheRegisteredWithTick = Get-CSharpBlock $rkSecondaryRegistry $rkCacheRegisteredWithTickMarker.Trim()
+$rkInvalidateCachedRegistered = Get-CSharpBlock $rkSecondaryRegistry 'private void InvalidateCachedRegisteredWeapon(Pawn pawn)'
+$rkPrepareRegisteredCache = Get-CSharpBlock $rkSecondaryRegistry 'private void PrepareRegisteredWeaponLookupCache(int currentTick)'
+$rkResetRegisteredCache = Get-CSharpBlock $rkSecondaryRegistry 'private void ResetRegisteredWeaponLookupCache()'
 $rkMeleeGizmoPatch = Get-CSharpBlock $rkSecondarySource 'public static class Patch_PawnAttackGizmoUtility_RimKataMeleeAttackGizmo'
 $rkMeleeGizmoPrefix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static bool Prefix('
 $rkMeleeGizmoPostfix = Get-CSharpBlock $rkMeleeGizmoPatch 'public static void Postfix('
@@ -91,6 +106,22 @@ if ($rkSecondarySource -match 'CreateVerbTargetCommand' -or
     [regex]::Matches($rkSecondaryGizmoIterator, 'command\.Disabled\s*=\s*false').Count -ne 1 -or
     [regex]::Matches($rkSecondaryGizmoIterator, 'command\.disabledReason\s*=\s*null').Count -ne 1) {
     throw 'Undrafted secondary-gizmo unlock regained a per-Verb patch or duplicate eligibility/loadout work.'
+}
+
+$rkCachedReadIndex = Get-Index $rkGetRegistered 'TryGetCachedRegisteredWeapon('
+$rkRawReadIndex = Get-Index $rkGetRegistered 'pawns.IndexOf(pawn)'
+$rkCacheWriteIndex = Get-Index $rkGetRegistered 'CacheRegisteredWeapon(pawn, registeredWeapon, currentTick)'
+if ($rkSecondaryRegistry -notmatch 'Dictionary<Pawn,\s*ThingWithComps>\s*sameTickRegisteredWeapons' -or
+    $rkCachedReadIndex -ge $rkRawReadIndex -or
+    $rkRawReadIndex -ge $rkCacheWriteIndex -or
+    $rkTryCachedRegistered -notmatch 'PrepareRegisteredWeaponLookupCache\(currentTick\)' -or
+    $rkSetRegistered -notmatch 'CacheRegisteredWeapon\(pawn, weapon\)' -or
+    $rkRemoveRegistered -notmatch 'InvalidateCachedRegisteredWeapon\(pawn\)' -or
+    $rkInvalidateCachedRegistered -notmatch 'sameTickRegisteredWeapons\.Remove\(pawn\)' -or
+    $rkPrepareRegisteredCache -notmatch 'sameTickRegisteredWeapons\.Clear\(\)' -or
+    $rkPrepareRegisteredCache -notmatch 'registeredWeaponLookupTick\s*=\s*currentTick' -or
+    $rkResetRegisteredCache -notmatch 'sameTickRegisteredWeapons\.Clear\(\)') {
+    throw 'Secondary registry no longer reuses one lookup per Pawn/tick or refreshes mutations.'
 }
 
 $rkUnifiedIndex = Get-Index $rkSecondaryGizmoIterator 'ShouldUseUnifiedAttackGizmo()'
@@ -215,6 +246,7 @@ if ($rkInterceptionSource -notmatch 'ResolveEffectiveRange\(' -or
 
 $rkHarness = @"
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using Verse;
 using Verse.AI;
@@ -232,6 +264,16 @@ namespace UnityEngine
 
 namespace Verse
 {
+    public sealed class TickManager
+    {
+        public int TicksGame;
+    }
+
+    public static class Find
+    {
+        public static TickManager TickManager;
+    }
+
     public class Thing { }
 
     public sealed class ThingWithComps : Thing
@@ -407,6 +449,65 @@ namespace KRWF.RimKata
         }
     }
 
+    public sealed class SecondaryRegistryLookupHarness
+    {
+        private readonly List<Pawn> pawns = new List<Pawn>();
+        private readonly List<ThingWithComps> weapons =
+            new List<ThingWithComps>();
+        private readonly Dictionary<Pawn, ThingWithComps>
+            sameTickRegisteredWeapons =
+                new Dictionary<Pawn, ThingWithComps>();
+        private int registeredWeaponLookupTick = int.MinValue;
+
+        $rkGetRegistered
+
+        $rkTryCachedRegistered
+
+        $rkCacheRegisteredWithTick
+
+        $rkInvalidateCachedRegistered
+
+        $rkPrepareRegisteredCache
+
+        $rkResetRegisteredCache
+
+        public void AddWithoutCache(Pawn pawn, ThingWithComps weapon)
+        {
+            pawns.Add(pawn);
+            weapons.Add(weapon);
+        }
+
+        public void ReplaceFirstWithoutCache(
+            Pawn pawn,
+            ThingWithComps weapon)
+        {
+            weapons[pawns.IndexOf(pawn)] = weapon;
+        }
+
+        public void RefreshSameTick(Pawn pawn, ThingWithComps weapon)
+        {
+            CacheRegisteredWeapon(
+                pawn,
+                weapon,
+                Find.TickManager == null
+                    ? int.MinValue
+                    : Find.TickManager.TicksGame);
+        }
+
+        public void RemoveFirstAndInvalidate(Pawn pawn)
+        {
+            int index = pawns.IndexOf(pawn);
+            pawns.RemoveAt(index);
+            weapons.RemoveAt(index);
+            InvalidateCachedRegisteredWeapon(pawn);
+        }
+
+        public void ResetForLoad()
+        {
+            ResetRegisteredWeaponLookupCache();
+        }
+    }
+
     $rkMeleeGizmoPatch
 
     public static class RangeHotpathChecks
@@ -449,6 +550,55 @@ namespace KRWF.RimKata
 
         public static int Run()
         {
+            Find.TickManager = new TickManager { TicksGame = 100 };
+            var registry = new SecondaryRegistryLookupHarness();
+            var registryPawn = new Pawn();
+            var firstRegistered = new ThingWithComps();
+            var secondRegistered = new ThingWithComps();
+            registry.AddWithoutCache(registryPawn, firstRegistered);
+            Check(registry.GetRegistered(registryPawn) == firstRegistered,
+                "first registry read resolves the stored weapon");
+
+            registry.ReplaceFirstWithoutCache(
+                registryPawn,
+                secondRegistered);
+            Check(registry.GetRegistered(registryPawn) == firstRegistered,
+                "same-tick registry read reuses the first result");
+
+            Find.TickManager.TicksGame++;
+            Check(registry.GetRegistered(registryPawn) == secondRegistered,
+                "next tick refreshes the registry result");
+
+            registry.RefreshSameTick(registryPawn, firstRegistered);
+            Check(registry.GetRegistered(registryPawn) == firstRegistered,
+                "same-tick Set refresh exposes the new weapon immediately");
+
+            registry.RefreshSameTick(registryPawn, null);
+            Check(registry.GetRegistered(registryPawn) == null,
+                "same-tick Clear refresh exposes removal immediately");
+
+            var newlyRegisteredPawn = new Pawn();
+            Check(registry.GetRegistered(newlyRegisteredPawn) == null,
+                "unregistered result is cached explicitly");
+            registry.AddWithoutCache(newlyRegisteredPawn, secondRegistered);
+            Check(registry.GetRegistered(newlyRegisteredPawn) == null,
+                "same-tick negative lookup remains cached");
+            registry.RefreshSameTick(newlyRegisteredPawn, secondRegistered);
+            Check(registry.GetRegistered(newlyRegisteredPawn) == secondRegistered,
+                "same-tick registration refresh replaces a negative result");
+
+            registry.AddWithoutCache(registryPawn, secondRegistered);
+            registry.RemoveFirstAndInvalidate(registryPawn);
+            Check(registry.GetRegistered(registryPawn) == secondRegistered,
+                "removal invalidation preserves a remaining duplicate entry");
+
+            registry.ReplaceFirstWithoutCache(
+                newlyRegisteredPawn,
+                firstRegistered);
+            registry.ResetForLoad();
+            Check(registry.GetRegistered(newlyRegisteredPawn) == firstRegistered,
+                "load reset invalidates same-tick lookup state");
+
             RimKataMod.Settings = new RimKataSettings { targetRushEnabled = true };
             RimKataEligibility.canBegin = true;
             RimKataEligibility.beginCalls = 0;

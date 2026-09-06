@@ -46,6 +46,10 @@ namespace KRWF.RimKata
         private List<ThingWithComps> weapons = new List<ThingWithComps>();
         private List<RimKataSecondaryRecovery> recoveries =
             new List<RimKataSecondaryRecovery>();
+        private readonly Dictionary<Pawn, ThingWithComps>
+            sameTickRegisteredWeapons =
+                new Dictionary<Pawn, ThingWithComps>();
+        private int registeredWeaponLookupTick = int.MinValue;
 
         public RimKataSecondaryWeaponRegistry(Game game)
         {
@@ -91,6 +95,7 @@ namespace KRWF.RimKata
                 }
 
                 CleanupRecoveries();
+                ResetRegisteredWeaponLookupCache();
             }
         }
 
@@ -121,13 +126,26 @@ namespace KRWF.RimKata
 
         public ThingWithComps GetRegistered(Pawn pawn)
         {
-            int index = pawns.IndexOf(pawn);
-            if (index < 0)
+            if (pawn == null)
             {
                 return null;
             }
 
-            return weapons[index];
+            int currentTick = Find.TickManager?.TicksGame ?? int.MinValue;
+            if (TryGetCachedRegisteredWeapon(
+                    pawn,
+                    currentTick,
+                    out ThingWithComps cachedWeapon))
+            {
+                return cachedWeapon;
+            }
+
+            int index = pawns.IndexOf(pawn);
+            ThingWithComps registeredWeapon = index < 0
+                ? null
+                : weapons[index];
+            CacheRegisteredWeapon(pawn, registeredWeapon, currentTick);
+            return registeredWeapon;
         }
 
         public void Set(Pawn pawn, ThingWithComps weapon)
@@ -148,6 +166,7 @@ namespace KRWF.RimKata
                 weapons[index] = weapon;
             }
 
+            CacheRegisteredWeapon(pawn, weapon);
             RimKataEligibilityCache.NotifySecondaryWeaponChanged(
                 pawn,
                 weapon);
@@ -477,9 +496,72 @@ namespace KRWF.RimKata
             Pawn pawn = pawns[index];
             pawns.RemoveAt(index);
             weapons.RemoveAt(index);
+            InvalidateCachedRegisteredWeapon(pawn);
             RimKataEligibilityCache.NotifySecondaryWeaponChanged(
                 pawn,
                 null);
+        }
+
+        private bool TryGetCachedRegisteredWeapon(
+            Pawn pawn,
+            int currentTick,
+            out ThingWithComps weapon)
+        {
+            PrepareRegisteredWeaponLookupCache(currentTick);
+            return sameTickRegisteredWeapons.TryGetValue(pawn, out weapon);
+        }
+
+        private void CacheRegisteredWeapon(
+            Pawn pawn,
+            ThingWithComps weapon)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
+
+            CacheRegisteredWeapon(
+                pawn,
+                weapon,
+                Find.TickManager?.TicksGame ?? int.MinValue);
+        }
+
+        private void CacheRegisteredWeapon(
+            Pawn pawn,
+            ThingWithComps weapon,
+            int currentTick)
+        {
+            PrepareRegisteredWeaponLookupCache(currentTick);
+            sameTickRegisteredWeapons[pawn] = weapon;
+        }
+
+        private void InvalidateCachedRegisteredWeapon(Pawn pawn)
+        {
+            if (pawn == null)
+            {
+                return;
+            }
+
+            PrepareRegisteredWeaponLookupCache(
+                Find.TickManager?.TicksGame ?? int.MinValue);
+            sameTickRegisteredWeapons.Remove(pawn);
+        }
+
+        private void PrepareRegisteredWeaponLookupCache(int currentTick)
+        {
+            if (registeredWeaponLookupTick == currentTick)
+            {
+                return;
+            }
+
+            sameTickRegisteredWeapons.Clear();
+            registeredWeaponLookupTick = currentTick;
+        }
+
+        private void ResetRegisteredWeaponLookupCache()
+        {
+            sameTickRegisteredWeapons.Clear();
+            registeredWeaponLookupTick = int.MinValue;
         }
     }
 
