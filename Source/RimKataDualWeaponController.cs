@@ -53,6 +53,10 @@ namespace KRWF.RimKata
         public Thing visualTarget;
         public int visualAimTicksRemaining;
         private int lastTimerTick = -1;
+        private int responseCooldownAppliedTick = -1;
+
+        internal bool ResponseCooldownAppliedThisTick => responseCooldownAppliedTick >= 0
+            && responseCooldownAppliedTick == (Find.TickManager?.TicksGame ?? -1);
 
         public bool HasPlan => plannedTarget != null;
         public bool IsWarming => warmupTicksRemaining > 0;
@@ -83,6 +87,7 @@ namespace KRWF.RimKata
         {
             Scribe_References.Look(ref weapon, "weapon");
             Scribe_Values.Look(ref cooldownTicksRemaining, "cooldownTicksRemaining");
+            Scribe_Values.Look(ref responseCooldownAppliedTick, "responseCooldownAppliedTick", -1);
             Scribe_Values.Look(ref warmupTicksRemaining, "warmupTicksRemaining", -1);
             Scribe_Values.Look(ref warmupTotalTicks, "warmupTotalTicks");
             Scribe_Values.Look(ref openingWarmupBonusTicks, "openingWarmupBonusTicks");
@@ -197,15 +202,23 @@ namespace KRWF.RimKata
             }
         }
 
+        internal void ApplyResponseCooldown(int ticks)
+        {
+            cooldownTicksRemaining = ticks;
+            responseCooldownAppliedTick = Find.TickManager?.TicksGame ?? -1;
+        }
+
         public void TickTimers()
         {
             int currentTick = Find.TickManager?.TicksGame ?? -1;
-            if (currentTick >= 0 && lastTimerTick == currentTick)
+            if (currentTick >= 0
+                && (lastTimerTick == currentTick || responseCooldownAppliedTick == currentTick))
             {
                 return;
             }
 
             lastTimerTick = currentTick;
+            responseCooldownAppliedTick = -1;
             if (cooldownTicksRemaining > 0)
             {
                 cooldownTicksRemaining--;
@@ -381,6 +394,7 @@ namespace KRWF.RimKata
             visualTarget = null;
             visualAimTicksRemaining = 0;
             lastTimerTick = -1;
+            responseCooldownAppliedTick = -1;
 
             ClearPlan();
         }
@@ -2073,7 +2087,8 @@ namespace KRWF.RimKata
 
             verb = boundVerb;
 
-            cycle.cooldownTicksRemaining = RimKataCombatMath.CooldownTicksForSingleShot(verb, pawn, true);
+            cycle.ApplyResponseCooldown(
+                RimKataCombatMath.CooldownTicksForSingleShot(verb, pawn, true));
             cycle.cooldownFromVanillaOpening = false;
 
             cycle.openingWarmupBonusTicks = 0;
@@ -2523,6 +2538,7 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || state == null
                 || cycle == null
+                || cycle.ResponseCooldownAppliedThisTick
                 || cycle.HasPlan
                 || cycle.openingWarmupPending
                 || cycle.burstShotsRemaining > 0)
@@ -5406,6 +5422,12 @@ namespace KRWF.RimKata
             bool randomAttackEnabled)
         {
             promotedAutomaticTarget = null;
+            if (cycle.ResponseCooldownAppliedThisTick)
+            {
+                // A response retains its target reference, but offensive preparation
+                // starts no earlier than this slot's next game tick.
+                return true;
+            }
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
                 cycle.weapon);
@@ -5805,7 +5827,7 @@ namespace KRWF.RimKata
             Thing cachedTarget = cycle?.cachedCandidateTarget;
             bool cachedInterception =
                 cycle?.cachedCandidateInterception == true;
-            if (cycle == null || cachedTarget == null)
+            if (cycle == null || cachedTarget == null || cycle.ResponseCooldownAppliedThisTick)
             {
                 return false;
             }
@@ -6374,7 +6396,8 @@ namespace KRWF.RimKata
                 && cycle.cooldownTicksRemaining <= 0
                 && cycle.burstTicksUntilNextShot <= 0
                 && cycle.HasPlan
-                && cycle.warmupTicksRemaining == 0;
+                && cycle.warmupTicksRemaining == 0
+                && !cycle.ResponseCooldownAppliedThisTick;
         }
 
         private static int ExecuteCycle(
