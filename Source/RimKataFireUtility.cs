@@ -266,6 +266,7 @@ namespace KRWF.RimKata
         }
 
         [ThreadStatic] private static List<PendingCloseHit> pendingCloseHits;
+        [ThreadStatic] private static Stack<List<PendingCloseHit>> reusablePendingCloseHits;
         [ThreadStatic] internal static RimKataDirectCloseHit? DirectCloseHit;
         [ThreadStatic] public static Verb ActiveVerb;
         [ThreadStatic] public static Pawn Shooter;
@@ -331,9 +332,17 @@ namespace KRWF.RimKata
             return previous;
         }
 
+        private static List<PendingCloseHit> RentPendingCloseHits()
+        {
+            // Enclosing scopes keep their own lists until they finish.
+            return reusablePendingCloseHits != null && reusablePendingCloseHits.Count > 0
+                ? reusablePendingCloseHits.Pop()
+                : new List<PendingCloseHit>();
+        }
+
         public static void QueueCloseImpact(Projectile projectile, LocalTargetInfo usedTarget)
         {
-            pendingCloseHits ??= new List<PendingCloseHit>();
+            pendingCloseHits ??= RentPendingCloseHits();
             pendingCloseHits.Add(new PendingCloseHit
             {
                 projectile = projectile,
@@ -343,7 +352,7 @@ namespace KRWF.RimKata
 
         internal static void QueueDirectCloseHit(RimKataDirectCloseHit hit)
         {
-            pendingCloseHits ??= new List<PendingCloseHit>();
+            pendingCloseHits ??= RentPendingCloseHits();
             pendingCloseHits.Add(new PendingCloseHit { directHit = hit });
         }
 
@@ -385,6 +394,11 @@ namespace KRWF.RimKata
             }
 
             DiscardPendingCloseHits();
+            if (pendingCloseHits != null)
+            {
+                reusablePendingCloseHits ??= new Stack<List<PendingCloseHit>>();
+                reusablePendingCloseHits.Push(pendingCloseHits);
+            }
             previous.Restore();
         }
 

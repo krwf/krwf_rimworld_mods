@@ -34,6 +34,7 @@ namespace KRWF.RimKata
         public Thing cachedCandidateTarget;
         public bool cachedCandidateInterception;
         public List<Thing> automaticCandidates = new List<Thing>();
+        private int nextAutomaticCandidateValidationIndex;
         public bool automaticCandidateCollectionClosed;
         public int pendingCandidateLimitOverride;
         public int activeCandidateLimitOverride;
@@ -95,6 +96,10 @@ namespace KRWF.RimKata
                 "automaticCandidates",
                 LookMode.Reference);
             Scribe_Values.Look(
+                ref nextAutomaticCandidateValidationIndex,
+                "nextAutomaticCandidateValidationIndex",
+                0);
+            Scribe_Values.Look(
                 ref automaticCandidateCollectionClosed,
                 "automaticCandidateCollectionClosed");
             Scribe_Values.Look(
@@ -131,9 +136,10 @@ namespace KRWF.RimKata
                 {
                     if (automaticCandidates[i] == null)
                     {
-                        automaticCandidates.RemoveAt(i);
+                        RemoveAutomaticCandidateAt(i);
                     }
                 }
+                NormalizeAutomaticCandidateValidationIndex();
                 lastTimerTick = -1;
                 plannedActionVerb = null;
                 cooldownTicksRemaining = Mathf.Max(0, cooldownTicksRemaining);
@@ -274,7 +280,8 @@ namespace KRWF.RimKata
 
         public bool RemoveAutomaticCandidate(Thing target)
         {
-            bool removed = automaticCandidates?.Remove(target) == true;
+            int index = automaticCandidates?.IndexOf(target) ?? -1;
+            bool removed = RemoveAutomaticCandidateAt(index);
             if (cachedCandidateTarget == target)
             {
                 cachedCandidateTarget = null;
@@ -283,9 +290,62 @@ namespace KRWF.RimKata
             return removed;
         }
 
-        public void ClearAutomaticCandidates()
+        internal bool TryGetNextAutomaticCandidateForValidation(out Thing target)
+        {
+            target = null;
+            NormalizeAutomaticCandidateValidationIndex();
+            int count = automaticCandidates?.Count ?? 0;
+            if (count == 0)
+            {
+                return false;
+            }
+
+            target = automaticCandidates[nextAutomaticCandidateValidationIndex];
+            nextAutomaticCandidateValidationIndex++;
+            if (nextAutomaticCandidateValidationIndex >= count)
+            {
+                nextAutomaticCandidateValidationIndex = 0;
+            }
+            return true;
+        }
+
+        internal bool RemoveAutomaticCandidateAt(int index)
+        {
+            if (automaticCandidates == null
+                || (uint)index >= (uint)automaticCandidates.Count)
+            {
+                return false;
+            }
+
+            // Keep the next surviving entry in turn when earlier entries shift left.
+            if (index < nextAutomaticCandidateValidationIndex)
+            {
+                nextAutomaticCandidateValidationIndex--;
+            }
+            automaticCandidates.RemoveAt(index);
+            NormalizeAutomaticCandidateValidationIndex();
+            return true;
+        }
+
+        internal void ClearStoredAutomaticCandidates()
         {
             automaticCandidates?.Clear();
+            nextAutomaticCandidateValidationIndex = 0;
+        }
+
+        private void NormalizeAutomaticCandidateValidationIndex()
+        {
+            int count = automaticCandidates?.Count ?? 0;
+            if (count == 0 || nextAutomaticCandidateValidationIndex < 0
+                || nextAutomaticCandidateValidationIndex >= count)
+            {
+                nextAutomaticCandidateValidationIndex = 0;
+            }
+        }
+
+        public void ClearAutomaticCandidates()
+        {
+            ClearStoredAutomaticCandidates();
             automaticCandidateCollectionClosed = false;
             pendingCandidateLimitOverride = 0;
             activeCandidateLimitOverride = 0;
@@ -308,7 +368,7 @@ namespace KRWF.RimKata
 
             cachedCandidateTarget = null;
             cachedCandidateInterception = false;
-            automaticCandidates?.Clear();
+            ClearStoredAutomaticCandidates();
             automaticCandidateCollectionClosed = false;
             pendingCandidateLimitOverride = 0;
             activeCandidateLimitOverride = 0;
@@ -5118,7 +5178,7 @@ namespace KRWF.RimKata
                 Thing candidate = automaticCandidates[i];
                 if (candidate == null)
                 {
-                    automaticCandidates.RemoveAt(i);
+                    cycle.RemoveAutomaticCandidateAt(i);
                     cycle.automaticCandidateCollectionClosed = false;
                     state?.ResetCandidateSaturationExpansion(true);
                     continue;
@@ -5253,7 +5313,7 @@ namespace KRWF.RimKata
             if (!randomAttackEnabled
                 && cycle.HasAutomaticCandidates)
             {
-                cycle.automaticCandidates.Clear();
+                cycle.ClearStoredAutomaticCandidates();
                 cycle.automaticCandidateCollectionClosed = false;
                 cycle.pendingCandidateLimitOverride = 0;
                 cycle.activeCandidateLimitOverride = 0;

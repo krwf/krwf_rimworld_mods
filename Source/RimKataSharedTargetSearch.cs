@@ -74,6 +74,8 @@ namespace KRWF.RimKata
             new List<Thing>();
         private static readonly List<Thing> SecondaryRingCandidates =
             new List<Thing>();
+        private static readonly HashSet<Thing> VisitedMultiCellRingTargets =
+            new HashSet<Thing>();
 
         private struct RingCandidateSlot
         {
@@ -281,7 +283,7 @@ namespace KRWF.RimKata
                 outerRing);
             if (BothCandidateCollectionsClosed(combatState))
             {
-                Finish(combatState);
+                CompleteScan(pawn, combatState, ref primarySlot, ref secondarySlot);
                 return true;
             }
 
@@ -316,7 +318,7 @@ namespace KRWF.RimKata
             bool reachedMaximum = outerRing >= search.maximumRing;
             if (bothClosed || reachedMaximum)
             {
-                Finish(combatState);
+                CompleteScan(pawn, combatState, ref primarySlot, ref secondarySlot);
             }
 
             return true;
@@ -553,7 +555,7 @@ namespace KRWF.RimKata
         {
             PrimaryRingCandidates.Clear();
             SecondaryRingCandidates.Clear();
-            bool removedCandidate = false;
+            VisitedMultiCellRingTargets.Clear();
             try
             {
                 CollectAutomaticTargetsInRingCells(
@@ -563,8 +565,7 @@ namespace KRWF.RimKata
                     innerRadius,
                     outerRadius,
                     ref primarySlot,
-                    ref secondarySlot,
-                    ref removedCandidate);
+                    ref secondarySlot);
                 CommitStagedRangedCandidates(
                     combatState?.primaryWeaponCycle,
                     PrimaryRingCandidates,
@@ -580,10 +581,7 @@ namespace KRWF.RimKata
             {
                 PrimaryRingCandidates.Clear();
                 SecondaryRingCandidates.Clear();
-            }
-            if (removedCandidate)
-            {
-                NotifyAutomaticCandidateCountChanged(pawn, combatState, true);
+                VisitedMultiCellRingTargets.Clear();
             }
         }
 
@@ -594,14 +592,20 @@ namespace KRWF.RimKata
             float innerRadius,
             float outerRadius,
             ref RingCandidateSlot primarySlot,
-            ref RingCandidateSlot secondarySlot,
-            ref bool removedCandidate)
+            ref RingCandidateSlot secondarySlot)
         {
             Map map = pawn.Map;
+            bool precomputedOuter = RimKataRingGeometry.TryGetCircleRowOffset(
+                outerRadius, out int outerRowOffset);
+            bool precomputedInner = RimKataRingGeometry.TryGetCircleRowOffset(
+                innerRadius, out int innerRowOffset);
+            ushort[] circleRows = RimKataRingGeometry.CircleRowHalfWidths;
             float innerSquared = innerRadius < 0f
                 ? -1f
                 : innerRadius * innerRadius;
             float outerSquared = outerRadius * outerRadius;
+            bool needsSquaredBounds = !precomputedOuter
+                || (!precomputedInner && innerRadius >= 0f);
             bool recordSearchCells = Prefs.DevMode
                 && RimKataDebugHUD.SearchRangeEnabled
                 && RimKataDebugHUD.TryBeginActualSearchCellRecording(
@@ -617,20 +621,29 @@ namespace KRWF.RimKata
                 Mathf.Abs(map.Size.z - 1 - center.z));
             int maximumAbsZ = Mathf.Min(radiusExtent, maximumMapZOffset);
             int outerX = Mathf.Min(radiusExtent, maximumMapXOffset);
+            int innerRadiusExtent = Mathf.FloorToInt(innerRadius);
             int innerX = innerRadius < 0f
                 ? -1
                 : Mathf.Min(
-                    Mathf.FloorToInt(innerRadius),
+                    innerRadiusExtent,
                     maximumMapXOffset);
 
             for (int absZ = 0; absZ <= maximumAbsZ; absZ++)
             {
-                long zSquared = (long)absZ * absZ;
-                while (outerX >= 0
-                    && (float)((long)outerX * outerX + zSquared)
-                        > outerSquared)
+                long zSquared = needsSquaredBounds ? (long)absZ * absZ : 0L;
+                if (precomputedOuter)
                 {
-                    outerX--;
+                    outerX = Mathf.Min(
+                        circleRows[outerRowOffset + absZ], maximumMapXOffset);
+                }
+                else
+                {
+                    while (outerX >= 0
+                        && (float)((long)outerX * outerX + zSquared)
+                            > outerSquared)
+                    {
+                        outerX--;
+                    }
                 }
 
                 if (outerX < 0)
@@ -638,11 +651,21 @@ namespace KRWF.RimKata
                     break;
                 }
 
-                while (innerX >= 0
-                    && (float)((long)innerX * innerX + zSquared)
-                        > innerSquared)
+                if (precomputedInner)
                 {
-                    innerX--;
+                    innerX = absZ <= innerRadiusExtent
+                        ? Mathf.Min(
+                            circleRows[innerRowOffset + absZ], maximumMapXOffset)
+                        : -1;
+                }
+                else
+                {
+                    while (innerX >= 0
+                        && (float)((long)innerX * innerX + zSquared)
+                            > innerSquared)
+                    {
+                        innerX--;
+                    }
                 }
 
                 CollectAutomaticTargetsInRingRow(
@@ -655,8 +678,7 @@ namespace KRWF.RimKata
                     innerX,
                     recordSearchCells,
                     ref primarySlot,
-                    ref secondarySlot,
-                    ref removedCandidate);
+                    ref secondarySlot);
                 if (absZ > 0)
                 {
                     CollectAutomaticTargetsInRingRow(
@@ -669,8 +691,7 @@ namespace KRWF.RimKata
                         innerX,
                         recordSearchCells,
                         ref primarySlot,
-                        ref secondarySlot,
-                        ref removedCandidate);
+                        ref secondarySlot);
                 }
             }
         }
@@ -685,8 +706,7 @@ namespace KRWF.RimKata
             int innerX,
             bool recordSearchCells,
             ref RingCandidateSlot primarySlot,
-            ref RingCandidateSlot secondarySlot,
-            ref bool removedCandidate)
+            ref RingCandidateSlot secondarySlot)
         {
             if ((uint)z >= (uint)map.Size.z)
             {
@@ -714,35 +734,40 @@ namespace KRWF.RimKata
                     maximumX,
                     recordSearchCells,
                     ref primarySlot,
-                    ref secondarySlot,
-                    ref removedCandidate);
+                    ref secondarySlot);
                 return;
             }
 
-            CollectAutomaticTargetsInRingRowSegment(
-                pawn,
-                combatState,
-                map,
-                center.x,
-                z,
-                minimumX,
-                Mathf.Min(maximumX, -innerX - 1),
-                recordSearchCells,
-                ref primarySlot,
-                ref secondarySlot,
-                ref removedCandidate);
-            CollectAutomaticTargetsInRingRowSegment(
-                pawn,
-                combatState,
-                map,
-                center.x,
-                z,
-                Mathf.Max(minimumX, innerX + 1),
-                maximumX,
-                recordSearchCells,
-                ref primarySlot,
-                ref secondarySlot,
-                ref removedCandidate);
+            int leftEnd = Mathf.Min(maximumX, -innerX - 1);
+            if (minimumX <= leftEnd)
+            {
+                CollectAutomaticTargetsInRingRowSegment(
+                    pawn,
+                    combatState,
+                    map,
+                    center.x,
+                    z,
+                    minimumX,
+                    leftEnd,
+                    recordSearchCells,
+                    ref primarySlot,
+                    ref secondarySlot);
+            }
+            int rightStart = Mathf.Max(minimumX, innerX + 1);
+            if (rightStart <= maximumX)
+            {
+                CollectAutomaticTargetsInRingRowSegment(
+                    pawn,
+                    combatState,
+                    map,
+                    center.x,
+                    z,
+                    rightStart,
+                    maximumX,
+                    recordSearchCells,
+                    ref primarySlot,
+                    ref secondarySlot);
+            }
         }
 
         private static void CollectAutomaticTargetsInRingRowSegment(
@@ -755,22 +780,27 @@ namespace KRWF.RimKata
             int maximumX,
             bool recordSearchCells,
             ref RingCandidateSlot primarySlot,
-            ref RingCandidateSlot secondarySlot,
-            ref bool removedCandidate)
+            ref RingCandidateSlot secondarySlot)
         {
-            for (int x = minimumX; x <= maximumX; x++)
+            ThingGrid thingGrid = map.thingGrid;
+            int firstCellIndex = map.cellIndices.CellToIndex(centerX + minimumX, z);
+            int lastCellIndex = firstCellIndex + maximumX - minimumX;
+            for (int cellIndex = firstCellIndex; cellIndex <= lastCellIndex; cellIndex++)
             {
-                IntVec3 cell = new IntVec3(centerX + x, 0, z);
-                CollectAutomaticTargetsInCell(
-                    pawn,
-                    combatState,
-                    map,
-                    cell,
-                    ref primarySlot,
-                    ref secondarySlot,
-                    ref removedCandidate);
+                List<Thing> things = thingGrid.ThingsListAtFast(cellIndex);
+                if (things.Count > 0)
+                {
+                    CollectAutomaticTargetsInCell(
+                        pawn,
+                        combatState,
+                        things,
+                        ref primarySlot,
+                        ref secondarySlot);
+                }
                 if (recordSearchCells)
                 {
+                    IntVec3 cell = new IntVec3(
+                        centerX + minimumX + cellIndex - firstCellIndex, 0, z);
                     RimKataDebugHUD.RecordActualSearchCell(map, cell);
                 }
             }
@@ -779,13 +809,10 @@ namespace KRWF.RimKata
         private static void CollectAutomaticTargetsInCell(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            Map map,
-            IntVec3 cell,
+            List<Thing> things,
             ref RingCandidateSlot primarySlot,
-            ref RingCandidateSlot secondarySlot,
-            ref bool removedCandidate)
+            ref RingCandidateSlot secondarySlot)
         {
-            List<Thing> things = map.thingGrid.ThingsListAtFast(cell);
             for (int i = 0; i < things.Count; i++)
             {
                 Thing candidate = things[i];
@@ -794,23 +821,33 @@ namespace KRWF.RimKata
                     continue;
                 }
 
+                // ThingGrid registers 1x1 Things only once; only larger footprints repeat.
+                IntVec2 size = candidate.def.size;
+                if ((size.x != 1 || size.z != 1)
+                    && !VisitedMultiCellRingTargets.Add(candidate))
+                {
+                    continue;
+                }
+
+                // Both slots use the current shooter position, not the scan origin.
+                int distanceSquared = pawn.Position.DistanceToSquared(candidate.Position);
                 bool? newTargetValid = null;
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     ref primarySlot,
                     candidate,
+                    distanceSquared,
                     PrimaryRingCandidates,
-                    ref newTargetValid,
-                    ref removedCandidate);
+                    ref newTargetValid);
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     ref secondarySlot,
                     candidate,
+                    distanceSquared,
                     SecondaryRingCandidates,
-                    ref newTargetValid,
-                    ref removedCandidate);
+                    ref newTargetValid);
             }
         }
 
@@ -819,37 +856,28 @@ namespace KRWF.RimKata
             RimKataPawnCombatState combatState,
             ref RingCandidateSlot slot,
             Thing target,
+            int distanceSquared,
             List<Thing> stagedCandidates,
-            ref bool? newTargetValid,
-            ref bool removedCandidate)
+            ref bool? newTargetValid)
         {
             RimKataWeaponCycleState cycle = slot.cycle;
-            if (cycle == null)
+            // Selection, active plans and completion maintenance own member eviction.
+            if (cycle == null
+                || cycle.automaticCandidateCollectionClosed
+                || cycle.automaticCandidates?.Contains(target) == true)
             {
                 return;
             }
 
-            if (cycle.automaticCandidates?.Contains(target) == true)
-            {
-                if (cycle.weapon == null
-                    || slot.ResolveVerb(pawn) == null
-                    || !IsLiveRegisteredCandidate(pawn, target)
-                    || !CanHitRingCandidate(pawn, combatState, ref slot, target))
-                {
-                    removedCandidate |= RemoveAutomaticCandidate(
-                        combatState, cycle, target, false);
-                }
-                return;
-            }
-
-            if (cycle.automaticCandidateCollectionClosed
-                || stagedCandidates.Contains(target)
-                || !IsValidNewAutomaticTarget(pawn, target, ref newTargetValid))
+            float candidateCellRadius = slot.ResolveConfiguredRadius(pawn, combatState);
+            if (candidateCellRadius <= 0f
+                || distanceSquared > slot.configuredRadiusSquared)
             {
                 return;
             }
 
             if (!slot.CanAdmitNew(pawn, combatState)
+                || !IsValidNewAutomaticTarget(pawn, target, ref newTargetValid)
                 || !CanHitRingCandidate(pawn, combatState, ref slot, target))
             {
                 return;
@@ -870,14 +898,6 @@ namespace KRWF.RimKata
             ref RingCandidateSlot slot,
             Thing target)
         {
-            float candidateCellRadius = slot.ResolveConfiguredRadius(pawn, combatState);
-            if (candidateCellRadius <= 0f
-                || pawn.Position.DistanceToSquared(target.Position)
-                    > slot.configuredRadiusSquared)
-            {
-                return false;
-            }
-
             Verb verb = slot.ResolveVerb(pawn);
             return !verb.IsMeleeAttack && IsCloseCombatContext(combatState)
                 ? pawn.CanReachImmediate(target, PathEndMode.Touch)
@@ -1786,7 +1806,7 @@ namespace KRWF.RimKata
         private static void ClearOrdinaryCandidateList(
             RimKataWeaponCycleState cycle)
         {
-            cycle?.automaticCandidates?.Clear();
+            cycle?.ClearStoredAutomaticCandidates();
             if (cycle == null)
             {
                 return;
@@ -1795,6 +1815,50 @@ namespace KRWF.RimKata
             cycle.automaticCandidateCollectionClosed = false;
             cycle.pendingCandidateLimitOverride = 0;
             cycle.activeCandidateLimitOverride = 0;
+        }
+
+        private static void CompleteScan(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot)
+        {
+            bool removedCandidate = CheckNextStoredCandidate(
+                pawn, combatState, ref primarySlot);
+            removedCandidate |= CheckNextStoredCandidate(
+                pawn, combatState, ref secondarySlot);
+            if (removedCandidate)
+            {
+                // Notify while the scan is still active: preserve the next-band
+                // reservation and do not turn maintenance into another search.
+                NotifyAutomaticCandidateCountChanged(pawn, combatState, false);
+            }
+            Finish(combatState);
+        }
+
+        private static bool CheckNextStoredCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            ref RingCandidateSlot slot)
+        {
+            RimKataWeaponCycleState cycle = slot.cycle;
+            if (cycle == null
+                || !cycle.TryGetNextAutomaticCandidateForValidation(out Thing target))
+            {
+                return false;
+            }
+
+            if (CanShootRegisteredCandidate(
+                pawn, combatState, cycle, slot.ResolveVerb(pawn), target))
+            {
+                return false;
+            }
+
+            return RemoveAutomaticCandidate(
+                combatState,
+                cycle,
+                target,
+                !IsLiveRegisteredCandidate(pawn, target));
         }
 
         private static void Finish(RimKataPawnCombatState combatState)
