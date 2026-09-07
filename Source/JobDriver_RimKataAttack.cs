@@ -1074,14 +1074,6 @@ namespace KRWF.RimKata
                     ___pawn,
                     ThingDefOf.Mote_ColonistAttacking);
             }
-
-            if ((newJob?.def == JobDefOf.Goto
-                    || newJob?.def == JobDefOf.AttackMelee)
-                && newJob.playerForced
-                && ___pawn?.CurJob == newJob)
-            {
-                RimKataDualWeaponController.QueuePlayerMovementSearch(___pawn);
-            }
         }
 
         private static void NormalizeMeleeVerb(Pawn pawn, Job job)

@@ -482,24 +482,30 @@ namespace KRWF.RimKata
             CombatTickPermissions permissions = new CombatTickPermissions(pawn, currentJob);
             bool allowAutomaticRangedFire = permissions.allowAutomaticRangedFire;
 
-            Map map = pawn.Map;
-            if (map == null)
+            bool movementSearchAdmitted = false;
+            if (!RimKataCombatStatePresenceCache.TryGetOwner(
+                pawn, out RimKataMapComponent component))
             {
-                combatJob?.EndRimKataJobWith(JobCondition.Succeeded);
-                return;
+                if (combatJob == null)
+                {
+                    // Only the combat-condition trigger may create idle search work.
+                    // Ordinary movement does not need a map or state lookup.
+                    if (!CanRequestMovementSearch(pawn, null))
+                    {
+                        return;
+                    }
+                    movementSearchAdmitted = true;
+                }
+
+                Map map = pawn.Map;
+                if (map == null)
+                {
+                    combatJob?.EndRimKataJobWith(JobCondition.Succeeded);
+                    return;
+                }
+                component = map.GetComponent<RimKataMapComponent>();
             }
 
-            bool moving = pawn.pather?.Moving == true;
-            if (combatJob == null
-                && !RimKataCombatStatePresenceCache.Contains(pawn, map)
-                && (!permissions.allowCurrentJob
-                    || !permissions.allowMovementSearchWithoutWork
-                    || !moving))
-            {
-                return;
-            }
-
-            RimKataMapComponent component = map.GetComponent<RimKataMapComponent>();
             RimKataPawnCombatState state = component?.GetState(pawn, false);
             if (!permissions.allowCurrentJob)
             {
@@ -550,8 +556,13 @@ namespace KRWF.RimKata
 
             if (combatJob == null
                 && !hasCombatWork
-                && (!permissions.allowMovementSearchWithoutWork || !moving))
+                && !movementSearchAdmitted
+                && !CanRequestMovementSearch(pawn, state))
             {
+                if (state != null)
+                {
+                    state.draftedMovementSearchAllowed = false;
+                }
                 return;
             }
 
@@ -1301,26 +1312,6 @@ namespace KRWF.RimKata
             return true;
         }
 
-        public static bool NotifyDraftedMovementCell(Pawn pawn)
-        {
-            if (pawn?.Map == null)
-            {
-                return false;
-            }
-
-            CombatTickPermissions permissions = new CombatTickPermissions(pawn, pawn.CurJob);
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            if (!permissions.allowCurrentJob
-                || !permissions.AllowsMovementSearch(
-                    HasCombatTickWork(state),
-                    pawn.CurJobDef == RimKataDefOf.RimKata_Attack))
-            {
-                return false;
-            }
-
-            return PrepareMovementSearch(pawn, state, false);
-        }
-
         internal static bool TryReceiveDormantMovingHostiles(
             Pawn pawn,
             IReadOnlyList<Pawn> movingHostiles)
@@ -1468,19 +1459,13 @@ namespace KRWF.RimKata
 
         private static bool PrepareMovementSearch(
             Pawn pawn,
-            RimKataPawnCombatState state,
-            bool attackEligibilityVerified)
+            RimKataPawnCombatState state)
         {
-            state ??= StateFor(pawn, true);
             IntVec3 currentCell = pawn.Position;
             IntVec3 previousCell = state.draftedMovementSearchCell;
             bool movingFireEnabled = MovingFireEnabledForPawn(pawn);
-            bool firstTrackedMovement = !previousCell.IsValid
-                && pawn.pather?.Moving == true;
             bool movedToAnotherCell = previousCell.IsValid
                 && previousCell != currentCell;
-            bool movementSearchRequested = firstTrackedMovement
-                || movedToAnotherCell;
             state.draftedMovementSearchCell = currentCell;
             if (movingFireEnabled
                 && (pawn.pather?.MovingNow == true || movedToAnotherCell)
@@ -1489,28 +1474,17 @@ namespace KRWF.RimKata
                 state.RefreshMovementFireContinuity();
             }
 
-            if (!movingFireEnabled)
+            // Preserve movement continuity above even when new search is not allowed.
+            // Common preparation has already admitted the Pawn and supplied its state.
+            bool movementSearchAllowed = CanRequestMovementSearch(pawn, state, true);
+            bool movementSearchRequested = movementSearchAllowed
+                && (!state.draftedMovementSearchAllowed
+                    || movedToAnotherCell);
+            state.draftedMovementSearchAllowed = movementSearchAllowed;
+            if (!movementSearchAllowed)
             {
                 state.ConsumeDraftedMovementSearchTrigger();
                 return false;
-            }
-
-            bool randomAttackEnabled =
-                RimKataMod.Settings?.randomAttackEnabled != false
-                && (attackEligibilityVerified
-                    || RimKataEligibility.HasActiveRimKataAccess(pawn));
-            if (!randomAttackEnabled)
-            {
-                state.ConsumeDraftedMovementSearchTrigger();
-                return false;
-            }
-
-            if (movementSearchRequested)
-            {
-                BindCurrentWeapons(
-                    pawn,
-                    state,
-                    attackEligibilityVerified);
             }
 
             bool searchInProgress = MovementSearchInProgress(state);
@@ -1521,7 +1495,7 @@ namespace KRWF.RimKata
                     return true;
                 }
 
-                if (TryBeginMovementSearch(pawn, state, currentCell))
+                if (TryBeginMovementSearch(pawn, state, currentCell, true))
                 {
                     state.ConsumeDraftedMovementSearchTrigger();
                     return true;
@@ -1547,37 +1521,32 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            return TryBeginMovementSearch(pawn, state, currentCell);
+            return TryBeginMovementSearch(pawn, state, currentCell, true);
         }
 
-        public static void QueuePlayerMovementSearch(Pawn pawn)
+        private static bool HasMovementSearchCandidates(RimKataPawnCombatState state)
         {
-            if (pawn?.Map == null
-                || pawn.Drafted != true
-                || pawn.drafter?.FireAtWill != true
-                || (pawn.CurJobDef != JobDefOf.Goto
-                    && pawn.CurJobDef != JobDefOf.AttackMelee)
-                || pawn.CurJob?.playerForced != true
-                || !MovingFireEnabledForPawn(pawn)
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn)
-                || (RimKataWeaponSlotUtility.PrimaryWeapon(pawn) == null
-                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) == null))
-            {
-                return;
-            }
+            // Candidate presence is sufficient; admission already owns validation.
+            return state?.primaryWeaponCycle?.HasAutomaticCandidates == true
+                || state?.secondaryWeaponCycle?.HasAutomaticCandidates == true;
+        }
 
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state);
-            state.draftedMovementSearchCell = pawn.Position;
-            if (MovementSearchInProgress(state))
-            {
-                state.QueueDraftedMovementSearchTrigger();
-            }
-            else
-            {
-                state.ConsumeDraftedMovementSearchTrigger();
-                RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
-            }
+        private static bool CanRequestMovementSearch(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool attackEligibilityVerified = false)
+        {
+            return pawn?.Drafted == true
+                && (attackEligibilityVerified
+                    || RimKataEligibility.HasActiveRimKataAccess(pawn))
+                && pawn.drafter?.FireAtWill == true
+                && RimKataMod.Settings?.randomAttackEnabled != false
+                && MovingFireEnabledForPawn(pawn)
+                && (pawn.CurJobDef == RimKataDefOf.RimKata_Attack
+                    || RimKataDraftedFireController.IsAutomaticFireJob(pawn.CurJobDef))
+                && Find.TickManager?.slower?.ForcedNormalSpeed == true
+                && !HasMovementSearchCandidates(state)
+                && pawn.pather?.Moving == true;
         }
 
         private static bool HasMovementFireCombatWork(
@@ -1821,8 +1790,15 @@ namespace KRWF.RimKata
         private static bool TryBeginMovementSearch(
             Pawn pawn,
             RimKataPawnCombatState state,
-            IntVec3 origin)
+            IntVec3 origin,
+            bool movementSearchAdmitted = false)
         {
+            if (!movementSearchAdmitted && !CanRequestMovementSearch(pawn, state))
+            {
+                state.ConsumeDraftedMovementSearchTrigger();
+                state.draftedMovementSearchAllowed = false;
+                return false;
+            }
             BindCurrentWeapons(pawn, state);
             if (!RimKataSharedTargetSearch.Begin(pawn, state, origin))
             {
@@ -2666,6 +2642,32 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            RimKataPawnCombatState state = RimKataCombatStatePresenceCache.Contains(pawn, map)
+                ? StateFor(pawn, false)
+                : null;
+            return IsActualCombatActive(pawn, jobDef, state);
+        }
+
+        internal static bool IsActualCombatActive(
+            Pawn pawn,
+            JobDef jobDef,
+            RimKataPawnCombatState state)
+        {
+            Map map = pawn?.Map;
+            if (map == null
+                || pawn.InMentalState
+                || (jobDef != RimKataDefOf.RimKata_Attack
+                    && !RimKataDraftedFireController.IsAutomaticFireJob(jobDef)))
+            {
+                return false;
+            }
+
+            if (IsWeaponCycleRunningForPortrait(state?.primaryWeaponCycle)
+                || IsWeaponCycleRunningForPortrait(state?.secondaryWeaponCycle))
+            {
+                return true;
+            }
+
             Thing target = pawn.CurJob?.targetA.Thing;
             if (target?.Spawned == true
                 && target.Map == map
@@ -2676,14 +2678,7 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!RimKataCombatStatePresenceCache.Contains(pawn, map))
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            return IsWeaponCycleRunningForPortrait(state?.primaryWeaponCycle)
-                || IsWeaponCycleRunningForPortrait(state?.secondaryWeaponCycle);
+            return false;
         }
 
         private static bool IsWeaponCycleRunningForPortrait(
@@ -2726,7 +2721,7 @@ namespace KRWF.RimKata
                 && RimKataEquipmentUtility.IsPrimaryWeaponEnabled(pawn))
             {
                 // Movement feeds the shared search after common admission.
-                PrepareMovementSearch(pawn, state, true);
+                PrepareMovementSearch(pawn, state);
             }
 
             return true;

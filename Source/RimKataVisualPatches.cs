@@ -104,11 +104,10 @@ namespace KRWF.RimKata
             out RimKataVisualSnapshot snapshot)
         {
             snapshot = default(RimKataVisualSnapshot);
-            RimKataMapComponent component = pawn?.Map
-                ?.GetComponent<RimKataMapComponent>();
-            return component?.TryGetActiveVisualSnapshot(
-                pawn,
-                out snapshot) == true;
+            return RimKataCombatStatePresenceCache.TryGetOwner(
+                    pawn,
+                    out RimKataMapComponent component)
+                && component.TryGetActiveVisualSnapshot(pawn, out snapshot);
         }
 
         public static bool TryGetCachedActiveSnapshot(
@@ -124,6 +123,22 @@ namespace KRWF.RimKata
             }
 
             return TryGetActiveSnapshot(pawn, out snapshot);
+        }
+
+        internal static bool TryGetCachedActiveSnapshot(
+            Pawn pawn,
+            RimKataMapComponent component,
+            out RimKataVisualSnapshot snapshot)
+        {
+            snapshot = default(RimKataVisualSnapshot);
+            if (!RimKataResponseVisualParticipantCache.IsParticipant(pawn)
+                && !RimKataResponseVisualParticipantCache
+                    .IsBodyVisualParticipant(pawn))
+            {
+                return false;
+            }
+
+            return component?.TryGetActiveVisualSnapshot(pawn, out snapshot) == true;
         }
 
         public static bool TryGetCachedResponseSnapshot(
@@ -1577,9 +1592,9 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!RimKataCombatStatePresenceCache.Contains(
+            if (!RimKataCombatStatePresenceCache.TryGetOwner(
                     ___pawn,
-                    ___pawn?.Map))
+                    out RimKataMapComponent component))
             {
                 return;
             }
@@ -1602,6 +1617,7 @@ namespace KRWF.RimKata
 
             if (!RimKataVisualUtility.TryGetCachedActiveSnapshot(
                     ___pawn,
+                    component,
                     out RimKataVisualSnapshot snapshot))
             {
                 return;

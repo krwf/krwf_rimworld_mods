@@ -105,7 +105,7 @@ namespace KRWF.RimKata
     {
         private sealed class StateMarker
         {
-            public volatile Map map;
+            public volatile RimKataMapComponent owner;
         }
 
         private static readonly ConditionalWeakTable<Pawn, StateMarker>
@@ -118,14 +118,34 @@ namespace KRWF.RimKata
             return pawn != null
                 && map != null
                 && PawnsWithState.TryGetValue(pawn, out StateMarker marker)
-                && marker.map == map;
+                && marker.owner?.map == map;
         }
 
-        internal static void Mark(Pawn pawn, Map map)
+        internal static bool TryGetOwner(Pawn pawn, out RimKataMapComponent component)
         {
-            if (pawn != null && map != null)
+            component = null;
+            if (pawn == null || !PawnsWithState.TryGetValue(pawn, out StateMarker marker))
             {
-                PawnsWithState.GetValue(pawn, CreateMarker).map = map;
+                return false;
+            }
+
+            RimKataMapComponent owner = marker.owner;
+            Map ownerMap = owner?.map;
+            // Most rendered pawns have no state. Read their map only after a hit.
+            if (ownerMap == null || pawn.Map != ownerMap)
+            {
+                return false;
+            }
+
+            component = owner;
+            return true;
+        }
+
+        internal static void Mark(Pawn pawn, RimKataMapComponent component)
+        {
+            if (pawn != null && component?.map != null)
+            {
+                PawnsWithState.GetValue(pawn, CreateMarker).owner = component;
             }
         }
 
@@ -134,7 +154,7 @@ namespace KRWF.RimKata
             if (pawn != null
                 && map != null
                 && PawnsWithState.TryGetValue(pawn, out StateMarker marker)
-                && marker.map == map)
+                && marker.owner?.map == map)
             {
                 PawnsWithState.Remove(pawn);
             }
@@ -368,6 +388,8 @@ namespace KRWF.RimKata
         // Retained for old saves; live combat does not maintain a drafted-only latch.
         public bool draftedFireActive;
         public IntVec3 draftedMovementSearchCell = IntVec3.Invalid;
+        // Transient edge: newly allowed movement can search before the next cell change.
+        public bool draftedMovementSearchAllowed;
         public bool draftedMovementSearchTriggerPending;
         public int draftedWarmupTicksRemaining = -1;
         public int draftedCooldownTicksRemaining;
@@ -1172,6 +1194,7 @@ namespace KRWF.RimKata
         public void ClearDraftedMovementSearchTracking()
         {
             draftedMovementSearchCell = IntVec3.Invalid;
+            draftedMovementSearchAllowed = false;
             draftedMovementSearchTriggerPending = false;
             idleProjectileSearchTriggerPending = false;
             movementFireContinuityUntilTick = -1;
@@ -1592,12 +1615,13 @@ namespace KRWF.RimKata
                     RebuildInterceptionShotLinkIndex(false);
                 }
             }
+            RimKataDormantHostileMovementRegistry.ExposeData(map);
         }
 
         public override void MapComponentTick()
         {
-            RimKataDormantHostileMovementRegistry.ProcessPending(map);
             TickProjectileScheduler();
+            bool actualCombatActive = false;
             lock (statesLock)
             {
                 for (int i = states.Count - 1; i >= 0; i--)
@@ -1691,8 +1715,14 @@ namespace KRWF.RimKata
                     {
                         RemoveStateAt(i);
                     }
+                    else if (!actualCombatActive)
+                    {
+                        actualCombatActive = RimKataDualWeaponController.IsActualCombatActive(
+                            state.pawn, state.pawn.CurJobDef, state);
+                    }
                 }
             }
+            RimKataDormantHostileMovementRegistry.ProcessPending(map, actualCombatActive);
         }
 
         internal void RegisterLaunchedRangedProjectile(
@@ -2592,7 +2622,7 @@ namespace KRWF.RimKata
                 }
 
                 RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
-                RimKataCombatStatePresenceCache.Mark(pawn, map);
+                RimKataCombatStatePresenceCache.Mark(pawn, this);
                 states.Add(state);
                 statesByPawn[pawn] = state;
                 state.temporaryInactive = RimKataTemporaryInactivity.IsInactive(pawn);
@@ -2635,7 +2665,7 @@ namespace KRWF.RimKata
                 RimKataPawnCombatState state = states[i];
                 if (state?.pawn != null)
                 {
-                    RimKataCombatStatePresenceCache.Mark(state.pawn, map);
+                    RimKataCombatStatePresenceCache.Mark(state.pawn, this);
                     statesByPawn[state.pawn] = state;
                     RimKataPendingFollowupTickCache.Synchronize(
                         state.pawn,

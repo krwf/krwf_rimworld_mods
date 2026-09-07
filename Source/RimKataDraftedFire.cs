@@ -300,6 +300,10 @@ namespace KRWF.RimKata
     {
         private sealed class MapEntry
         {
+            internal bool forcedNormalSpeedWasActive;
+            internal bool actualCombatWasActive;
+            internal bool awaitingCombatEnd;
+            internal bool restoreHostileWatchPending;
             internal HashSet<IAttackTarget> hostileTargets;
             internal readonly HashSet<Pawn> receivers =
                 new HashSet<Pawn>();
@@ -315,6 +319,45 @@ namespace KRWF.RimKata
             new ConditionalWeakTable<Map, MapEntry>();
         private static readonly ConditionalWeakTable<Map, MapEntry>
             .CreateValueCallback CreateEntry = delegate { return new MapEntry(); };
+
+        internal static void ExposeData(Map map)
+        {
+            if (map == null)
+            {
+                return;
+            }
+
+            ByMap.TryGetValue(map, out MapEntry entry);
+            bool forcedNormalSpeedWasActive = entry?.forcedNormalSpeedWasActive == true;
+            bool actualCombatWasActive = entry?.actualCombatWasActive == true;
+            bool awaitingCombatEnd = entry?.awaitingCombatEnd == true;
+            bool watchingHostiles = entry?.hostileTargets != null
+                || entry?.restoreHostileWatchPending == true;
+            Scribe_Values.Look(ref forcedNormalSpeedWasActive,
+                "rimKataHostileWatchForcedSpeedWasActive", false);
+            Scribe_Values.Look(ref actualCombatWasActive,
+                "rimKataHostileWatchActualCombatWasActive", false);
+            Scribe_Values.Look(ref awaitingCombatEnd,
+                "rimKataHostileWatchAwaitingCombatEnd", false);
+            Scribe_Values.Look(ref watchingHostiles,
+                "rimKataHostileWatchActive", false);
+            if (Scribe.mode != LoadSaveMode.LoadingVars)
+            {
+                return;
+            }
+
+            if (entry == null && !forcedNormalSpeedWasActive
+                && !actualCombatWasActive && !awaitingCombatEnd && !watchingHostiles)
+            {
+                return;
+            }
+            entry ??= ByMap.GetValue(map, CreateEntry);
+            ClearHostileCache(entry);
+            entry.forcedNormalSpeedWasActive = forcedNormalSpeedWasActive;
+            entry.actualCombatWasActive = actualCombatWasActive;
+            entry.awaitingCombatEnd = awaitingCombatEnd;
+            entry.restoreHostileWatchPending = watchingHostiles;
+        }
 
         internal static void NotifyAccessChanged(Pawn pawn, bool hasAccess)
         {
@@ -374,24 +417,72 @@ namespace KRWF.RimKata
             }
         }
 
-        internal static void ProcessPending(Map map)
+        internal static void ProcessPending(Map map, bool actualCombatActive)
         {
-            if (map == null
-                || !ByMap.TryGetValue(map, out MapEntry entry))
+            if (map == null)
             {
                 return;
             }
 
-            if (Find.TickManager?.slower?.ForcedNormalSpeed != false)
+            bool? forcedNormalSpeed = Find.TickManager?.slower?.ForcedNormalSpeed;
+            if (!forcedNormalSpeed.HasValue)
+            {
+                return;
+            }
+
+            bool forcedNormalSpeedActive = forcedNormalSpeed.Value;
+            if (!ByMap.TryGetValue(map, out MapEntry entry))
+            {
+                if (!forcedNormalSpeedActive && !actualCombatActive)
+                {
+                    return;
+                }
+                entry = ByMap.GetValue(map, CreateEntry);
+            }
+
+            bool forcedSpeedStarted = forcedNormalSpeedActive
+                && !entry.forcedNormalSpeedWasActive;
+            bool forcedSpeedEnded = !forcedNormalSpeedActive
+                && entry.forcedNormalSpeedWasActive;
+            bool actualCombatStarted = actualCombatActive
+                && !entry.actualCombatWasActive;
+            bool actualCombatEnded = !actualCombatActive
+                && entry.actualCombatWasActive;
+            entry.forcedNormalSpeedWasActive = forcedNormalSpeedActive;
+            entry.actualCombatWasActive = actualCombatActive;
+
+            if (forcedSpeedStarted
+                || (actualCombatStarted
+                    && !entry.awaitingCombatEnd
+                    && !forcedSpeedEnded))
             {
                 ClearHostileCache(entry);
-                return;
+                entry.awaitingCombatEnd = true;
             }
 
-            RefreshHostileCache(map, entry);
+            if (entry.awaitingCombatEnd)
+            {
+                if (!forcedSpeedEnded
+                    && (forcedNormalSpeedActive || !actualCombatEnded))
+                {
+                    entry.pendingHostiles.Clear();
+                    return;
+                }
+
+                // Forced-speed release owns normal combat's end even if a weapon
+                // cooldown remains. Without that signal, the actual-combat fall does.
+                entry.awaitingCombatEnd = false;
+                AcquireHostileCacheAfterCombat(map, entry);
+            }
+
+            if (entry.restoreHostileWatchPending)
+            {
+                AcquireHostileCacheAfterCombat(map, entry);
+            }
+
             if (entry.hostileTargets == null || entry.hostileTargets.Count == 0)
             {
-                entry.pendingHostiles.Clear();
+                ClearHostileCache(entry);
                 return;
             }
 
@@ -442,8 +533,8 @@ namespace KRWF.RimKata
                 existing = ByMap.GetValue(map, CreateEntry);
             }
 
-            RefreshHostileCache(map, existing);
-            if (existing.hostileTargets?.Count > 0
+            if (!existing.awaitingCombatEnd
+                && existing.hostileTargets?.Count > 0
                 && existing.hostileTargets.Contains(pawn))
             {
                 if (existing.receivers.Count > 0
@@ -466,34 +557,23 @@ namespace KRWF.RimKata
             }
         }
 
-        private static void RefreshHostileCache(
+        private static void AcquireHostileCacheAfterCombat(
             Map map,
             MapEntry entry)
         {
-            if (entry.hostileTargets == null)
+            entry.restoreHostileWatchPending = false;
+            entry.hostileTargets = Faction.OfPlayer != null
+                ? map.attackTargetsCache?.TargetsHostileToColony
+                : null;
+            if (entry.hostileTargets == null || entry.hostileTargets.Count == 0)
             {
-                // Keep vanilla's live set for this peacetime period, including empty sets.
-                entry.hostileTargets = Faction.OfPlayer != null
-                    ? map.attackTargetsCache?.TargetsHostileToColony
-                    : null;
-            }
-        }
-
-        internal static void NotifyAttackTargetRegistered(Map map)
-        {
-            if (map != null
-                && ByMap.TryGetValue(map, out MapEntry entry)
-                && entry.hostileTargets != null
-                && entry.hostileTargets.Count == 0)
-            {
-                // The initial vanilla emptySet can be replaced by the first hostile set.
-                // RegisterTarget also follows faction/mental-state UpdateTarget calls.
-                entry.hostileTargets = null;
+                ClearHostileCache(entry);
             }
         }
 
         private static void ClearHostileCache(MapEntry entry)
         {
+            entry.restoreHostileWatchPending = false;
             entry.hostileTargets = null;
             entry.pendingHostiles.Clear();
         }
@@ -559,19 +639,6 @@ namespace KRWF.RimKata
                 && pawn.Map == map
                 && pawn.pather?.Moving == true
                 && hostileTargets?.Contains(pawn) == true;
-        }
-    }
-
-    [HarmonyPatch(typeof(AttackTargetsCache), "RegisterTarget")]
-    public static class Patch_AttackTargetsCache_RimKataDormantHostileRegistration
-    {
-        public static void Postfix(Map ___map, IAttackTarget target)
-        {
-            if (target is Pawn)
-            {
-                RimKataDormantHostileMovementRegistry.NotifyAttackTargetRegistered(
-                    ___map);
-            }
         }
     }
 

@@ -150,7 +150,7 @@ namespace KRWF.RimKata
             return closeDefenseResolved && pawn != null && pawn == closeResolvedDefender;
         }
 
-        private static void RecordCloseAttackResolution(Pawn pawn, bool avoided)
+        internal static void RecordCloseAttackResolution(Pawn pawn, bool avoided)
         {
             closeResolvedDefender = pawn;
             closeDefenseResolved = true;
@@ -423,7 +423,9 @@ namespace KRWF.RimKata
 
         public static void MarkProjectileAvoided(Pawn pawn)
         {
-            if (projectileDefenseDepth > 0 && projectileDefenseFrames != null)
+            if (RimKataProjectileImpactContext.CurrentProjectile != null
+                && projectileDefenseDepth > 0
+                && projectileDefenseFrames != null)
             {
                 int index = projectileDefenseDepth - 1;
                 ProjectileDefenseFrame frame = projectileDefenseFrames[index];
@@ -904,6 +906,15 @@ namespace KRWF.RimKata
             bool closeMeleeTarget = RimKataFireContext.CloseShot
                 && RimKataFireContext.CloseMeleeResolution
                 && RimKataFireContext.CloseTarget == __instance;
+            if (absorbed
+                && closeMeleeTarget
+                && RimKataFireContext.DirectCloseHit.HasValue
+                && RimKataProjectileImpactContext.CurrentProjectile == null
+                && !RimKataDefenseUtility.TryGetCloseAttackResolution(__instance, out _))
+            {
+                RimKataDefenseUtility.RecordCloseAttackResolution(__instance, false);
+            }
+
             if (absorbed
                 && !RimKataDefenseUtility.TryGetResolvedProjectileDefense(__instance, out _)
                 && (closeMeleeTarget

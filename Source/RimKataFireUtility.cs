@@ -189,15 +189,17 @@ namespace KRWF.RimKata
 
     public static class RimKataFireContext
     {
-        private struct PendingCloseImpact
+        private struct PendingCloseHit
         {
             public Projectile projectile;
             public LocalTargetInfo usedTarget;
+            public RimKataDirectCloseHit? directHit;
         }
 
         public struct ScopeState
         {
-            private List<PendingCloseImpact> pendingImpacts;
+            private List<PendingCloseHit> pendingHits;
+            private RimKataDirectCloseHit? directCloseHit;
             private Verb activeVerb;
             private Pawn shooter;
             private Thing closeTarget;
@@ -219,7 +221,8 @@ namespace KRWF.RimKata
             {
                 return new ScopeState
                 {
-                    pendingImpacts = pendingCloseImpacts,
+                    pendingHits = pendingCloseHits,
+                    directCloseHit = DirectCloseHit,
                     activeVerb = ActiveVerb,
                     shooter = Shooter,
                     closeTarget = CloseTarget,
@@ -241,7 +244,8 @@ namespace KRWF.RimKata
 
             internal void Restore()
             {
-                pendingCloseImpacts = pendingImpacts;
+                pendingCloseHits = pendingHits;
+                DirectCloseHit = directCloseHit;
                 ActiveVerb = activeVerb;
                 Shooter = shooter;
                 CloseTarget = closeTarget;
@@ -261,7 +265,8 @@ namespace KRWF.RimKata
             }
         }
 
-        [ThreadStatic] private static List<PendingCloseImpact> pendingCloseImpacts;
+        [ThreadStatic] private static List<PendingCloseHit> pendingCloseHits;
+        [ThreadStatic] internal static RimKataDirectCloseHit? DirectCloseHit;
         [ThreadStatic] public static Verb ActiveVerb;
         [ThreadStatic] public static Pawn Shooter;
         [ThreadStatic] public static Thing CloseTarget;
@@ -306,7 +311,8 @@ namespace KRWF.RimKata
                 ? OriginalBurstCount
                 : Mathf.Max(1, verb?.BurstShotCount ?? 1);
             ScopeState previous = ScopeState.Capture();
-            pendingCloseImpacts = null;
+            pendingCloseHits = null;
+            DirectCloseHit = null;
             OriginalBurstCount = Mathf.Max(1, nextOriginalBurstCount);
             ActiveVerb = verb;
             Shooter = shooter;
@@ -327,21 +333,47 @@ namespace KRWF.RimKata
 
         public static void QueueCloseImpact(Projectile projectile, LocalTargetInfo usedTarget)
         {
-            pendingCloseImpacts ??= new List<PendingCloseImpact>();
-            pendingCloseImpacts.Add(new PendingCloseImpact
+            pendingCloseHits ??= new List<PendingCloseHit>();
+            pendingCloseHits.Add(new PendingCloseHit
             {
                 projectile = projectile,
                 usedTarget = usedTarget
             });
         }
 
-        public static void FlushPendingCloseImpacts()
+        internal static void QueueDirectCloseHit(RimKataDirectCloseHit hit)
         {
-            while (pendingCloseImpacts != null && pendingCloseImpacts.Count > 0)
+            pendingCloseHits ??= new List<PendingCloseHit>();
+            pendingCloseHits.Add(new PendingCloseHit { directHit = hit });
+        }
+
+        public static void ResolvePendingCloseHits()
+        {
+            while (pendingCloseHits != null && pendingCloseHits.Count > 0)
             {
-                PendingCloseImpact pending = pendingCloseImpacts[0];
-                pendingCloseImpacts.RemoveAt(0);
-                RimKataProjectileUtility.ResolveCloseImpact(pending.projectile, pending.usedTarget);
+                PendingCloseHit pending = pendingCloseHits[0];
+                pendingCloseHits.RemoveAt(0);
+                if (!pending.directHit.HasValue)
+                {
+                    RimKataProjectileUtility.ResolveCloseImpact(pending.projectile, pending.usedTarget);
+                    continue;
+                }
+
+                // Damage follows vanilla firing notifications, just as the old
+                // immediate impact did. Isolate any enclosing projectile hit.
+                Projectile previousProjectile = RimKataProjectileImpactContext.CurrentProjectile;
+                RimKataDirectCloseHit? previousHit = DirectCloseHit;
+                try
+                {
+                    RimKataProjectileImpactContext.CurrentProjectile = null;
+                    DirectCloseHit = pending.directHit;
+                    pending.directHit.Value.Resolve();
+                }
+                finally
+                {
+                    DirectCloseHit = previousHit;
+                    RimKataProjectileImpactContext.CurrentProjectile = previousProjectile;
+                }
             }
         }
 
@@ -352,27 +384,27 @@ namespace KRWF.RimKata
                 return;
             }
 
-            DiscardPendingCloseImpacts();
+            DiscardPendingCloseHits();
             previous.Restore();
         }
 
-        private static void DiscardPendingCloseImpacts()
+        private static void DiscardPendingCloseHits()
         {
-            if (pendingCloseImpacts == null)
+            if (pendingCloseHits == null)
             {
                 return;
             }
 
-            for (int i = 0; i < pendingCloseImpacts.Count; i++)
+            for (int i = 0; i < pendingCloseHits.Count; i++)
             {
-                Projectile projectile = pendingCloseImpacts[i].projectile;
+                Projectile projectile = pendingCloseHits[i].projectile;
                 if (projectile != null && !projectile.Destroyed)
                 {
                     projectile.Destroy();
                 }
             }
 
-            pendingCloseImpacts.Clear();
+            pendingCloseHits.Clear();
         }
     }
 
@@ -579,7 +611,7 @@ namespace KRWF.RimKata
             try
             {
                 verb.WarmupComplete();
-                RimKataFireContext.FlushPendingCloseImpacts();
+                RimKataFireContext.ResolvePendingCloseHits();
                 return RimKataFireContext.ShotFired;
             }
             catch (Exception exception)
@@ -759,7 +791,11 @@ namespace KRWF.RimKata
 
         public static void SpawnDeflectedMiss(Projectile source, Pawn attacker, Pawn defender, Verb sourceVerb)
         {
-            if (source == null || attacker?.Map == null || defender?.Map != attacker.Map)
+            RimKataDirectCloseHit? directHit = source == null
+                ? RimKataFireContext.DirectCloseHit
+                : null;
+            ThingDef sourceDef = source?.def ?? directHit?.projectileDef;
+            if (sourceDef == null || attacker?.Map == null || defender?.Map != attacker.Map)
             {
                 return;
             }
@@ -771,17 +807,24 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Projectile redirected = ThingMaker.MakeThing(source.def) as Projectile;
+            Projectile redirected = ThingMaker.MakeThing(sourceDef) as Projectile;
             if (redirected == null)
             {
                 return;
             }
 
             GenSpawn.Spawn(redirected, attacker.Position, map);
-            redirected.damageDefOverride = source.damageDefOverride;
-            if (source.extraDamages != null)
+            if (source != null)
             {
-                redirected.extraDamages = new List<ExtraDamage>(source.extraDamages);
+                redirected.damageDefOverride = source.damageDefOverride;
+                if (source.extraDamages != null)
+                {
+                    redirected.extraDamages = new List<ExtraDamage>(source.extraDamages);
+                }
+            }
+            else
+            {
+                directHit.Value.ConfigureProjectile(redirected);
             }
 
             ProjectileHitFlags flags = ProjectileHitFlags.NonTargetPawns | ProjectileHitFlags.NonTargetWorld;
@@ -789,7 +832,9 @@ namespace KRWF.RimKata
             try
             {
                 redirected.Launch(attacker, attacker.DrawPos, missCell, defender, flags, false, sourceVerb?.EquipmentSource);
-                redirected.stoppingPower = source.stoppingPower;
+                redirected.stoppingPower = source != null
+                    ? source.stoppingPower
+                    : directHit.Value.stoppingPower;
             }
             finally
             {
@@ -838,6 +883,28 @@ namespace KRWF.RimKata
         }
     }
 
+
+    [HarmonyPatch(typeof(Verb_LaunchProjectile), "TryCastShot")]
+    public static class Patch_VerbLaunchProjectile_RimKataCloseDamage
+    {
+        public static bool Prefix(
+            Verb_LaunchProjectile __instance,
+            bool ___canHitNonTargetPawnsNow,
+            ref int ___lastShotTick,
+            ref bool __result)
+        {
+            if (!RimKataDirectCloseShot.TryPrepare(
+                    __instance, ___canHitNonTargetPawnsNow, out RimKataDirectCloseHit hit))
+            {
+                return true;
+            }
+
+            ___lastShotTick = Find.TickManager.TicksGame;
+            RimKataFireContext.QueueDirectCloseHit(hit);
+            __result = true;
+            return false;
+        }
+    }
 
     [HarmonyPatch]
     public static class Patch_Verb_TryCastShot_RimKata
