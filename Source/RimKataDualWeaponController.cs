@@ -45,7 +45,6 @@ namespace KRWF.RimKata
         public Thing focusedTarget;
         public bool focusedTargetFromAttackGizmo;
         public Thing plannedTarget;
-        public IntVec3 plannedTargetCell = IntVec3.Invalid;
         public bool plannedInterception;
         public bool plannedCloseAttack;
         public bool plannedCloseContext;
@@ -119,10 +118,6 @@ namespace KRWF.RimKata
                 ref focusedTargetFromAttackGizmo,
                 "focusedTargetFromAttackGizmo");
             Scribe_References.Look(ref plannedTarget, "plannedTarget");
-            Scribe_Values.Look(
-                ref plannedTargetCell,
-                "plannedTargetCell",
-                IntVec3.Invalid);
             Scribe_Values.Look(ref plannedInterception, "plannedInterception");
             Scribe_Values.Look(ref plannedCloseAttack, "plannedCloseAttack");
             Scribe_Values.Look(ref plannedCloseContext, "plannedCloseContext");
@@ -243,7 +238,6 @@ namespace KRWF.RimKata
         public void ClearPlan(bool resetWarmup = true)
         {
             plannedTarget = null;
-            plannedTargetCell = IntVec3.Invalid;
             plannedInterception = false;
             plannedCloseAttack = false;
             plannedCloseContext = false;
@@ -3117,7 +3111,6 @@ namespace KRWF.RimKata
             }
 
             cycle.plannedTarget = null;
-            cycle.plannedTargetCell = IntVec3.Invalid;
             cycle.plannedInterception = false;
             cycle.plannedCloseAttack = false;
             cycle.plannedCloseContext = false;
@@ -5386,21 +5379,6 @@ namespace KRWF.RimKata
                 && !closeCombatContext
                 && randomAttackEnabled;
 
-            if (cycle.HasPlan
-                && cycle.plannedTarget?.Spawned == true
-                && cycle.plannedTargetCell.IsValid
-                && cycle.plannedTargetCell != cycle.plannedTarget.Position)
-            {
-                cycle.plannedTargetCell = cycle.plannedTarget.Position;
-                if (!cycle.plannedInterception)
-                {
-                    RimKataSharedTargetSearch.Begin(
-                        pawn,
-                        state,
-                        pawn.Position);
-                }
-            }
-
             bool focusedTargetControlsCycle = ordinaryWeaponEnabled && PrepareFocusedTarget(
                 pawn,
                 cycle,
@@ -6045,9 +6023,6 @@ namespace KRWF.RimKata
             bool updateVisualTarget)
         {
             cycle.plannedTarget = target;
-            cycle.plannedTargetCell = target?.Spawned == true
-                ? target.Position
-                : IntVec3.Invalid;
             cycle.plannedInterception = interception;
             cycle.plannedCloseAttack = closeAttack;
             cycle.plannedCloseContext = closeContext;
