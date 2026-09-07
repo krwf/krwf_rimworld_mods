@@ -233,9 +233,8 @@ namespace KRWF.RimKata
         public static bool IsAttackJob(JobDef jobDef, Pawn pawn)
         {
             return jobDef == JobDefOf.AttackStatic
-                || jobDef == RimKataDefOf.RimKata_Attack
-                || RimKataDraftedFireController
-                    .IsDraftedCombatSequenceActiveForUi(pawn, jobDef);
+                || RimKataDualWeaponController
+                    .IsCombatActiveForPortrait(pawn, jobDef);
         }
     }
 }

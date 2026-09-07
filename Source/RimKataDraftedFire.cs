@@ -55,24 +55,6 @@ namespace KRWF.RimKata
 
     public static class RimKataDraftedFireController
     {
-        internal static bool IsDraftedCombatSequenceActiveForUi(
-            Pawn pawn,
-            JobDef jobDef)
-        {
-            Map map = pawn?.Map;
-            if (pawn?.Drafted != true
-                || map == null
-                || pawn.InMentalState
-                || !IsAutomaticFireJob(jobDef)
-                || !RimKataCombatStatePresenceCache.Contains(pawn, map))
-            {
-                return false;
-            }
-
-            return map.GetComponent<RimKataMapComponent>()
-                ?.IsDualEngagementActive(pawn) == true;
-        }
-
         public static void Tick(Pawn pawn)
         {
             RimKataDualWeaponController.TickCombat(pawn, true);
@@ -318,6 +300,7 @@ namespace KRWF.RimKata
     {
         private sealed class MapEntry
         {
+            internal HashSet<IAttackTarget> hostileTargets;
             internal readonly HashSet<Pawn> receivers =
                 new HashSet<Pawn>();
             internal readonly HashSet<Pawn> pendingHostiles =
@@ -401,6 +384,13 @@ namespace KRWF.RimKata
 
             if (Find.TickManager?.slower?.ForcedNormalSpeed != false)
             {
+                ClearHostileCache(entry);
+                return;
+            }
+
+            RefreshHostileCache(map, entry);
+            if (entry.hostileTargets == null || entry.hostileTargets.Count == 0)
+            {
                 entry.pendingHostiles.Clear();
                 return;
             }
@@ -431,22 +421,13 @@ namespace KRWF.RimKata
         {
             Map map = pawn?.Map;
             if (map == null
-                || !pawn.Spawned
-                || Find.TickManager?.slower?.ForcedNormalSpeed != false)
+                || !pawn.Spawned)
             {
                 return;
             }
 
-            bool hostileToPlayer = Faction.OfPlayer != null
-                && pawn.HostileTo(Faction.OfPlayer);
-            if (hostileToPlayer)
+            if (Find.TickManager?.slower?.ForcedNormalSpeed != false)
             {
-                if (IsLiveMovingHostile(pawn, map)
-                    && ByMap.TryGetValue(map, out MapEntry entry)
-                    && entry.receivers.Count > 0)
-                {
-                    entry.pendingHostiles.Add(pawn);
-                }
                 return;
             }
 
@@ -460,11 +441,20 @@ namespace KRWF.RimKata
 
                 existing = ByMap.GetValue(map, CreateEntry);
             }
-            else
+
+            RefreshHostileCache(map, existing);
+            if (existing.hostileTargets?.Count > 0
+                && existing.hostileTargets.Contains(pawn))
             {
-                existing.pendingHostiles.Remove(pawn);
+                if (existing.receivers.Count > 0
+                    && IsLiveMovingHostile(pawn, map, existing.hostileTargets))
+                {
+                    existing.pendingHostiles.Add(pawn);
+                }
+                return;
             }
 
+            existing.pendingHostiles.Remove(pawn);
             if (IsLiveReceiverMember(pawn, map)
                 && RimKataEligibility.HasRimKataAccess(pawn))
             {
@@ -474,6 +464,38 @@ namespace KRWF.RimKata
             {
                 existing.receivers.Remove(pawn);
             }
+        }
+
+        private static void RefreshHostileCache(
+            Map map,
+            MapEntry entry)
+        {
+            if (entry.hostileTargets == null)
+            {
+                // Keep vanilla's live set for this peacetime period, including empty sets.
+                entry.hostileTargets = Faction.OfPlayer != null
+                    ? map.attackTargetsCache?.TargetsHostileToColony
+                    : null;
+            }
+        }
+
+        internal static void NotifyAttackTargetRegistered(Map map)
+        {
+            if (map != null
+                && ByMap.TryGetValue(map, out MapEntry entry)
+                && entry.hostileTargets != null
+                && entry.hostileTargets.Count == 0)
+            {
+                // The initial vanilla emptySet can be replaced by the first hostile set.
+                // RegisterTarget also follows faction/mental-state UpdateTarget calls.
+                entry.hostileTargets = null;
+            }
+        }
+
+        private static void ClearHostileCache(MapEntry entry)
+        {
+            entry.hostileTargets = null;
+            entry.pendingHostiles.Clear();
         }
 
         private static void BuildLiveReceiverSnapshot(
@@ -506,7 +528,7 @@ namespace KRWF.RimKata
             entry.hostileSnapshot.Clear();
             foreach (Pawn hostile in entry.pendingHostiles)
             {
-                if (IsLiveMovingHostile(hostile, map))
+                if (IsLiveMovingHostile(hostile, map, entry.hostileTargets))
                 {
                     entry.hostileSnapshot.Add(hostile);
                 }
@@ -525,7 +547,10 @@ namespace KRWF.RimKata
                 && pawn.pather?.Moving == true;
         }
 
-        private static bool IsLiveMovingHostile(Pawn pawn, Map map)
+        private static bool IsLiveMovingHostile(
+            Pawn pawn,
+            Map map,
+            HashSet<IAttackTarget> hostileTargets)
         {
             return pawn != null
                 && !pawn.Destroyed
@@ -533,8 +558,20 @@ namespace KRWF.RimKata
                 && !pawn.Dead
                 && pawn.Map == map
                 && pawn.pather?.Moving == true
-                && Faction.OfPlayer != null
-                && pawn.HostileTo(Faction.OfPlayer);
+                && hostileTargets?.Contains(pawn) == true;
+        }
+    }
+
+    [HarmonyPatch(typeof(AttackTargetsCache), "RegisterTarget")]
+    public static class Patch_AttackTargetsCache_RimKataDormantHostileRegistration
+    {
+        public static void Postfix(Map ___map, IAttackTarget target)
+        {
+            if (target is Pawn)
+            {
+                RimKataDormantHostileMovementRegistry.NotifyAttackTargetRegistered(
+                    ___map);
+            }
         }
     }
 

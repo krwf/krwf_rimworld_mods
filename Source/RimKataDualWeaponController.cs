@@ -494,8 +494,7 @@ namespace KRWF.RimKata
                 && !RimKataCombatStatePresenceCache.Contains(pawn, map)
                 && (!permissions.allowCurrentJob
                     || !permissions.allowMovementSearchWithoutWork
-                    || !moving
-                    || !HasAutomaticMovementSearchPotential(pawn)))
+                    || !moving))
             {
                 return;
             }
@@ -826,8 +825,7 @@ namespace KRWF.RimKata
                 CancelUnfiredWarmupForDraftChange(state.secondaryWeaponCycle);
                 state.ResetCandidateSaturationExpansion(true);
                 RearmOpeningOwnerIfBothWaiting(state);
-                if (pawn.pather?.Moving != true
-                    || !HasAutomaticMovementSearchPotential(pawn))
+                if (pawn.pather?.Moving != true)
                 {
                     state.ClearDraftedMovementSearchTracking();
                 }
@@ -1523,12 +1521,6 @@ namespace KRWF.RimKata
                     return true;
                 }
 
-                if (!HasAutomaticMovementSearchPotential(pawn))
-                {
-                    state.ConsumeDraftedMovementSearchTrigger();
-                    return false;
-                }
-
                 if (TryBeginMovementSearch(pawn, state, currentCell))
                 {
                     state.ConsumeDraftedMovementSearchTrigger();
@@ -1555,11 +1547,6 @@ namespace KRWF.RimKata
                 return true;
             }
 
-            if (!HasAutomaticMovementSearchPotential(pawn))
-            {
-                return false;
-            }
-
             return TryBeginMovementSearch(pawn, state, currentCell);
         }
 
@@ -1574,8 +1561,7 @@ namespace KRWF.RimKata
                 || !MovingFireEnabledForPawn(pawn)
                 || !RimKataEligibility.CanBeginGunKataAttack(pawn)
                 || (RimKataWeaponSlotUtility.PrimaryWeapon(pawn) == null
-                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) == null)
-                || !HasAutomaticMovementSearchPotential(pawn))
+                    && RimKataWeaponSlotUtility.SecondaryWeapon(pawn) == null))
             {
                 return;
             }
@@ -1592,38 +1578,6 @@ namespace KRWF.RimKata
                 state.ConsumeDraftedMovementSearchTrigger();
                 RimKataSharedTargetSearch.Begin(pawn, state, pawn.Position);
             }
-        }
-
-        internal static bool HasAutomaticMovementSearchPotential(Pawn pawn)
-        {
-            Map map = pawn?.Map;
-            if (map == null)
-            {
-                return false;
-            }
-
-            if (RimKataMod.Settings?.explosiveInterceptionEnabled != false
-                && map.GetComponent<RimKataMapComponent>()?
-                    .HasActiveExplosiveProjectiles == true)
-            {
-                return true;
-            }
-
-            // Vanilla publishes its combat-speed request before or when an
-            // ordinary hostile engagement begins.  Treat that public request
-            // as permission to start a movement scan; the selected time speed
-            // itself is deliberately irrelevant, so speed-unlock mods that
-            // only ignore the request do not hide the combat signal.
-            if (Find.TickManager?.slower?.ForcedNormalSpeed != true)
-            {
-                return false;
-            }
-
-            // GetPotentialTargetsFor is RimWorld's spawn/faction-maintained
-            // superset for ordinary IAttackTarget candidates.  Count is used
-            // immediately because the returned scratch list is shared.
-            return map.attackTargetsCache?.GetPotentialTargetsFor(pawn)?.Count
-                > 0;
         }
 
         private static bool HasMovementFireCombatWork(
@@ -2699,6 +2653,49 @@ namespace KRWF.RimKata
         {
             return pawn?.InMentalState != true
                 && HasCombatContinuity(pawn);
+        }
+
+        internal static bool IsCombatActiveForPortrait(Pawn pawn, JobDef jobDef)
+        {
+            Map map = pawn?.Map;
+            if (map == null
+                || pawn.InMentalState
+                || (jobDef != RimKataDefOf.RimKata_Attack
+                    && !RimKataDraftedFireController.IsAutomaticFireJob(jobDef)))
+            {
+                return false;
+            }
+
+            Thing target = pawn.CurJob?.targetA.Thing;
+            if (target?.Spawned == true
+                && target.Map == map
+                && IsConvertedMeleeCounterattackRushJob(pawn, target)
+                && (!(target is Pawn targetPawn)
+                    || RimKataTargeting.IsPawnTargetStateValid(targetPawn)))
+            {
+                return true;
+            }
+
+            if (!RimKataCombatStatePresenceCache.Contains(pawn, map))
+            {
+                return false;
+            }
+
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            return IsWeaponCycleRunningForPortrait(state?.primaryWeaponCycle)
+                || IsWeaponCycleRunningForPortrait(state?.secondaryWeaponCycle);
+        }
+
+        private static bool IsWeaponCycleRunningForPortrait(
+            RimKataWeaponCycleState cycle)
+        {
+            // Search, stored candidates and visual retention do not mean that
+            // a weapon has begun its aim/fire/cooldown sequence.
+            return cycle?.weapon != null
+                && (cycle.warmupTicksRemaining > 0
+                    || cycle.burstShotsRemaining > 0
+                    || cycle.cooldownTicksRemaining > 0
+                    || ReadyToAct(cycle));
         }
 
         internal static bool CanContinueWeaponCycles(
@@ -5449,8 +5446,20 @@ namespace KRWF.RimKata
             }
 
             PromoteApproachingShotToCloseContext(pawn, cycle, verb, closeCombatContext);
+            Thing checkedTarget = null;
+            bool explicitPlan = cycle.plannedTarget != null
+                && (cycle.plannedTarget == cycle.focusedTarget
+                    || (playerForced && cycle.plannedTarget == assignedTarget));
+            // A reserved automatic target waits for the last cooldown tick.
+            // Active aiming still cancels/reselects here in the same tick.
+            // Execution checks again at the shot boundary, after both preparations.
+            bool checkPreparedTarget = cycle.plannedInterception
+                || explicitPlan
+                || cycle.cooldownTicksRemaining <= 1;
             if (cycle.HasPlan
-                && !ValidPlan(
+                && checkPreparedTarget)
+            {
+                if (ValidPlan(
                     pawn,
                     cycle,
                     verb,
@@ -5458,22 +5467,20 @@ namespace KRWF.RimKata
                     playerForced,
                     killIncappedTarget,
                     closeCombatContext))
-            {
-                Thing invalidTarget = cycle.plannedTarget;
-                bool explicitTarget = invalidTarget == cycle.focusedTarget
-                    || (playerForced && invalidTarget == assignedTarget);
-                ApplyInterruptedBurstCooldown(pawn, cycle, verb);
-                ClearTargetPreservingCycle(cycle);
-
-                if (!explicitTarget
-                    && invalidTarget != null
-                    && !(invalidTarget is Projectile))
                 {
-                    EvictAutomaticCandidate(
+                    checkedTarget = cycle.plannedTarget;
+                }
+                else
+                {
+                    HandleInvalidPlanAtExecution(
                         pawn,
                         state,
                         cycle,
-                        invalidTarget,
+                        verb,
+                        assignedTarget,
+                        playerForced,
+                        killIncappedTarget,
+                        closeCombatContext,
                         requestAutomaticRefill);
                 }
             }
@@ -5568,6 +5575,37 @@ namespace KRWF.RimKata
                     requestAutomaticRefill,
                     randomAttackEnabled))
             {
+                promotedAutomaticTarget = null;
+                return true;
+            }
+
+            // Promotion can supply a new reservation after the earlier check.
+            // Check it at cooldown 1 / aim start, without rechecking an unchanged plan.
+            if (cycle.HasPlan
+                && !cycle.plannedInterception
+                && cycle.plannedTarget != cycle.focusedTarget
+                && !(playerForced && cycle.plannedTarget == assignedTarget)
+                && cycle.plannedTarget != checkedTarget
+                && !ValidPlan(
+                    pawn,
+                    cycle,
+                    verb,
+                    assignedTarget,
+                    playerForced,
+                    killIncappedTarget,
+                    closeCombatContext))
+            {
+                HandleInvalidPlanAtExecution(
+                    pawn,
+                    state,
+                    cycle,
+                    verb,
+                    assignedTarget,
+                    playerForced,
+                    killIncappedTarget,
+                    closeCombatContext,
+                    requestAutomaticRefill);
+                promotedAutomaticTarget = null;
                 return true;
             }
 
@@ -5724,13 +5762,27 @@ namespace KRWF.RimKata
 
             cycle.cachedCandidateTarget = null;
             cycle.cachedCandidateInterception = false;
-            bool promoted = cachedInterception
-                ? CanAssignInterceptionTarget(
+            bool promoted;
+            if (cachedInterception)
+            {
+                promoted = CanAssignInterceptionTarget(
                     pawn,
                     cycle,
                     verb,
-                    cachedTarget)
-                : TrySetKnownTarget(
+                    cachedTarget);
+            }
+            else if (automaticRangeRequired)
+            {
+                // Selection already checked this slot's registered candidate.
+                // Reservation handoff must not run admission or shootability again.
+                bool closeAttack = verb.IsMeleeAttack || closeCombatContext;
+                SetCandidate(cycle, cachedTarget, false, closeAttack, closeAttack, false);
+                promoted = true;
+            }
+            else
+            {
+                // Random-fire OFF can supply a preferred target without candidate admission.
+                promoted = TrySetKnownTarget(
                     pawn,
                     cycle,
                     verb,
@@ -5740,6 +5792,7 @@ namespace KRWF.RimKata
                     closeCombatContext,
                     automaticRangeRequired,
                     false);
+            }
             if (promoted
                 && !cachedInterception
                 && automaticRangeRequired
@@ -6148,7 +6201,10 @@ namespace KRWF.RimKata
                         target);
             }
 
-            if (!RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon?.def))
+            bool explicitTarget = target == cycle.focusedTarget
+                || (playerForced && target == assignedTarget);
+            if (explicitTarget
+                && !RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon?.def))
             {
                 return false;
             }
@@ -6159,23 +6215,18 @@ namespace KRWF.RimKata
             }
 
             if (target is Pawn targetPawn
-                && !RimKataTargeting.IsPawnTargetStateValid(
-                    targetPawn,
-                    playerForced
-                        && killIncappedTarget
-                        && target == assignedTarget))
+                && (explicitTarget
+                    ? !RimKataTargeting.IsPawnTargetStateValid(
+                        targetPawn,
+                        playerForced && killIncappedTarget && target == assignedTarget)
+                    : targetPawn.Dead
+                        || RimKataTargeting.IsIncapacitatedTarget(targetPawn)))
             {
                 return false;
             }
 
-            bool playerFocusedTarget = target == cycle.focusedTarget;
-            if (!RimKataTargeting.IsAutomaticEnemy(pawn, target)
-                && !(playerForced && target == assignedTarget)
-                && !playerFocusedTarget)
-            {
-                return false;
-            }
-
+            // Automatic plans retain their admitted target identity. Only current
+            // shot feasibility belongs here; candidate admission owns hostility/fog.
             return CanHitTargetForCombatContext(
                 pawn,
                 verb,
@@ -6522,8 +6573,10 @@ namespace KRWF.RimKata
                         allowAutomaticRangedFire
                         && !closeCombatContext
                         && randomAttackEnabled;
+                    // Prune a target disabled by this shot; selection checks the
+                    // next candidate's shootability without repeating admission.
                     if (!(firedTarget is Projectile)
-                        && !RimKataTargeting.IsValidAutomaticAttackTarget(
+                        && !RimKataSharedTargetSearch.IsLiveRegisteredCandidate(
                             pawn,
                             firedTarget))
                     {

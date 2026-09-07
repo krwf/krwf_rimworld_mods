@@ -341,22 +341,7 @@ namespace KRWF.RimKata
                     break;
                 }
 
-                bool globallyValid = candidate != null
-                    && RimKataTargeting.IsValidAutomaticAttackTarget(
-                        pawn,
-                        candidate);
-                if (!globallyValid)
-                {
-                    removedCandidate |= RemoveAutomaticCandidate(
-                        combatState,
-                        cycle,
-                        candidate,
-                        true);
-                    EligibleCandidates.RemoveAt(candidateIndex);
-                    continue;
-                }
-
-                if (!IsValidAutomaticTargetForCycle(
+                if (!CanShootRegisteredCandidate(
                     pawn,
                     combatState,
                     cycle,
@@ -367,7 +352,7 @@ namespace KRWF.RimKata
                         combatState,
                         cycle,
                         candidate,
-                        false);
+                        !IsLiveRegisteredCandidate(pawn, candidate));
                     EligibleCandidates.RemoveAt(candidateIndex);
                     continue;
                 }
@@ -378,11 +363,7 @@ namespace KRWF.RimKata
 
             if (removedCandidate)
             {
-                combatState.ResetCandidateSaturationExpansion(true);
-                if (!IsCloseCombatContext(combatState))
-                {
-                    Restart(pawn, combatState, pawn.Position);
-                }
+                NotifyAutomaticCandidateCountChanged(pawn, combatState, true);
             }
 
             interception = target is Projectile;
@@ -412,23 +393,33 @@ namespace KRWF.RimKata
                 || combatState == null
                 || (!randomAttackVerified
                     && !RandomAttackEnabled(pawn))
-                || target is Projectile
-                || !RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target))
+                || target is Projectile)
             {
                 return false;
             }
 
+            bool? newTargetValid = null;
+            bool removedCandidate = false;
             bool accepted = TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.primaryWeaponCycle,
-                target);
-            return TryAddValidatedAutomaticTargetToCycle(
+                target,
+                ref newTargetValid,
+                ref removedCandidate);
+            accepted = TryAddValidatedAutomaticTargetToCycle(
                 pawn,
                 combatState,
                 combatState.secondaryWeaponCycle,
-                target)
+                target,
+                ref newTargetValid,
+                ref removedCandidate)
                 || accepted;
+            if (removedCandidate)
+            {
+                NotifyAutomaticCandidateCountChanged(pawn, combatState, true);
+            }
+            return accepted;
         }
 
         internal static bool IsValidForVerb(
@@ -459,6 +450,12 @@ namespace KRWF.RimKata
                     projectile);
             }
 
+            if (cycle.automaticCandidates?.Contains(target) == true)
+            {
+                return CanShootRegisteredCandidate(
+                    pawn, state, cycle, verb, target);
+            }
+
             return RimKataTargeting.IsValidAutomaticAttackTarget(pawn, target)
                 && IsValidAutomaticTargetForCycle(
                     pawn,
@@ -478,6 +475,7 @@ namespace KRWF.RimKata
         {
             PrimaryRingCandidates.Clear();
             SecondaryRingCandidates.Clear();
+            bool removedCandidate = false;
             try
             {
                 CollectAutomaticTargetsInRingCells(
@@ -485,7 +483,8 @@ namespace KRWF.RimKata
                     combatState,
                     center,
                     innerRadius,
-                    outerRadius);
+                    outerRadius,
+                    ref removedCandidate);
                 CommitStagedRangedCandidates(
                     combatState?.primaryWeaponCycle,
                     PrimaryRingCandidates,
@@ -502,6 +501,10 @@ namespace KRWF.RimKata
                 PrimaryRingCandidates.Clear();
                 SecondaryRingCandidates.Clear();
             }
+            if (removedCandidate)
+            {
+                NotifyAutomaticCandidateCountChanged(pawn, combatState, true);
+            }
         }
 
         private static void CollectAutomaticTargetsInRingCells(
@@ -509,7 +512,8 @@ namespace KRWF.RimKata
             RimKataPawnCombatState combatState,
             IntVec3 center,
             float innerRadius,
-            float outerRadius)
+            float outerRadius,
+            ref bool removedCandidate)
         {
             Map map = pawn.Map;
             float innerSquared = innerRadius < 0f
@@ -567,7 +571,8 @@ namespace KRWF.RimKata
                     center.z + absZ,
                     outerX,
                     innerX,
-                    recordSearchCells);
+                    recordSearchCells,
+                    ref removedCandidate);
                 if (absZ > 0)
                 {
                     CollectAutomaticTargetsInRingRow(
@@ -578,7 +583,8 @@ namespace KRWF.RimKata
                         center.z - absZ,
                         outerX,
                         innerX,
-                        recordSearchCells);
+                        recordSearchCells,
+                        ref removedCandidate);
                 }
             }
         }
@@ -591,7 +597,8 @@ namespace KRWF.RimKata
             int z,
             int outerX,
             int innerX,
-            bool recordSearchCells)
+            bool recordSearchCells,
+            ref bool removedCandidate)
         {
             if ((uint)z >= (uint)map.Size.z)
             {
@@ -617,7 +624,8 @@ namespace KRWF.RimKata
                     z,
                     minimumX,
                     maximumX,
-                    recordSearchCells);
+                    recordSearchCells,
+                    ref removedCandidate);
                 return;
             }
 
@@ -629,7 +637,8 @@ namespace KRWF.RimKata
                 z,
                 minimumX,
                 Mathf.Min(maximumX, -innerX - 1),
-                recordSearchCells);
+                recordSearchCells,
+                ref removedCandidate);
             CollectAutomaticTargetsInRingRowSegment(
                 pawn,
                 combatState,
@@ -638,7 +647,8 @@ namespace KRWF.RimKata
                 z,
                 Mathf.Max(minimumX, innerX + 1),
                 maximumX,
-                recordSearchCells);
+                recordSearchCells,
+                ref removedCandidate);
         }
 
         private static void CollectAutomaticTargetsInRingRowSegment(
@@ -649,7 +659,8 @@ namespace KRWF.RimKata
             int z,
             int minimumX,
             int maximumX,
-            bool recordSearchCells)
+            bool recordSearchCells,
+            ref bool removedCandidate)
         {
             for (int x = minimumX; x <= maximumX; x++)
             {
@@ -657,7 +668,8 @@ namespace KRWF.RimKata
                 CollectAutomaticTargetsInCell(
                     pawn,
                     combatState,
-                    cell);
+                    cell,
+                    ref removedCandidate);
                 if (recordSearchCells)
                 {
                     RimKataDebugHUD.RecordActualSearchCell(map, cell);
@@ -668,31 +680,35 @@ namespace KRWF.RimKata
         private static void CollectAutomaticTargetsInCell(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            IntVec3 cell)
+            IntVec3 cell,
+            ref bool removedCandidate)
         {
             List<Thing> things = pawn.Map.thingGrid.ThingsListAtFast(cell);
             for (int i = 0; i < things.Count; i++)
             {
                 Thing candidate = things[i];
-                if (!RimKataTargeting.IsValidAutomaticAttackTarget(
-                        pawn,
-                        candidate))
+                if (!(candidate is IAttackTarget))
                 {
                     continue;
                 }
 
+                bool? newTargetValid = null;
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     combatState.primaryWeaponCycle,
                     candidate,
-                    PrimaryRingCandidates);
+                    PrimaryRingCandidates,
+                    ref newTargetValid,
+                    ref removedCandidate);
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
                     combatState.secondaryWeaponCycle,
                     candidate,
-                    SecondaryRingCandidates);
+                    SecondaryRingCandidates,
+                    ref newTargetValid,
+                    ref removedCandidate);
             }
         }
 
@@ -701,10 +717,30 @@ namespace KRWF.RimKata
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
             Thing target,
-            List<Thing> stagedCandidates)
+            List<Thing> stagedCandidates,
+            ref bool? newTargetValid,
+            ref bool removedCandidate)
         {
-            if (cycle == null
-                || cycle.automaticCandidateCollectionClosed)
+            if (cycle == null)
+            {
+                return;
+            }
+
+            if (cycle.automaticCandidates?.Contains(target) == true)
+            {
+                Verb registeredVerb = CombatVerbForCycle(pawn, cycle);
+                if (!CanShootRegisteredCandidate(
+                    pawn, combatState, cycle, registeredVerb, target))
+                {
+                    removedCandidate |= RemoveAutomaticCandidate(
+                        combatState, cycle, target, false);
+                }
+                return;
+            }
+
+            if (cycle.automaticCandidateCollectionClosed
+                || stagedCandidates.Contains(target)
+                || !IsValidNewAutomaticTarget(pawn, target, ref newTargetValid))
             {
                 return;
             }
@@ -723,12 +759,6 @@ namespace KRWF.RimKata
             if (!UsesRangedCandidateLimit(cycle))
             {
                 cycle.AddAutomaticCandidate(target);
-                return;
-            }
-
-            if (cycle.automaticCandidates?.Contains(target) == true
-                || stagedCandidates.Contains(target))
-            {
                 return;
             }
 
@@ -784,9 +814,30 @@ namespace KRWF.RimKata
             Pawn pawn,
             RimKataPawnCombatState combatState,
             RimKataWeaponCycleState cycle,
-            Thing target)
+            Thing target,
+            ref bool? newTargetValid,
+            ref bool removedCandidate)
         {
             if (cycle == null)
+            {
+                return false;
+            }
+
+            if (cycle.automaticCandidates?.Contains(target) == true)
+            {
+                Verb registeredVerb = CombatVerbForCycle(pawn, cycle);
+                if (CanShootRegisteredCandidate(
+                    pawn, combatState, cycle, registeredVerb, target))
+                {
+                    return true;
+                }
+
+                removedCandidate |= RemoveAutomaticCandidate(
+                    combatState, cycle, target, false);
+                return false;
+            }
+
+            if (!IsValidNewAutomaticTarget(pawn, target, ref newTargetValid))
             {
                 return false;
             }
@@ -796,14 +847,68 @@ namespace KRWF.RimKata
                 pawn,
                 combatState,
                 cycle,
-                    verb,
-                    target))
+                verb,
+                target))
             {
                 return cycle.AddAutomaticCandidate(target)
                     || cycle.automaticCandidates?.Contains(target) == true;
             }
 
             return false;
+        }
+
+        private static bool IsValidNewAutomaticTarget(
+            Pawn pawn,
+            Thing target,
+            ref bool? newTargetValid)
+        {
+            if (!newTargetValid.HasValue)
+            {
+                newTargetValid = RimKataTargeting.IsValidAutomaticAttackTarget(
+                    pawn, target);
+            }
+            return newTargetValid.Value;
+        }
+
+        internal static bool IsLiveRegisteredCandidate(Pawn pawn, Thing target)
+        {
+            return pawn?.Map != null
+                && target != null
+                && !target.Destroyed
+                && target.Spawned
+                && target.Map == pawn.Map
+                && (!(target is Pawn targetPawn)
+                    || (!targetPawn.Dead
+                        && !RimKataTargeting.IsIncapacitatedTarget(targetPawn)));
+        }
+
+        internal static bool CanShootRegisteredCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            Thing target)
+        {
+            if (cycle?.weapon == null
+                || verb == null
+                || !IsLiveRegisteredCandidate(pawn, target))
+            {
+                return false;
+            }
+
+            // Membership carries admission; only current shooting conditions remain.
+            float candidateCellRadius = ResolveCandidateCellRadiusForCycle(
+                pawn, combatState, cycle, verb);
+            if (candidateCellRadius <= 0f
+                || pawn.Position.DistanceToSquared(target.Position)
+                    > candidateCellRadius * candidateCellRadius)
+            {
+                return false;
+            }
+
+            return !verb.IsMeleeAttack && IsCloseCombatContext(combatState)
+                ? pawn.CanReachImmediate(target, PathEndMode.Touch)
+                : verb.CanHitTarget(target);
         }
 
         private static bool IsValidAutomaticTargetForCycle(
@@ -869,23 +974,41 @@ namespace KRWF.RimKata
                 combatState,
                 cycle,
                 target,
-                !RimKataTargeting.IsValidAutomaticAttackTarget(
-                    pawn,
-                    target));
+                !IsLiveRegisteredCandidate(pawn, target));
             if (removed)
             {
-                combatState?.ResetCandidateSaturationExpansion(true);
-                if (requestRefill
-                    && pawn?.Map != null
-                    && combatState != null
-                    && RandomAttackEnabled(pawn)
-                    && !IsCloseCombatContext(combatState))
-                {
-                    Restart(pawn, combatState, pawn.Position);
-                }
+                NotifyAutomaticCandidateCountChanged(
+                    pawn, combatState, requestRefill);
             }
 
             return removed;
+        }
+
+        private static void NotifyAutomaticCandidateCountChanged(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            bool requestRefill)
+        {
+            if (combatState == null)
+            {
+                return;
+            }
+
+            if (combatState.sharedTargetSearch?.scanActive == true)
+            {
+                // Reallow cap scheduling without restarting the in-progress rings.
+                combatState.ResetCandidateSaturationExpansion(false);
+                return;
+            }
+
+            combatState.ResetCandidateSaturationExpansion(true);
+            if (requestRefill
+                && pawn?.Map != null
+                && RandomAttackEnabled(pawn)
+                && !IsCloseCombatContext(combatState))
+            {
+                Begin(pawn, combatState, pawn.Position);
+            }
         }
 
         private static bool RemoveAutomaticCandidate(
@@ -1422,6 +1545,17 @@ namespace KRWF.RimKata
                 return 0f;
             }
 
+            return ResolveCandidateCellRadiusForCycle(
+                pawn, combatState, cycle, verb);
+        }
+
+        private static float ResolveCandidateCellRadiusForCycle(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Verb verb)
+        {
+            bool closeCombatContext = IsCloseCombatContext(combatState);
             if (closeCombatContext)
             {
                 return UsesRangedCandidateLimit(cycle)
