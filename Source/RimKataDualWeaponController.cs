@@ -520,22 +520,38 @@ namespace KRWF.RimKata
                 return;
             }
 
+            bool hasOwner = RimKataCombatStatePresenceCache.TryGetOwner(
+                pawn, out RimKataMapComponent component);
             JobDriver_RimKataAttack combatJob = fromJobTracker
                 ? null
                 : pawn.jobs?.curDriver as JobDriver_RimKataAttack;
+            bool movementSearchAdmitted = false;
+            if (!hasOwner && combatJob == null)
+            {
+                // Untracked ordinary pawns stop before Job or mental-state work.
+                // Drafting is only the prerequisite for a new movement search.
+                if (!pawn.Drafted || !CanRequestMovementSearch(pawn, null))
+                {
+                    return;
+                }
+                movementSearchAdmitted = true;
+            }
+
             if (pawn.InMentalState)
             {
                 combatJob?.EndRimKataJobWith(JobCondition.InterruptForced);
                 return;
             }
 
+            RimKataPawnCombatState state = component?.GetState(pawn, false);
             Job currentJob = pawn.CurJob;
             if (fromJobTracker)
             {
                 bool wasDedicatedJob = currentJob?.def == RimKataDefOf.RimKata_Attack;
-                if (RimKataPendingFollowupTickCache.Contains(pawn))
+                bool hadPendingFollowup = state?.dedicatedFollowupJobPending == true;
+                if (hadPendingFollowup)
                 {
-                    TryConsumePendingDedicatedFollowupJob(pawn);
+                    TryConsumePendingDedicatedFollowupJob(pawn, state);
                     currentJob = pawn.CurJob;
                 }
 
@@ -545,20 +561,27 @@ namespace KRWF.RimKata
                 {
                     return;
                 }
+
+                if (hadPendingFollowup)
+                {
+                    // Job callbacks may replace the state or move the pawn.
+                    hasOwner = RimKataCombatStatePresenceCache.TryGetOwner(
+                        pawn, out component);
+                    state = component?.GetState(pawn, false);
+                    movementSearchAdmitted = false;
+                }
             }
 
             CombatTickPermissions permissions = new CombatTickPermissions(pawn, currentJob);
             bool allowAutomaticRangedFire = permissions.allowAutomaticRangedFire;
 
-            bool movementSearchAdmitted = false;
-            if (!RimKataCombatStatePresenceCache.TryGetOwner(
-                pawn, out RimKataMapComponent component))
+            if (!hasOwner)
             {
-                if (combatJob == null)
+                if (combatJob == null && !movementSearchAdmitted)
                 {
                     // Only the combat-condition trigger may create idle search work.
                     // Ordinary movement does not need a map or state lookup.
-                    if (!CanRequestMovementSearch(pawn, null))
+                    if (!pawn.Drafted || !CanRequestMovementSearch(pawn, null))
                     {
                         return;
                     }
@@ -572,9 +595,9 @@ namespace KRWF.RimKata
                     return;
                 }
                 component = map.GetComponent<RimKataMapComponent>();
+                state = component?.GetState(pawn, false);
             }
 
-            RimKataPawnCombatState state = component?.GetState(pawn, false);
             if (!permissions.allowCurrentJob)
             {
                 state?.ClearDraftedMovementSearchTracking();
@@ -3269,7 +3292,6 @@ namespace KRWF.RimKata
 
             if (state?.dedicatedFollowupJobPending != true)
             {
-                RimKataPendingFollowupTickCache.Clear(pawn);
                 return;
             }
 

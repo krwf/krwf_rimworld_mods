@@ -7,52 +7,6 @@ using Verse.AI;
 
 namespace KRWF.RimKata
 {
-    internal static class RimKataPendingFollowupTickCache
-    {
-        private sealed class PendingMarker
-        {
-        }
-
-        private static readonly ConditionalWeakTable<Pawn, PendingMarker>
-            PendingPawns = new ConditionalWeakTable<Pawn, PendingMarker>();
-        private static readonly ConditionalWeakTable<Pawn, PendingMarker>
-            .CreateValueCallback CreateMarker = delegate { return new PendingMarker(); };
-
-        public static bool Contains(Pawn pawn)
-        {
-            return pawn != null
-                && PendingPawns.TryGetValue(pawn, out PendingMarker _);
-        }
-
-        public static void Mark(Pawn pawn)
-        {
-            if (pawn != null)
-            {
-                PendingPawns.GetValue(pawn, CreateMarker);
-            }
-        }
-
-        public static void Clear(Pawn pawn)
-        {
-            if (pawn != null)
-            {
-                PendingPawns.Remove(pawn);
-            }
-        }
-
-        public static void Synchronize(Pawn pawn, bool pending)
-        {
-            if (pending)
-            {
-                Mark(pawn);
-            }
-            else
-            {
-                Clear(pawn);
-            }
-        }
-    }
-
     public static class RimKataDraftedFireController
     {
         public static void Tick(Pawn pawn)

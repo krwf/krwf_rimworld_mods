@@ -1288,7 +1288,6 @@ namespace KRWF.RimKata
                     && sourceJob.def == RimKataDefOf.RimKata_Attack;
                 dedicatedFollowupJobKillIncappedTarget =
                     sourceJob?.killIncappedTarget == true;
-                RimKataPendingFollowupTickCache.Mark(pawn);
                 return;
             }
 
@@ -1296,7 +1295,6 @@ namespace KRWF.RimKata
             {
                 dedicatedFollowupJobTarget = target;
             }
-            RimKataPendingFollowupTickCache.Mark(pawn);
         }
 
         public void ClearDedicatedFollowupJobRequest()
@@ -1307,7 +1305,6 @@ namespace KRWF.RimKata
             dedicatedFollowupJobPlayerForced = false;
             dedicatedFollowupJobKillIncappedTarget = false;
             dedicatedFollowupJobRequestedTick = -1;
-            RimKataPendingFollowupTickCache.Clear(pawn);
         }
 
         public void NotifyIncomingThreat(Pawn attacker)
@@ -1554,7 +1551,6 @@ namespace KRWF.RimKata
             {
                 for (int i = 0; i < states.Count; i++)
                 {
-                    RimKataPendingFollowupTickCache.Clear(states[i]?.pawn);
                     RimKataCombatStatePresenceCache.Clear(
                         states[i]?.pawn,
                         map);
@@ -2667,9 +2663,6 @@ namespace KRWF.RimKata
                 {
                     RimKataCombatStatePresenceCache.Mark(state.pawn, this);
                     statesByPawn[state.pawn] = state;
-                    RimKataPendingFollowupTickCache.Synchronize(
-                        state.pawn,
-                        state.dedicatedFollowupJobPending);
                     RimKataResponseVisualParticipantCache.Refresh(state);
                     RimKataResponseVisualParticipantCache
                         .RefreshBodyVisual(state);
@@ -2681,7 +2674,6 @@ namespace KRWF.RimKata
         {
             RimKataPawnCombatState state = states[index];
             states.RemoveAt(index);
-            RimKataPendingFollowupTickCache.Clear(state?.pawn);
             RimKataResponseVisualParticipantCache.Clear(state?.pawn);
             if (state?.pawn != null
                 && statesByPawn.TryGetValue(
