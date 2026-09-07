@@ -2642,13 +2642,14 @@ namespace KRWF.RimKata
             if (pawn?.Map == null
                 || pawn.InMentalState
                 || attacker == null
+                || attacker == pawn
+                || !RimKataEligibility.CanBeginGunKataAttack(pawn)
                 || attacker.Destroyed
                 || !attacker.Spawned
                 || attacker.Map != pawn.Map
                 || !RimKataTargeting.IsAutomaticEnemy(pawn, attacker)
                 || (attacker is Pawn attackerPawn
-                    && !RimKataTargeting.IsPawnTargetStateValid(attackerPawn))
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+                    && !RimKataTargeting.IsPawnTargetStateValid(attackerPawn)))
             {
                 return;
             }
@@ -2666,26 +2667,30 @@ namespace KRWF.RimKata
                 state.RequestCloseAttack(attacker);
             }
 
-            if (RimKataEligibility.RandomAttackEnabledForPawn(pawn))
+            bool randomAttackEnabled = RimKataEligibility.RandomAttackEnabledForPawn(pawn);
+            if (randomAttackEnabled)
             {
                 RimKataSharedTargetSearch.TryAddKnownAutomaticTarget(
                     pawn,
                     state,
-                    attacker);
+                    attacker,
+                    true);
             }
-            RefreshDualEngagementState(pawn, state);
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
 
             TryCacheSharedCandidate(
                 pawn,
                 state,
                 state.primaryWeaponCycle,
-                attacker);
+                attacker,
+                randomAttackEnabled);
             TryCacheSharedCandidate(
                 pawn,
                 state,
                 state.secondaryWeaponCycle,
-                attacker);
-            RefreshDualEngagementState(pawn, state);
+                attacker,
+                randomAttackEnabled);
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
             if (!state.dualEngagementActive)
             {
                 return;

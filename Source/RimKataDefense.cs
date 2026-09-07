@@ -84,22 +84,9 @@ namespace KRWF.RimKata
             if (defender != null
                 && defender == currentDamageStaggerDefender)
             {
-                NotifyDefensiveCombatEvent(defender, currentDamageStaggerAttacker);
+                RimKataDualWeaponController.NotifyDefensiveCombatEvent(
+                    defender, currentDamageStaggerAttacker);
             }
-        }
-
-        private static void NotifyDefensiveCombatEvent(Pawn defender, Thing attacker)
-        {
-            if (defender?.Map == null
-                || attacker == null
-                || attacker == defender
-                || !RimKataEligibility.HasActiveRimKataAccess(defender)
-                || !RimKataTargeting.IsAutomaticEnemy(defender, attacker))
-            {
-                return;
-            }
-
-            RimKataDualWeaponController.NotifyDefensiveCombatEvent(defender, attacker);
         }
 
         private static void NotifyAbsorbedRangedDamageForJob(
@@ -481,10 +468,9 @@ namespace KRWF.RimKata
             Projectile projectile = RimKataProjectileImpactContext.CurrentProjectile;
             Thing attacker = projectile?.Launcher ?? dinfo.Instigator;
 
-            RimKataMapComponent component =
-                defender.Map?.GetComponent<RimKataMapComponent>();
             if (!closeAttack
-                && component?.TryConsumeAvoidedRangedProjectile(
+                && defender.Map?.GetComponent<RimKataMapComponent>()
+                    ?.TryConsumeAvoidedRangedProjectile(
                     projectile,
                     defender,
                     out bool suppressJobNotification) == true)
