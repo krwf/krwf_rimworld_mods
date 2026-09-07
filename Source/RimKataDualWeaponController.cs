@@ -721,7 +721,7 @@ namespace KRWF.RimKata
                     pawn,
                     primaryWeapon,
                     true)
-                ? RimKataWeaponSlotUtility.SecondaryWeapon(pawn)
+                ? RimKataWeaponSlotUtility.SecondaryWeaponWithVerifiedAccess(pawn)
                 : null;
             if (state.primaryWeaponCycle.weapon != primaryWeapon && state.secondaryWeaponCycle.weapon == primaryWeapon && secondaryWeapon == null)
             {
@@ -5272,6 +5272,22 @@ namespace KRWF.RimKata
                 return changed;
             }
 
+            bool hadUnavailableWork = cycle.HasAutomaticCandidates
+                || cycle.cachedCandidateTarget != null
+                || cycle.focusedTarget != null
+                || cycle.HasPlan
+                || cycle.openingWarmupPending
+                || cycle.lastFiredTarget != null
+                || cycle.firedInCurrentOpening
+                || cycle.burstShotsRemaining > 0
+                || cycle.warmupTicksRemaining > 0
+                || cycle.visualTarget != null
+                || cycle.visualAimTicksRemaining > 0;
+            if (!hadUnavailableWork)
+            {
+                return changed;
+            }
+
             bool closeContext = state?.dualCloseCombatActive == true;
             Verb verb = RimKataWeaponSlotUtility.CombatVerb(
                 pawn,
@@ -5301,22 +5317,6 @@ namespace KRWF.RimKata
                         && interceptionWork))
                 && verb != null
                 && VerbUsable(pawn, verb, closeContext))
-            {
-                return changed;
-            }
-
-            bool hadUnavailableWork = cycle.HasAutomaticCandidates
-                || cycle.cachedCandidateTarget != null
-                || cycle.focusedTarget != null
-                || cycle.HasPlan
-                || cycle.openingWarmupPending
-                || cycle.lastFiredTarget != null
-                || cycle.firedInCurrentOpening
-                || cycle.burstShotsRemaining > 0
-                || cycle.warmupTicksRemaining > 0
-                || cycle.visualTarget != null
-                || cycle.visualAimTicksRemaining > 0;
-            if (!hadUnavailableWork)
             {
                 return changed;
             }
@@ -5428,19 +5428,31 @@ namespace KRWF.RimKata
                     || cycle.visualAimTicksRemaining > 0;
             }
 
+            Thing rangeCheckedTarget = null;
             if (!focusedTargetControlsCycle)
             {
-                InterruptMovingFireOutsideAutomaticRange(
+                Thing rangeTarget = cycle.plannedTarget ?? cycle.visualTarget;
+                if (!InterruptMovingFireOutsideAutomaticRange(
                     pawn,
                     state,
                     cycle,
                     verb,
-                    cycle.plannedTarget ?? cycle.visualTarget,
+                    rangeTarget,
                     requestAutomaticRefill,
-                    randomAttackEnabled);
+                    randomAttackEnabled))
+                {
+                    rangeCheckedTarget = rangeTarget;
+                }
             }
 
+            bool previousCloseContext = cycle.plannedCloseContext;
+            bool previousCloseAttack = cycle.plannedCloseAttack;
             PromoteApproachingShotToCloseContext(pawn, cycle, verb, closeCombatContext);
+            if (cycle.plannedCloseContext != previousCloseContext
+                || cycle.plannedCloseAttack != previousCloseAttack)
+            {
+                rangeCheckedTarget = null;
+            }
             Thing checkedTarget = null;
             bool explicitPlan = cycle.plannedTarget != null
                 && (cycle.plannedTarget == cycle.focusedTarget
@@ -5467,6 +5479,7 @@ namespace KRWF.RimKata
                 }
                 else
                 {
+                    rangeCheckedTarget = null;
                     HandleInvalidPlanAtExecution(
                         pawn,
                         state,
@@ -5493,6 +5506,7 @@ namespace KRWF.RimKata
                 && !directAssignedTarget
                 && !cycle.HasPlan)
             {
+                rangeCheckedTarget = null;
                 if (cycle.cachedCandidateTarget == null)
                 {
                     TryCacheSharedCandidate(
@@ -5530,6 +5544,7 @@ namespace KRWF.RimKata
                 && !cycle.HasPlan
                 && cycle.cooldownTicksRemaining <= 1)
             {
+                rangeCheckedTarget = null;
                 if (directAssignedTarget)
                 {
                     TrySetKnownTarget(
@@ -5560,7 +5575,9 @@ namespace KRWF.RimKata
                 }
             }
 
+            // Reuse only this preparation's unchanged plan; execution checks independently.
             if (!focusedTargetControlsCycle
+                && cycle.plannedTarget != rangeCheckedTarget
                 && InterruptMovingFireOutsideAutomaticRange(
                     pawn,
                     state,

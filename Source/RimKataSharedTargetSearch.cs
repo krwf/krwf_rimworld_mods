@@ -75,6 +75,69 @@ namespace KRWF.RimKata
         private static readonly List<Thing> SecondaryRingCandidates =
             new List<Thing>();
 
+        private struct RingCandidateSlot
+        {
+            internal RimKataWeaponCycleState cycle;
+            private Verb verb;
+            private bool verbResolved;
+            private float configuredRadius;
+            internal float configuredRadiusSquared;
+            private bool radiusResolved;
+            private bool newAdmissionChecked;
+            private bool newAdmissionAllowed;
+
+            internal Verb ResolveVerb(Pawn pawn)
+            {
+                if (!verbResolved)
+                {
+                    verb = CombatVerbForCycle(pawn, cycle);
+                    verbResolved = true;
+                }
+                return verb;
+            }
+
+            internal float ResolveConfiguredRadius(
+                Pawn pawn,
+                RimKataPawnCombatState combatState)
+            {
+                if (!radiusResolved)
+                {
+                    Verb resolvedVerb = ResolveVerb(pawn);
+                    configuredRadius = cycle?.weapon != null && resolvedVerb != null
+                        ? ResolveCandidateCellRadiusForCycle(
+                            pawn, combatState, cycle, resolvedVerb)
+                        : 0f;
+                    configuredRadiusSquared = configuredRadius * configuredRadius;
+                    radiusResolved = true;
+                }
+                return configuredRadius;
+            }
+
+            internal bool CanAdmitNew(
+                Pawn pawn,
+                RimKataPawnCombatState combatState)
+            {
+                if (!newAdmissionChecked)
+                {
+                    newAdmissionAllowed = IsSlotAvailableForNewCandidates(
+                        pawn, combatState, cycle, ResolveVerb(pawn));
+                    newAdmissionChecked = true;
+                }
+                return newAdmissionAllowed;
+            }
+
+            internal float NewCandidateRadius(
+                Pawn pawn,
+                RimKataPawnCombatState combatState)
+            {
+                // A failed new-admission gate must not replace the configured
+                // shootability radius used by an already registered candidate.
+                return CanAdmitNew(pawn, combatState)
+                    ? ResolveConfiguredRadius(pawn, combatState)
+                    : 0f;
+            }
+        }
+
         internal static bool Begin(
             Pawn pawn,
             RimKataPawnCombatState combatState,
@@ -180,8 +243,17 @@ namespace KRWF.RimKata
 
             TryAddKnownAutomaticTarget(pawn, combatState, knownTarget);
 
-            float maximumCellRadius =
-                MaximumCandidateCellRadius(pawn, combatState);
+            RingCandidateSlot primarySlot = new RingCandidateSlot
+            {
+                cycle = combatState.primaryWeaponCycle
+            };
+            RingCandidateSlot secondarySlot = new RingCandidateSlot
+            {
+                cycle = combatState.secondaryWeaponCycle
+            };
+            float maximumCellRadius = Mathf.Max(
+                primarySlot.NewCandidateRadius(pawn, combatState),
+                secondarySlot.NewCandidateRadius(pawn, combatState));
             if (maximumCellRadius <= 0f)
             {
                 Finish(combatState);
@@ -219,23 +291,27 @@ namespace KRWF.RimKata
                 center,
                 innerCellRadius,
                 outerCellRadius,
-                outerRing);
+                outerRing,
+                ref primarySlot,
+                ref secondarySlot);
 
             search.completedRing = outerRing;
             UpdateCollectionClosure(
                 pawn,
                 combatState,
-                outerRing);
+                outerRing,
+                ref primarySlot,
+                ref secondarySlot);
 
             bool bothClosed = SlotCollectionClosed(
                     pawn,
                     combatState,
-                    combatState.primaryWeaponCycle,
+                    ref primarySlot,
                     outerRing)
                 && SlotCollectionClosed(
                     pawn,
                     combatState,
-                    combatState.secondaryWeaponCycle,
+                    ref secondarySlot,
                     outerRing);
             bool reachedMaximum = outerRing >= search.maximumRing;
             if (bothClosed || reachedMaximum)
@@ -471,7 +547,9 @@ namespace KRWF.RimKata
             IntVec3 center,
             float innerRadius,
             float outerRadius,
-            int outerRing)
+            int outerRing,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot)
         {
             PrimaryRingCandidates.Clear();
             SecondaryRingCandidates.Clear();
@@ -484,6 +562,8 @@ namespace KRWF.RimKata
                     center,
                     innerRadius,
                     outerRadius,
+                    ref primarySlot,
+                    ref secondarySlot,
                     ref removedCandidate);
                 CommitStagedRangedCandidates(
                     combatState?.primaryWeaponCycle,
@@ -513,6 +593,8 @@ namespace KRWF.RimKata
             IntVec3 center,
             float innerRadius,
             float outerRadius,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot,
             ref bool removedCandidate)
         {
             Map map = pawn.Map;
@@ -572,6 +654,8 @@ namespace KRWF.RimKata
                     outerX,
                     innerX,
                     recordSearchCells,
+                    ref primarySlot,
+                    ref secondarySlot,
                     ref removedCandidate);
                 if (absZ > 0)
                 {
@@ -584,6 +668,8 @@ namespace KRWF.RimKata
                         outerX,
                         innerX,
                         recordSearchCells,
+                        ref primarySlot,
+                        ref secondarySlot,
                         ref removedCandidate);
                 }
             }
@@ -598,6 +684,8 @@ namespace KRWF.RimKata
             int outerX,
             int innerX,
             bool recordSearchCells,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot,
             ref bool removedCandidate)
         {
             if ((uint)z >= (uint)map.Size.z)
@@ -625,6 +713,8 @@ namespace KRWF.RimKata
                     minimumX,
                     maximumX,
                     recordSearchCells,
+                    ref primarySlot,
+                    ref secondarySlot,
                     ref removedCandidate);
                 return;
             }
@@ -638,6 +728,8 @@ namespace KRWF.RimKata
                 minimumX,
                 Mathf.Min(maximumX, -innerX - 1),
                 recordSearchCells,
+                ref primarySlot,
+                ref secondarySlot,
                 ref removedCandidate);
             CollectAutomaticTargetsInRingRowSegment(
                 pawn,
@@ -648,6 +740,8 @@ namespace KRWF.RimKata
                 Mathf.Max(minimumX, innerX + 1),
                 maximumX,
                 recordSearchCells,
+                ref primarySlot,
+                ref secondarySlot,
                 ref removedCandidate);
         }
 
@@ -660,6 +754,8 @@ namespace KRWF.RimKata
             int minimumX,
             int maximumX,
             bool recordSearchCells,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot,
             ref bool removedCandidate)
         {
             for (int x = minimumX; x <= maximumX; x++)
@@ -668,7 +764,10 @@ namespace KRWF.RimKata
                 CollectAutomaticTargetsInCell(
                     pawn,
                     combatState,
+                    map,
                     cell,
+                    ref primarySlot,
+                    ref secondarySlot,
                     ref removedCandidate);
                 if (recordSearchCells)
                 {
@@ -680,10 +779,13 @@ namespace KRWF.RimKata
         private static void CollectAutomaticTargetsInCell(
             Pawn pawn,
             RimKataPawnCombatState combatState,
+            Map map,
             IntVec3 cell,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot,
             ref bool removedCandidate)
         {
-            List<Thing> things = pawn.Map.thingGrid.ThingsListAtFast(cell);
+            List<Thing> things = map.thingGrid.ThingsListAtFast(cell);
             for (int i = 0; i < things.Count; i++)
             {
                 Thing candidate = things[i];
@@ -696,7 +798,7 @@ namespace KRWF.RimKata
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
-                    combatState.primaryWeaponCycle,
+                    ref primarySlot,
                     candidate,
                     PrimaryRingCandidates,
                     ref newTargetValid,
@@ -704,7 +806,7 @@ namespace KRWF.RimKata
                 TryStageOrAddRingCandidate(
                     pawn,
                     combatState,
-                    combatState.secondaryWeaponCycle,
+                    ref secondarySlot,
                     candidate,
                     SecondaryRingCandidates,
                     ref newTargetValid,
@@ -715,12 +817,13 @@ namespace KRWF.RimKata
         private static void TryStageOrAddRingCandidate(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            RimKataWeaponCycleState cycle,
+            ref RingCandidateSlot slot,
             Thing target,
             List<Thing> stagedCandidates,
             ref bool? newTargetValid,
             ref bool removedCandidate)
         {
+            RimKataWeaponCycleState cycle = slot.cycle;
             if (cycle == null)
             {
                 return;
@@ -728,9 +831,10 @@ namespace KRWF.RimKata
 
             if (cycle.automaticCandidates?.Contains(target) == true)
             {
-                Verb registeredVerb = CombatVerbForCycle(pawn, cycle);
-                if (!CanShootRegisteredCandidate(
-                    pawn, combatState, cycle, registeredVerb, target))
+                if (cycle.weapon == null
+                    || slot.ResolveVerb(pawn) == null
+                    || !IsLiveRegisteredCandidate(pawn, target)
+                    || !CanHitRingCandidate(pawn, combatState, ref slot, target))
                 {
                     removedCandidate |= RemoveAutomaticCandidate(
                         combatState, cycle, target, false);
@@ -745,13 +849,8 @@ namespace KRWF.RimKata
                 return;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, cycle);
-            if (!IsValidAutomaticTargetForCycle(
-                    pawn,
-                    combatState,
-                    cycle,
-                    verb,
-                    target))
+            if (!slot.CanAdmitNew(pawn, combatState)
+                || !CanHitRingCandidate(pawn, combatState, ref slot, target))
             {
                 return;
             }
@@ -763,6 +862,26 @@ namespace KRWF.RimKata
             }
 
             stagedCandidates.Add(target);
+        }
+
+        private static bool CanHitRingCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            ref RingCandidateSlot slot,
+            Thing target)
+        {
+            float candidateCellRadius = slot.ResolveConfiguredRadius(pawn, combatState);
+            if (candidateCellRadius <= 0f
+                || pawn.Position.DistanceToSquared(target.Position)
+                    > slot.configuredRadiusSquared)
+            {
+                return false;
+            }
+
+            Verb verb = slot.ResolveVerb(pawn);
+            return !verb.IsMeleeAttack && IsCloseCombatContext(combatState)
+                ? pawn.CanReachImmediate(target, PathEndMode.Touch)
+                : verb.CanHitTarget(target);
         }
 
         private static void CommitStagedRangedCandidates(
@@ -1050,18 +1169,20 @@ namespace KRWF.RimKata
         private static void UpdateCollectionClosure(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            int outerRing)
+            int outerRing,
+            ref RingCandidateSlot primarySlot,
+            ref RingCandidateSlot secondarySlot)
         {
             bool primarySaturated = UpdateCycleCollectionClosure(
                 pawn,
                 combatState,
-                combatState.primaryWeaponCycle,
+                ref primarySlot,
                 outerRing,
                 out bool primaryVacancy);
             bool secondarySaturated = UpdateCycleCollectionClosure(
                 pawn,
                 combatState,
-                combatState.secondaryWeaponCycle,
+                ref secondarySlot,
                 outerRing,
                 out bool secondaryVacancy);
 
@@ -1082,7 +1203,7 @@ namespace KRWF.RimKata
                         TryScheduleNextCandidateLimit(
                             pawn,
                             combatState,
-                            combatState.primaryWeaponCycle,
+                            ref primarySlot,
                             outerRing);
                     }
                     if (secondarySaturated)
@@ -1090,7 +1211,7 @@ namespace KRWF.RimKata
                         TryScheduleNextCandidateLimit(
                             pawn,
                             combatState,
-                            combatState.secondaryWeaponCycle,
+                            ref secondarySlot,
                             outerRing);
                     }
                     combatState.candidateSaturationExpansionUsed = true;
@@ -1305,10 +1426,11 @@ namespace KRWF.RimKata
         private static bool UpdateCycleCollectionClosure(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            RimKataWeaponCycleState cycle,
+            ref RingCandidateSlot slot,
             int outerRing,
             out bool hasCandidateVacancy)
         {
+            RimKataWeaponCycleState cycle = slot.cycle;
             hasCandidateVacancy = false;
             if (!UsesRangedCandidateLimit(cycle)
                 || cycle.automaticCandidateCollectionClosed)
@@ -1316,12 +1438,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, cycle);
-            float candidateCellRadius = CandidateCellRadiusForCycle(
-                pawn,
-                combatState,
-                cycle,
-                verb);
+            float candidateCellRadius = slot.NewCandidateRadius(pawn, combatState);
             int limit = EffectiveCandidateLimitForRing(cycle, outerRing);
             int maximumRing = MaximumLogicalRingFromCellRadius(
                 candidateCellRadius);
@@ -1341,30 +1458,27 @@ namespace KRWF.RimKata
         private static bool SlotCollectionClosed(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            RimKataWeaponCycleState cycle,
+            ref RingCandidateSlot slot,
             int outerRing)
         {
+            RimKataWeaponCycleState cycle = slot.cycle;
             if (cycle?.weapon == null)
             {
                 return true;
             }
 
-            Verb verb = CombatVerbForCycle(pawn, cycle);
             return cycle.automaticCandidateCollectionClosed
                 || outerRing >= MaximumLogicalRingFromCellRadius(
-                    CandidateCellRadiusForCycle(
-                        pawn,
-                        combatState,
-                        cycle,
-                        verb));
+                    slot.NewCandidateRadius(pawn, combatState));
         }
 
         private static bool TryScheduleNextCandidateLimit(
             Pawn pawn,
             RimKataPawnCombatState combatState,
-            RimKataWeaponCycleState cycle,
+            ref RingCandidateSlot slot,
             int saturatedRing)
         {
+            RimKataWeaponCycleState cycle = slot.cycle;
             if (pawn?.Map == null
                 || !UsesRangedCandidateLimit(cycle)
                 || cycle.pendingCandidateLimitOverride > 0
@@ -1373,14 +1487,7 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Verb verb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                cycle.weapon);
-            float candidateCellRadius = CandidateCellRadiusForCycle(
-                pawn,
-                combatState,
-                cycle,
-                verb);
+            float candidateCellRadius = slot.NewCandidateRadius(pawn, combatState);
             int maximumRing = MaximumLogicalRingFromCellRadius(
                 candidateCellRadius);
             int currentLimit = CandidateLimitForRing(saturatedRing);
@@ -1532,21 +1639,30 @@ namespace KRWF.RimKata
             RimKataWeaponCycleState cycle,
             Verb verb)
         {
-            bool closeCombatContext = IsCloseCombatContext(combatState);
-            if (pawn?.Map == null
-                || cycle?.weapon == null
-                || !RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def)
-                || verb == null
-                || !RimKataDualWeaponController.VerbUsable(
-                    pawn,
-                    verb,
-                    closeCombatContext))
+            if (!IsSlotAvailableForNewCandidates(pawn, combatState, cycle, verb))
             {
                 return 0f;
             }
 
             return ResolveCandidateCellRadiusForCycle(
                 pawn, combatState, cycle, verb);
+        }
+
+        private static bool IsSlotAvailableForNewCandidates(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Verb verb)
+        {
+            bool closeCombatContext = IsCloseCombatContext(combatState);
+            return pawn?.Map != null
+                && cycle?.weapon != null
+                && RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def)
+                && verb != null
+                && RimKataDualWeaponController.VerbUsable(
+                    pawn,
+                    verb,
+                    closeCombatContext);
         }
 
         private static float ResolveCandidateCellRadiusForCycle(
