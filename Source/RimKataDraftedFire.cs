@@ -58,7 +58,8 @@ namespace KRWF.RimKata
                 || target == null
                 || target.Destroyed
                 || !target.Spawned
-                || target.Map != pawn.Map)
+                || target.Map != pawn.Map
+                || RimKataDualWeaponController.UsesVanillaAutomaticTarget(pawn, target))
             {
                 return false;
             }

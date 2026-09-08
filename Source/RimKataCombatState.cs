@@ -347,6 +347,7 @@ namespace KRWF.RimKata
     public sealed class RimKataPawnCombatState : IExposable
     {
         public Pawn pawn;
+        internal RimKataMapComponent ownerComponent;
         public RimKataVisualState visualState;
         public int ticksRemaining;
         public int totalTicks;
@@ -1558,6 +1559,7 @@ namespace KRWF.RimKata
                     RimKataCombatStatePresenceCache.Clear(
                         states[i]?.pawn,
                         map);
+                    if (states[i] != null) states[i].ownerComponent = null;
                 }
             }
             UnsubscribeProjectileEvents();
@@ -2622,6 +2624,7 @@ namespace KRWF.RimKata
                 }
 
                 RimKataPawnCombatState state = new RimKataPawnCombatState(pawn);
+                state.ownerComponent = this;
                 RimKataCombatStatePresenceCache.Mark(pawn, this);
                 states.Add(state);
                 statesByPawn[pawn] = state;
@@ -2665,6 +2668,7 @@ namespace KRWF.RimKata
                 RimKataPawnCombatState state = states[i];
                 if (state?.pawn != null)
                 {
+                    state.ownerComponent = this;
                     RimKataCombatStatePresenceCache.Mark(state.pawn, this);
                     statesByPawn[state.pawn] = state;
                     RimKataResponseVisualParticipantCache.Refresh(state);
@@ -2677,6 +2681,7 @@ namespace KRWF.RimKata
         private void RemoveStateAt(int index)
         {
             RimKataPawnCombatState state = states[index];
+            if (state != null) state.ownerComponent = null;
             states.RemoveAt(index);
             RimKataResponseVisualParticipantCache.Clear(state?.pawn);
             if (state?.pawn != null

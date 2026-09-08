@@ -733,8 +733,8 @@ namespace KRWF.RimKata
                 Add(controller, "NormalizeUnavailableCycleWork", 5, Part.Normalize);
                 Add(typeof(RimKataSharedTargetSearch), "Begin", 3, Part.Search);
                 Add(typeof(RimKataSharedTargetSearch), "Advance", 3, Part.Search);
-                Add(typeof(RimKataSharedTargetSearch), "TrySelectCandidate", 9, Part.Select);
-                Add(controller, "TryCacheSharedCandidate", 6, Part.Reserve);
+                Add(typeof(RimKataSharedTargetSearch), "TrySelectCandidate", 10, Part.Select);
+                Add(controller, "TryCacheSharedCandidate", 7, Part.Reserve);
                 Add(controller, "TickWeaponCycle", 15, Part.Slot);
                 Add(typeof(RimKataFireContext), "ResolvePendingCloseHits", 0, Part.CloseHit);
                 Add(controller, "RefreshDualEngagementState", 3, Part.Continuity);
