@@ -401,6 +401,8 @@ namespace KRWF.RimKata
         public bool draftedPlannedCloseContext;
         public RimKataWeaponCycleState primaryWeaponCycle = new RimKataWeaponCycleState();
         public RimKataWeaponCycleState secondaryWeaponCycle = new RimKataWeaponCycleState();
+        internal bool weaponBindingsDirty = true;
+        internal int weaponConfigurationRevision = -1;
         public RimKataSharedTargetSearchState sharedTargetSearch =
             new RimKataSharedTargetSearchState();
         public bool idleProjectileSearchTriggerPending;
@@ -638,6 +640,7 @@ namespace KRWF.RimKata
 
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
+                weaponBindingsDirty = true;
                 primaryWeaponCycle ??= new RimKataWeaponCycleState();
                 secondaryWeaponCycle ??= new RimKataWeaponCycleState();
                 sharedTargetSearch ??= new RimKataSharedTargetSearchState();
@@ -1234,6 +1237,7 @@ namespace KRWF.RimKata
 
         public void CancelWeaponCycles()
         {
+            weaponBindingsDirty = true;
             primaryWeaponCycle?.Reset();
             secondaryWeaponCycle?.Reset();
             sharedTargetSearch?.Reset();

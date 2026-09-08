@@ -17,6 +17,8 @@ namespace KRWF.RimKata
         private static HashSet<string> enabledArmorDefNames;
         private static List<ThingDef> enabledOneHandGeneratableWeapons;
 
+        internal static int WeaponConfigurationRevision { get; private set; }
+
         public static List<ThingDef> EnabledOneHandGeneratableWeapons
         {
             get
@@ -108,6 +110,10 @@ namespace KRWF.RimKata
 
         public static void InvalidateCaches()
         {
+            unchecked
+            {
+                WeaponConfigurationRevision++;
+            }
             enabledWeaponDefNames = null;
             enabledArmorDefNames = null;
             enabledOneHandGeneratableWeapons = null;

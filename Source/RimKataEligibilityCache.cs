@@ -187,6 +187,7 @@ namespace KRWF.RimKata
             Pawn pawn,
             ThingWithComps secondaryWeapon)
         {
+            RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
             if (pawn != null
                 && registeredUsers.TryGetValue(
                     pawn,
@@ -371,6 +372,7 @@ namespace KRWF.RimKata
 
         private static ThingWithComps BeginAccessInvalidation(Pawn pawn)
         {
+            RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
             ThingWithComps registeredSecondary = pawn?.Spawned == true
                 ? RimKataSecondaryWeaponRegistry.CurrentRegistry
                     ?.GetRegistered(pawn)

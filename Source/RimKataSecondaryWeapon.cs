@@ -769,6 +769,7 @@ namespace KRWF.RimKata
             if (pawn != null)
             {
                 CombatVerbCaches.Remove(pawn);
+                RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
             }
         }
 
@@ -1118,7 +1119,7 @@ namespace KRWF.RimKata
                 {
                     Pawn pawn = pawns[pawnIndex];
                     ValidateLoadout(pawn);
-                    RimKataDualWeaponController.Reset(pawn, true);
+                    RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
                 }
             }
         }
@@ -1129,8 +1130,13 @@ namespace KRWF.RimKata
             bool removed)
         {
             if (pawn?.Spawned != true
-                || changedEquipment == null
-                || !RimKataEligibilityCache.IsRegisteredUser(pawn))
+                || changedEquipment == null)
+            {
+                return;
+            }
+
+            RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
+            if (!RimKataEligibilityCache.IsRegisteredUser(pawn))
             {
                 return;
             }
