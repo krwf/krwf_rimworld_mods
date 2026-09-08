@@ -552,7 +552,29 @@ namespace KRWF.RimKata
                 .GetComponent<RimKataMapComponent>()?
                 .GetState(pawn, false);
             RimKataWeaponCycleState cycle = CycleForVerb(state, verb);
-            if (cycle == null)
+            return IsValidForVerb(
+                pawn,
+                state,
+                cycle,
+                verb,
+                target,
+                !(target is Projectile)
+                    && cycle?.automaticCandidates?.Contains(target) == true);
+        }
+
+        internal static bool IsValidForVerb(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            Thing target,
+            bool registeredCandidate)
+        {
+            if (pawn?.Map == null
+                || state == null
+                || cycle == null
+                || verb == null
+                || target == null)
             {
                 return false;
             }
@@ -566,7 +588,7 @@ namespace KRWF.RimKata
                     projectile);
             }
 
-            if (cycle.automaticCandidates?.Contains(target) == true)
+            if (registeredCandidate)
             {
                 return CanShootRegisteredCandidate(
                     pawn, state, cycle, verb, target);

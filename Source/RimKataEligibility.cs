@@ -171,7 +171,7 @@ namespace KRWF.RimKata
                 && CanOperateCombatWeapon(pawn);
         }
 
-        private static bool CanOperateCombatWeapon(Pawn pawn)
+        internal static bool CanOperateCombatWeapon(Pawn pawn)
         {
             return HasActiveRimKataAccess(pawn)
                 && IsConsciousAndMobile(pawn)

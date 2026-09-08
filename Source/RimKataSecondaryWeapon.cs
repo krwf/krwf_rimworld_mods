@@ -886,8 +886,9 @@ namespace KRWF.RimKata
                 ? RimKataEligibility.IsRangedVerbAvailableInCloseCombat(pawn, verb)
                 : verb.Available();
             return available
-                && !verb.ApparelPreventsShooting()
-                && (adjacent || verb.CanHitTarget(target));
+                && (adjacent
+                    || (!verb.ApparelPreventsShooting()
+                        && verb.CanHitTarget(target)));
         }
 
         public static Verb BestRangedCombatVerb(Pawn pawn, Thing target = null)
@@ -961,16 +962,15 @@ namespace KRWF.RimKata
             Thing target,
             ref bool? targetAdjacent)
         {
-            if (verb == null
-                || verb.IsMeleeAttack
-                || verb.ApparelPreventsShooting())
+            if (verb == null || verb.IsMeleeAttack)
             {
                 return false;
             }
 
             if (target == null)
             {
-                return verb.Available();
+                return !verb.ApparelPreventsShooting()
+                    && verb.Available();
             }
 
             bool adjacent;
@@ -986,7 +986,7 @@ namespace KRWF.RimKata
 
             bool available = adjacent
                 ? RimKataEligibility.IsRangedVerbAvailableInCloseCombat(pawn, verb)
-                : verb.Available();
+                : !verb.ApparelPreventsShooting() && verb.Available();
             return available && (adjacent || verb.CanHitTarget(target));
         }
 

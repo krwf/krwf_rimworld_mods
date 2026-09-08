@@ -361,7 +361,6 @@ namespace KRWF.RimKata
         }
 
         internal void TickPreparedCombat(
-            RimKataMapComponent component,
             RimKataPawnCombatState state,
             Thing assignedTarget,
             bool assignedTargetValid,
@@ -412,6 +411,8 @@ namespace KRWF.RimKata
                 }
             }
 
+            bool assignedTargetInTouchRange = assignedTargetValid
+                && pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch);
             bool closeTargetResolutionKnown = RimKataDualWeaponController
                 .ReconcileCloseCombatBeforeContinuityCheck(
                     pawn,
@@ -419,7 +420,9 @@ namespace KRWF.RimKata
                     assignedTarget,
                     IsPlayerForced,
                     job.killIncappedTarget,
-                    out Thing immediateCloseTarget);
+                    out Thing immediateCloseTarget,
+                    assignedTargetValid,
+                    assignedTargetInTouchRange);
             if (!RimKataDualWeaponController.HasCombatContinuity(pawn, state))
             {
                 EndRimKataJobWith(JobCondition.Succeeded);
@@ -427,7 +430,6 @@ namespace KRWF.RimKata
             }
 
             MaintainCombatNormalSpeedRequest(assignedTarget);
-            bool assignedTargetInTouchRange = assignedTargetValid && pawn.CanReachImmediate(assignedTarget, PathEndMode.Touch);
 
             if (!closeTargetResolutionKnown)
             {
@@ -436,7 +438,9 @@ namespace KRWF.RimKata
                     state,
                     assignedTarget,
                     IsPlayerForced,
-                    job.killIncappedTarget);
+                    job.killIncappedTarget,
+                    assignedTargetValid,
+                    assignedTargetInTouchRange);
             }
 
             if (RimKataDodgeMovementUtility.CalculateIsActive(
@@ -477,7 +481,7 @@ namespace KRWF.RimKata
 
             if (assignedTargetInTouchRange)
             {
-                component?.EnterCloseCombat(pawn, assignedTarget);
+                state.EnterCloseCombat(assignedTarget);
             }
 
             pawn.pather.StopDead();
