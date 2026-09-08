@@ -351,6 +351,44 @@ namespace KRWF.RimKata
             bool ordinaryWeaponEnabled = !idleProjectilePriority
                 && cycle.weapon != null
                 && RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def);
+            return TrySelectCandidate(
+                pawn,
+                combatState,
+                cycle,
+                verb,
+                preferredTarget,
+                randomAttack,
+                ordinaryWeaponEnabled,
+                out target,
+                out interception);
+        }
+
+        internal static bool TrySelectCandidate(
+            Pawn pawn,
+            RimKataPawnCombatState combatState,
+            RimKataWeaponCycleState cycle,
+            Verb verb,
+            Thing preferredTarget,
+            bool randomAttack,
+            bool ordinaryWeaponEnabled,
+            out Thing target,
+            out bool interception)
+        {
+            target = null;
+            interception = false;
+            if (pawn?.Map == null
+                || combatState == null
+                || cycle == null
+                || verb == null)
+            {
+                return false;
+            }
+
+            bool idleProjectilePriority = !randomAttack
+                && combatState.idleProjectileSearchTriggerPending;
+            ordinaryWeaponEnabled = !idleProjectilePriority
+                && cycle.weapon != null
+                && ordinaryWeaponEnabled;
             if (!randomAttack && !idleProjectilePriority)
             {
                 if (ordinaryWeaponEnabled

@@ -188,6 +188,13 @@ namespace KRWF.RimKata
             ThingWithComps secondaryWeapon)
         {
             RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
+            UpdateRegisteredSecondaryWeapon(pawn, secondaryWeapon);
+        }
+
+        internal static void UpdateRegisteredSecondaryWeapon(
+            Pawn pawn,
+            ThingWithComps secondaryWeapon)
+        {
             if (pawn != null
                 && registeredUsers.TryGetValue(
                     pawn,
@@ -392,11 +399,12 @@ namespace KRWF.RimKata
 
             if (RimKataEligibility.HasRimKataAccess(pawn))
             {
-                NotifySecondaryWeaponChanged(pawn, registeredSecondary);
+                UpdateRegisteredSecondaryWeapon(pawn, registeredSecondary);
             }
             else
             {
-                RimKataWeaponSlotUtility.ValidateLoadout(pawn);
+                RimKataWeaponSlotUtility.RemoveInvalidSecondary(
+                    pawn, registeredSecondary);
             }
         }
 

@@ -104,18 +104,36 @@ namespace KRWF.RimKata
             base.FinalizeInit();
             CleanupSpawnedRegistrations();
             CleanupRecoveries();
+            NormalizeSpawnedLoadouts();
+        }
+
+        internal void NormalizeSpawnedLoadouts()
+        {
             for (int i = pawns.Count - 1; i >= 0; i--)
             {
+                if (i >= pawns.Count)
+                {
+                    continue;
+                }
+
                 Pawn pawn = pawns[i];
                 if (pawn?.Spawned != true)
                 {
                     continue;
                 }
 
-                RimKataWeaponSlotUtility.ValidateLoadout(pawn);
-                RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                ThingWithComps secondary = weapons[i];
+                RimKataWeaponSlotUtility.ValidateRegisteredSecondary(
                     pawn,
-                    Get(pawn));
+                    secondary);
+                if (i < pawns.Count
+                    && pawns[i] == pawn
+                    && weapons[i] == secondary)
+                {
+                    RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                        pawn,
+                        secondary);
+                }
             }
         }
 
@@ -150,6 +168,11 @@ namespace KRWF.RimKata
 
         public void Set(Pawn pawn, ThingWithComps weapon)
         {
+            Set(pawn, weapon, true);
+        }
+
+        internal void Set(Pawn pawn, ThingWithComps weapon, bool invalidateBindings)
+        {
             if (pawn == null || weapon == null)
             {
                 return;
@@ -167,17 +190,30 @@ namespace KRWF.RimKata
             }
 
             CacheRegisteredWeapon(pawn, weapon);
-            RimKataEligibilityCache.NotifySecondaryWeaponChanged(
-                pawn,
-                weapon);
+            if (invalidateBindings)
+            {
+                RimKataEligibilityCache.NotifySecondaryWeaponChanged(pawn, weapon);
+            }
+            else
+            {
+                RimKataEligibilityCache.UpdateRegisteredSecondaryWeapon(pawn, weapon);
+            }
         }
 
         public void Clear(Pawn pawn, ThingWithComps expectedWeapon = null)
         {
+            Clear(pawn, expectedWeapon, true);
+        }
+
+        internal void Clear(
+            Pawn pawn,
+            ThingWithComps expectedWeapon,
+            bool invalidateBindings)
+        {
             int index = pawns.IndexOf(pawn);
             if (index >= 0 && (expectedWeapon == null || weapons[index] == expectedWeapon))
             {
-                RemoveAt(index);
+                RemoveAt(index, invalidateBindings);
             }
         }
 
@@ -491,15 +527,20 @@ namespace KRWF.RimKata
                 && pawn.equipment.AllEquipmentListForReading.Contains(weapon);
         }
 
-        private void RemoveAt(int index)
+        private void RemoveAt(int index, bool invalidateBindings = true)
         {
             Pawn pawn = pawns[index];
             pawns.RemoveAt(index);
             weapons.RemoveAt(index);
             InvalidateCachedRegisteredWeapon(pawn);
-            RimKataEligibilityCache.NotifySecondaryWeaponChanged(
-                pawn,
-                null);
+            if (invalidateBindings)
+            {
+                RimKataEligibilityCache.NotifySecondaryWeaponChanged(pawn, null);
+            }
+            else
+            {
+                RimKataEligibilityCache.UpdateRegisteredSecondaryWeapon(pawn, null);
+            }
         }
 
         private bool TryGetCachedRegisteredWeapon(
@@ -997,7 +1038,7 @@ namespace KRWF.RimKata
             bool added = owner.TryAdd(weapon, false);
             if (added)
             {
-                RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, weapon);
+                RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, weapon, false);
                 NotifyLoadoutChanged(pawn);
             }
             else if (existingDestroyed
@@ -1012,20 +1053,49 @@ namespace KRWF.RimKata
 
         public static void ValidateLoadout(Pawn pawn, bool dropInvalidSecondary = true)
         {
-            if (pawn?.Spawned != true)
+            if (pawn?.Spawned != true
+                || !RimKataEligibility.HasRimKataAccess(pawn))
             {
                 return;
             }
 
-            ThingWithComps primary = PrimaryWeapon(pawn);
             ThingWithComps secondary = SecondaryWeapon(pawn);
+            ValidateSecondaryWithVerifiedAccess(
+                pawn,
+                secondary,
+                dropInvalidSecondary);
+        }
+
+        internal static void ValidateRegisteredSecondary(
+            Pawn pawn,
+            ThingWithComps secondary)
+        {
+            if (pawn?.Spawned != true || secondary == null)
+            {
+                return;
+            }
+
+            if (!RimKataEligibility.HasRimKataAccess(pawn))
+            {
+                RemoveInvalidSecondary(pawn, secondary);
+                return;
+            }
+
+            ValidateSecondaryWithVerifiedAccess(pawn, secondary, true);
+        }
+
+        private static void ValidateSecondaryWithVerifiedAccess(
+            Pawn pawn,
+            ThingWithComps secondary,
+            bool dropInvalidSecondary)
+        {
             if (secondary == null)
             {
                 return;
             }
 
+            ThingWithComps primary = PrimaryWeapon(pawn);
             bool valid = RimKataMod.Settings?.secondaryWeaponEnabled != false
-                && RimKataEligibility.HasRimKataAccess(pawn)
                 && RimKataEquipmentUtility.IsWeaponEnabled(primary?.def)
                 && RimKataEquipmentUtility.IsWeaponEnabled(secondary.def)
                 && RimKataGripUtility.GripTypeFor(primary.def) == RimKataGripType.OneHand
@@ -1035,12 +1105,24 @@ namespace KRWF.RimKata
                 return;
             }
 
+            RemoveInvalidSecondary(pawn, secondary);
+        }
+
+        internal static void RemoveInvalidSecondary(
+            Pawn pawn,
+            ThingWithComps secondary)
+        {
+            if (pawn?.Spawned != true || secondary == null)
+            {
+                return;
+            }
+
             MoveOutOfEquipment(pawn, secondary);
             RimKataSecondaryWeaponRegistry registry =
                 RimKataSecondaryWeaponRegistry.CurrentRegistry;
             if (registry?.GetRegistered(pawn) == secondary)
             {
-                registry.Clear(pawn, secondary);
+                registry.Clear(pawn, secondary, false);
                 NotifyLoadoutChanged(pawn);
             }
         }
@@ -1073,7 +1155,7 @@ namespace KRWF.RimKata
             equipment[primaryIndex] = secondary;
             equipment[secondaryIndex] = primary;
 
-            RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, primary);
+            RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, primary, false);
 
             NotifyLoadoutChanged(pawn);
             return true;
@@ -1081,27 +1163,28 @@ namespace KRWF.RimKata
 
         public static void NotifyLoadoutChanged(Pawn pawn)
         {
-            InvalidateCombatVerbCache(pawn);
-            RimKataRangeUtility.InvalidateWeaponRanges(pawn);
-            RimKataDualWeaponController.NotifyLoadoutChanged(pawn);
+            NotifyLoadoutChanged(
+                pawn, RimKataDualWeaponController.InvalidateWeaponBindings(pawn));
         }
 
-        public static void NormalizeAllSpawnedLoadouts()
+        private static void NotifyLoadoutChanged(
+            Pawn pawn,
+            RimKataPawnCombatState state)
         {
-            if (Current.Game == null)
+            if (pawn == null)
             {
                 return;
             }
 
-            List<Map> maps = Find.Maps;
-            for (int mapIndex = 0; mapIndex < maps.Count; mapIndex++)
-            {
-                IReadOnlyList<Pawn> pawns = maps[mapIndex].mapPawns.AllPawnsSpawned;
-                for (int pawnIndex = pawns.Count - 1; pawnIndex >= 0; pawnIndex--)
-                {
-                    ValidateLoadout(pawns[pawnIndex]);
-                }
-            }
+            CombatVerbCaches.Remove(pawn);
+            RimKataRangeUtility.InvalidateWeaponRanges(pawn);
+            RimKataDualWeaponController.NotifyLoadoutChanged(pawn, state);
+        }
+
+        public static void NormalizeAllSpawnedLoadouts()
+        {
+            RimKataSecondaryWeaponRegistry.CurrentRegistry
+                ?.NormalizeSpawnedLoadouts();
         }
 
         public static void NotifyCombatFeaturesChanged()
@@ -1111,6 +1194,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            NormalizeAllSpawnedLoadouts();
             List<Map> maps = Find.Maps;
             for (int mapIndex = 0; mapIndex < maps.Count; mapIndex++)
             {
@@ -1118,7 +1202,6 @@ namespace KRWF.RimKata
                 for (int pawnIndex = pawns.Count - 1; pawnIndex >= 0; pawnIndex--)
                 {
                     Pawn pawn = pawns[pawnIndex];
-                    ValidateLoadout(pawn);
                     RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
                 }
             }
@@ -1135,7 +1218,8 @@ namespace KRWF.RimKata
                 return;
             }
 
-            RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
+            RimKataPawnCombatState state =
+                RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
             if (!RimKataEligibilityCache.IsRegisteredUser(pawn))
             {
                 return;
@@ -1166,16 +1250,16 @@ namespace KRWF.RimKata
             if (registeredSecondary != null
                 && (!secondaryHeld || primary == registeredSecondary))
             {
-                registry.Clear(pawn, registeredSecondary);
+                registry.Clear(pawn, registeredSecondary, false);
             }
             else
             {
-                RimKataEligibilityCache.NotifySecondaryWeaponChanged(
+                RimKataEligibilityCache.UpdateRegisteredSecondaryWeapon(
                     pawn,
                     registeredSecondary);
             }
 
-            NotifyLoadoutChanged(pawn);
+            NotifyLoadoutChanged(pawn, state);
         }
 
         private static void MoveOutOfEquipment(Pawn pawn, ThingWithComps weapon)
@@ -2468,7 +2552,7 @@ namespace KRWF.RimKata
             MovePromotedSecondaryOut(__instance, ___pawn, secondary);
             if (registry?.GetRegistered(___pawn) == secondary)
             {
-                registry.Clear(___pawn, secondary);
+                registry.Clear(___pawn, secondary, false);
                 RimKataWeaponSlotUtility.NotifyLoadoutChanged(___pawn);
             }
             return true;
@@ -2515,7 +2599,7 @@ namespace KRWF.RimKata
 
             equipment.RemoveAt(incomingIndex);
             equipment.Insert(secondaryIndex, incoming);
-            RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, secondary);
+            RimKataSecondaryWeaponRegistry.CurrentRegistry?.Set(pawn, secondary, false);
             if (pawn.mindState != null)
             {
                 pawn.mindState.droppedWeapon = null;
