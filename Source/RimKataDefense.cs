@@ -133,15 +133,52 @@ namespace KRWF.RimKata
 
         public static bool TryGetCloseAttackResolution(Pawn pawn, out bool avoided)
         {
+            if (RimKataProjectileImpactContext.CurrentProjectile != null)
+            {
+                RimKataCloseProjectileState shot = RimKataProjectileImpactContext.CurrentCloseShot;
+                avoided = shot?.defenseAvoided == true;
+                return shot?.target == pawn && pawn != null && shot.defenseResolved;
+            }
+
             avoided = closeDefenseAvoided;
             return closeDefenseResolved && pawn != null && pawn == closeResolvedDefender;
         }
 
         internal static void RecordCloseAttackResolution(Pawn pawn, bool avoided)
         {
+            if (RimKataProjectileImpactContext.CurrentProjectile != null)
+            {
+                RimKataCloseProjectileState shot = RimKataProjectileImpactContext.CurrentCloseShot;
+                if (shot?.target == pawn && pawn != null)
+                {
+                    shot.defenseResolved = true;
+                    shot.defenseAvoided = avoided;
+                }
+                return;
+            }
+
             closeResolvedDefender = pawn;
             closeDefenseResolved = true;
             closeDefenseAvoided = avoided;
+        }
+
+        internal static bool TryGetCloseAttackData(
+            Pawn pawn,
+            out bool meleeResolution,
+            out bool meleeHit)
+        {
+            if (RimKataProjectileImpactContext.CurrentProjectile != null)
+            {
+                RimKataCloseProjectileState shot = RimKataProjectileImpactContext.CurrentCloseShot;
+                meleeResolution = shot?.meleeResolution == true;
+                meleeHit = shot?.meleeHit == true;
+                return pawn != null && shot?.target == pawn;
+            }
+
+            meleeResolution = RimKataFireContext.CloseMeleeResolution;
+            meleeHit = RimKataFireContext.CloseMeleeHit;
+            return RimKataFireContext.CloseShot && pawn != null
+                && RimKataFireContext.CloseTarget == pawn;
         }
 
         public static void EnterProjectileImpact()
@@ -223,7 +260,6 @@ namespace KRWF.RimKata
                 || attacker == null
                 || attackingVerb == null
                 || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
-                || !RimKataEligibility.HasRimKataAccess(attacker)
                 || !RimKataEligibility.CanUseDefense(defender)
                 || HasActiveApparelShield(defender))
             {
@@ -452,7 +488,15 @@ namespace KRWF.RimKata
 
         public static bool TryAbsorbAfterShield(Pawn defender, DamageInfo dinfo)
         {
-            bool closeAttack = RimKataFireContext.CloseShot && RimKataFireContext.CloseTarget == defender;
+            Projectile projectile = RimKataProjectileImpactContext.CurrentProjectile;
+            RimKataCloseProjectileState closeShot = RimKataProjectileImpactContext.CurrentCloseShot;
+            if (closeShot?.target != defender)
+            {
+                closeShot = null;
+            }
+            bool closeAttack = closeShot != null
+                || (projectile == null && RimKataFireContext.CloseShot
+                    && RimKataFireContext.CloseTarget == defender);
             if (TryGetResolvedProjectileDefense(defender, out bool previouslyAvoided))
             {
                 return previouslyAvoided;
@@ -465,7 +509,6 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            Projectile projectile = RimKataProjectileImpactContext.CurrentProjectile;
             Thing attacker = projectile?.Launcher ?? dinfo.Instigator;
 
             if (!closeAttack
@@ -518,7 +561,12 @@ namespace KRWF.RimKata
                     return closePreviouslyAvoided;
                 }
 
-                RimKataCloseDefensePrecheck precheck = RimKataFireContext.CloseDefensePrecheck;
+                RimKataCloseDefensePrecheck precheck = closeShot?.precheck
+                    ?? RimKataFireContext.CloseDefensePrecheck;
+                bool meleeResolution = closeShot?.meleeResolution
+                    ?? RimKataFireContext.CloseMeleeResolution;
+                Pawn closeAttacker = closeShot != null ? attacker as Pawn : RimKataFireContext.Shooter;
+                Verb attackingVerb = closeShot != null ? closeShot.attackingVerb : RimKataFireContext.ActiveVerb;
                 if (precheck == RimKataCloseDefensePrecheck.FirstDodgeSucceeded
                     || precheck == RimKataCloseDefensePrecheck.ResponseSucceeded
                     || precheck == RimKataCloseDefensePrecheck.ResponseSucceededWithAccidentalShot)
@@ -548,12 +596,12 @@ namespace KRWF.RimKata
                 }
 
                 bool firstDodgeAndResponseAlreadyFailed = precheck == RimKataCloseDefensePrecheck.FirstDodgeAndResponseFailed;
-                float closeDodgeChance = RimKataFireContext.CloseMeleeResolution
+                float closeDodgeChance = meleeResolution
                     ? RimKataCombatMath.CloseMeleeDodgeChanceVerified(
                         defender)
                     : 0f;
                 if (!firstDodgeAndResponseAlreadyFailed
-                    && RimKataFireContext.CloseMeleeResolution
+                    && meleeResolution
                     && Rand.Chance(closeDodgeChance))
                 {
                     RecordCloseAttackResolution(defender, true);
@@ -570,18 +618,30 @@ namespace KRWF.RimKata
                     ? RimKataDefenseOutcome.None
                     : ResolveCloseDefenseCore(
                         defender,
-                        RimKataFireContext.Shooter,
-                        RimKataFireContext.ActiveVerb,
+                        closeAttacker,
+                        attackingVerb,
                         true);
                 if (outcome != RimKataDefenseOutcome.None)
                 {
                     RecordCloseAttackResolution(defender, true);
                     RecordProjectileDefense(defender, true);
                     MarkProjectileAvoided(defender);
+                    float accidentalFireChance = RimKataMod.Settings?
+                        .GetResponseAccidentalFireChance(defender) ?? 0.2f;
+                    if (Rand.Chance(accidentalFireChance))
+                    {
+                        int dodgeDurationTicks = RimKataMod.Settings?
+                            .GetRangedDodgeDurationTicks(defender)
+                            ?? RimKataSettings.DefaultRangedDodgeDurationTicks;
+                        defender.Map?.GetComponent<RimKataMapComponent>()?
+                            .BeginCloseCombatDodge(defender, dodgeDurationTicks);
+                        RimKataProjectileUtility.SpawnDeflectedMiss(
+                            projectile, closeAttacker, defender, attackingVerb);
+                    }
                     return true;
                 }
 
-                if (RimKataFireContext.CloseMeleeResolution
+                if (meleeResolution
                     && Rand.Chance(closeDodgeChance))
                 {
                     RecordCloseAttackResolution(defender, true);
@@ -589,9 +649,9 @@ namespace KRWF.RimKata
                     MarkProjectileAvoided(defender);
                     RimKataProjectileUtility.SpawnDeflectedMiss(
                         RimKataProjectileImpactContext.CurrentProjectile,
-                        RimKataFireContext.Shooter,
+                        closeAttacker,
                         defender,
-                        RimKataFireContext.ActiveVerb);
+                        attackingVerb);
                     NotifyAbsorbedRangedDamageForJob(
                         defender,
                         dinfo,
@@ -861,9 +921,13 @@ namespace KRWF.RimKata
     {
         public static bool Prefix(Pawn __instance, ref bool absorbed)
         {
-            if (RimKataFireContext.CloseShot
-                && RimKataFireContext.CloseTarget == __instance
-                && RimKataDefenseUtility.TryGetCloseAttackResolution(__instance, out bool previouslyAvoided)
+            if (!RimKataDefenseUtility.TryGetCloseAttackData(
+                    __instance, out bool meleeResolution, out bool meleeHit))
+            {
+                return true;
+            }
+
+            if (RimKataDefenseUtility.TryGetCloseAttackResolution(__instance, out bool previouslyAvoided)
                 && previouslyAvoided)
             {
                 RimKataDefenseUtility.RecordProjectileDefense(__instance, true);
@@ -872,11 +936,11 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (RimKataFireContext.CloseShot
-                && RimKataFireContext.CloseMeleeResolution
-                && !RimKataFireContext.CloseMeleeHit
-                && RimKataFireContext.CloseTarget == __instance)
+            if (meleeResolution && !meleeHit)
             {
+                RimKataDefenseUtility.RecordCloseAttackResolution(__instance, true);
+                RimKataDefenseUtility.RecordProjectileDefense(__instance, true);
+                RimKataDefenseUtility.MarkProjectileAvoided(__instance);
                 absorbed = true;
                 return false;
             }
@@ -889,13 +953,11 @@ namespace KRWF.RimKata
             ref DamageInfo dinfo,
             ref bool absorbed)
         {
-            bool closeMeleeTarget = RimKataFireContext.CloseShot
-                && RimKataFireContext.CloseMeleeResolution
-                && RimKataFireContext.CloseTarget == __instance;
+            bool closeMeleeTarget = RimKataDefenseUtility.TryGetCloseAttackData(
+                __instance, out bool meleeResolution, out _)
+                && meleeResolution;
             if (absorbed
                 && closeMeleeTarget
-                && RimKataFireContext.DirectCloseHit.HasValue
-                && RimKataProjectileImpactContext.CurrentProjectile == null
                 && !RimKataDefenseUtility.TryGetCloseAttackResolution(__instance, out _))
             {
                 RimKataDefenseUtility.RecordCloseAttackResolution(__instance, false);

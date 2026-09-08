@@ -77,6 +77,33 @@ namespace KRWF.RimKata
         }
     }
 
+    internal sealed class RimKataCloseProjectileState : IExposable
+    {
+        public Projectile projectile;
+        public Thing target;
+        public Verb attackingVerb;
+        public bool meleeResolution;
+        public bool meleeHit;
+        public RimKataCloseDefensePrecheck precheck;
+        // One native impact can apply the main injury and several extra packets.
+        internal bool defenseResolved;
+        internal bool defenseAvoided;
+
+        public RimKataCloseProjectileState()
+        {
+        }
+
+        public void ExposeData()
+        {
+            Scribe_References.Look(ref projectile, "projectile");
+            Scribe_References.Look(ref target, "target");
+            Scribe_References.Look(ref attackingVerb, "attackingVerb");
+            Scribe_Values.Look(ref meleeResolution, "meleeResolution");
+            Scribe_Values.Look(ref meleeHit, "meleeHit");
+            Scribe_Values.Look(ref precheck, "precheck");
+        }
+    }
+
     public sealed class RimKataInterceptionShotLink : IExposable
     {
         public Projectile shot;
@@ -1479,6 +1506,11 @@ namespace KRWF.RimKata
         private readonly Dictionary<Projectile, RimKataTrackedRangedProjectile>
             trackedRangedProjectilesByProjectile =
                 new Dictionary<Projectile, RimKataTrackedRangedProjectile>();
+        private List<RimKataCloseProjectileState> closeProjectiles =
+            new List<RimKataCloseProjectileState>();
+        private readonly Dictionary<Projectile, RimKataCloseProjectileState>
+            closeProjectilesByProjectile =
+                new Dictionary<Projectile, RimKataCloseProjectileState>();
         private List<RimKataInterceptionShotLink> interceptionShotLinks =
             new List<RimKataInterceptionShotLink>();
         private readonly Dictionary<Projectile, RimKataInterceptionShotLink>
@@ -1534,6 +1566,7 @@ namespace KRWF.RimKata
             {
                 RebuildStateIndex();
                 RebuildTrackedRangedProjectileIndex(true);
+                RebuildCloseProjectileIndex(true);
                 RebuildInterceptionShotLinkIndex(true);
                 for (int i = 0; i < states.Count; i++)
                 {
@@ -1566,6 +1599,8 @@ namespace KRWF.RimKata
             ClearProjectileScheduler();
             trackedRangedProjectiles.Clear();
             trackedRangedProjectilesByProjectile.Clear();
+            closeProjectiles.Clear();
+            closeProjectilesByProjectile.Clear();
             interceptionShotLinks.Clear();
             interceptionShotLinksByShot.Clear();
             interceptionShotLinksByTarget.Clear();
@@ -1582,6 +1617,10 @@ namespace KRWF.RimKata
                 Scribe_Collections.Look(
                     ref trackedRangedProjectiles,
                     "rimKataTrackedRangedProjectiles",
+                    LookMode.Deep);
+                Scribe_Collections.Look(
+                    ref closeProjectiles,
+                    "rimKataCloseProjectiles",
                     LookMode.Deep);
                 Scribe_Collections.Look(
                     ref interceptionShotLinks,
@@ -1614,6 +1653,7 @@ namespace KRWF.RimKata
                     lastWeatherRangeCheckTick = int.MinValue;
                     RebuildStateIndex();
                     RebuildTrackedRangedProjectileIndex(false);
+                    RebuildCloseProjectileIndex(false);
                     RebuildInterceptionShotLinkIndex(false);
                 }
             }
@@ -1725,6 +1765,64 @@ namespace KRWF.RimKata
                 }
             }
             RimKataDormantHostileMovementRegistry.ProcessPending(map, actualCombatActive);
+        }
+
+        internal void RegisterCloseProjectile(RimKataCloseProjectileState shot)
+        {
+            if (shot?.projectile == null
+                || shot.target == null
+                || shot.projectile.Destroyed
+                || shot.projectile.Map != map)
+            {
+                return;
+            }
+
+            lock (statesLock)
+            {
+                if (closeProjectilesByProjectile.ContainsKey(shot.projectile))
+                {
+                    return;
+                }
+
+                closeProjectiles.Add(shot);
+                closeProjectilesByProjectile.Add(shot.projectile, shot);
+            }
+        }
+
+        internal RimKataCloseProjectileState CloseShotFor(Projectile projectile)
+        {
+            if (projectile == null)
+            {
+                return null;
+            }
+
+            lock (statesLock)
+            {
+                closeProjectilesByProjectile.TryGetValue(projectile, out RimKataCloseProjectileState shot);
+                return shot;
+            }
+        }
+
+        private void RebuildCloseProjectileIndex(bool pruneInvalid)
+        {
+            closeProjectilesByProjectile.Clear();
+            closeProjectiles ??= new List<RimKataCloseProjectileState>();
+            for (int i = closeProjectiles.Count - 1; i >= 0; i--)
+            {
+                RimKataCloseProjectileState shot = closeProjectiles[i];
+                if (shot?.projectile == null
+                    || shot.target == null
+                    || (pruneInvalid && (shot.projectile.Destroyed
+                        || !shot.projectile.Spawned
+                        || shot.projectile.Map != map))
+                    || closeProjectilesByProjectile.ContainsKey(shot.projectile))
+                {
+                    closeProjectiles.RemoveAt(i);
+                    continue;
+                }
+
+                closeProjectilesByProjectile.Add(shot.projectile, shot);
+            }
         }
 
         internal void RegisterLaunchedRangedProjectile(
@@ -1848,6 +1946,14 @@ namespace KRWF.RimKata
 
             lock (statesLock)
             {
+                if (closeProjectilesByProjectile.TryGetValue(
+                        projectile,
+                        out RimKataCloseProjectileState closeShot))
+                {
+                    closeProjectilesByProjectile.Remove(projectile);
+                    closeProjectiles.Remove(closeShot);
+                }
+
                 if (trackedRangedProjectilesByProjectile.TryGetValue(
                         projectile,
                         out RimKataTrackedRangedProjectile tracked))

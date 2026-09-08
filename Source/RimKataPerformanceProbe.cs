@@ -736,7 +736,6 @@ namespace KRWF.RimKata
                 Add(typeof(RimKataSharedTargetSearch), "TrySelectCandidate", 10, Part.Select);
                 Add(controller, "TryCacheSharedCandidate", 7, Part.Reserve);
                 Add(controller, "TickWeaponCycle", 15, Part.Slot);
-                Add(typeof(RimKataFireContext), "ResolvePendingCloseHits", 0, Part.CloseHit);
                 Add(controller, "RefreshDualEngagementState", 3, Part.Continuity);
                 Add(controller, "UpdateBodyAimStance", 2, Part.Aim);
                 Add(typeof(Battle), "Add", 1, Part.BattleLog);
@@ -747,7 +746,6 @@ namespace KRWF.RimKata
                 Add(typeof(Verb), "CanHitTarget", 1, Part.CanHit);
                 Add(typeof(RimKataFireContext), "Begin", 10, Part.FireContext);
                 Add(typeof(RimKataFireContext), "End", 2, Part.FireContext);
-                Add(typeof(RimKataDirectCloseShot), "TryPrepare", 3, Part.ShotPrepare);
                 Add(typeof(Verb), "WarmupComplete", 0, Part.Warmup);
                 Add(typeof(Verb_LaunchProjectile), "WarmupComplete", 0, Part.Warmup);
                 Add(typeof(Verb), "TryCastNextBurstShot", 0, Part.Burst);
@@ -756,7 +754,6 @@ namespace KRWF.RimKata
                 Add(typeof(Verse.Sound.SoundStarter), "PlayOneShot", 2, Part.Sound);
                 Add(typeof(Pawn_StanceTracker), "SetStance", 1, Part.Stance);
                 Add(typeof(Verse.AI.JobDriver_Wait), "CheckForAutoAttack", 0, Part.AutoAttack);
-                Add(typeof(RimKataDirectCloseHit), "Resolve", 0, Part.DirectHit);
                 Add(typeof(RimWorld.Verb_MeleeAttackDamage), "ApplyMeleeDamageToTarget", 1, Part.MeleeDamage);
                 // TakeDamage/AssociateWithLog have typed patches below to capture
                 // the actual recipient and match the returned result by identity.
@@ -766,10 +763,6 @@ namespace KRWF.RimKata
                 Add(typeof(LogEntry), "ToGameStringFromPOV", 2, Part.LogText);
                 Add(typeof(GenClamor), "DoClamor", new[]
                     { typeof(Thing), typeof(IntVec3), typeof(float), typeof(ClamorDef) }, Part.Clamor);
-                Add(typeof(RimKataDirectCloseHit), "ApplyStagger", 1, Part.Stagger);
-                Add(typeof(RimKataDirectCloseHit), "ApplyExtraDamages", 2, Part.ExtraDamage);
-                Add(typeof(RimKataCloseProjectilePlacement), "TryPlace", 3, Part.ProjectilePlace);
-                Add(typeof(RimKataProjectileUtility), "ResolveCloseImpact", 2, Part.ProjectileImpact);
                 Add(typeof(RimKataProjectileUtility), "Impact", 3, Part.ProjectileImpact);
                 Add(controller, "NotifyDefensiveCombatEvent", 2, Part.DefenseNotify);
                 Add(typeof(Pawn), "DoKillSideEffects", 3, Part.DeathEffects);

@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using Verse;
+using Verse.AI;
 
 namespace KRWF.RimKata
 {
@@ -189,17 +190,8 @@ namespace KRWF.RimKata
 
     public static class RimKataFireContext
     {
-        private struct PendingCloseHit
-        {
-            public Projectile projectile;
-            public LocalTargetInfo usedTarget;
-            public RimKataDirectCloseHit? directHit;
-        }
-
         public struct ScopeState
         {
-            private List<PendingCloseHit> pendingHits;
-            private RimKataDirectCloseHit? directCloseHit;
             private Verb activeVerb;
             private Pawn shooter;
             private Thing closeTarget;
@@ -221,8 +213,6 @@ namespace KRWF.RimKata
             {
                 return new ScopeState
                 {
-                    pendingHits = pendingCloseHits,
-                    directCloseHit = DirectCloseHit,
                     activeVerb = ActiveVerb,
                     shooter = Shooter,
                     closeTarget = CloseTarget,
@@ -244,8 +234,6 @@ namespace KRWF.RimKata
 
             internal void Restore()
             {
-                pendingCloseHits = pendingHits;
-                DirectCloseHit = directCloseHit;
                 ActiveVerb = activeVerb;
                 Shooter = shooter;
                 CloseTarget = closeTarget;
@@ -265,9 +253,6 @@ namespace KRWF.RimKata
             }
         }
 
-        [ThreadStatic] private static List<PendingCloseHit> pendingCloseHits;
-        [ThreadStatic] private static Stack<List<PendingCloseHit>> reusablePendingCloseHits;
-        [ThreadStatic] internal static RimKataDirectCloseHit? DirectCloseHit;
         [ThreadStatic] public static Verb ActiveVerb;
         [ThreadStatic] public static Pawn Shooter;
         [ThreadStatic] public static Thing CloseTarget;
@@ -312,8 +297,6 @@ namespace KRWF.RimKata
                 ? OriginalBurstCount
                 : Mathf.Max(1, verb?.BurstShotCount ?? 1);
             ScopeState previous = ScopeState.Capture();
-            pendingCloseHits = null;
-            DirectCloseHit = null;
             OriginalBurstCount = Mathf.Max(1, nextOriginalBurstCount);
             ActiveVerb = verb;
             Shooter = shooter;
@@ -332,60 +315,6 @@ namespace KRWF.RimKata
             return previous;
         }
 
-        private static List<PendingCloseHit> RentPendingCloseHits()
-        {
-            // Enclosing scopes keep their own lists until they finish.
-            return reusablePendingCloseHits != null && reusablePendingCloseHits.Count > 0
-                ? reusablePendingCloseHits.Pop()
-                : new List<PendingCloseHit>();
-        }
-
-        public static void QueueCloseImpact(Projectile projectile, LocalTargetInfo usedTarget)
-        {
-            pendingCloseHits ??= RentPendingCloseHits();
-            pendingCloseHits.Add(new PendingCloseHit
-            {
-                projectile = projectile,
-                usedTarget = usedTarget
-            });
-        }
-
-        internal static void QueueDirectCloseHit(RimKataDirectCloseHit hit)
-        {
-            pendingCloseHits ??= RentPendingCloseHits();
-            pendingCloseHits.Add(new PendingCloseHit { directHit = hit });
-        }
-
-        public static void ResolvePendingCloseHits()
-        {
-            while (pendingCloseHits != null && pendingCloseHits.Count > 0)
-            {
-                PendingCloseHit pending = pendingCloseHits[0];
-                pendingCloseHits.RemoveAt(0);
-                if (!pending.directHit.HasValue)
-                {
-                    RimKataProjectileUtility.ResolveCloseImpact(pending.projectile, pending.usedTarget);
-                    continue;
-                }
-
-                // Damage follows vanilla firing notifications, just as the old
-                // immediate impact did. Isolate any enclosing projectile hit.
-                Projectile previousProjectile = RimKataProjectileImpactContext.CurrentProjectile;
-                RimKataDirectCloseHit? previousHit = DirectCloseHit;
-                try
-                {
-                    RimKataProjectileImpactContext.CurrentProjectile = null;
-                    DirectCloseHit = pending.directHit;
-                    pending.directHit.Value.Resolve();
-                }
-                finally
-                {
-                    DirectCloseHit = previousHit;
-                    RimKataProjectileImpactContext.CurrentProjectile = previousProjectile;
-                }
-            }
-        }
-
         public static void End(Verb ownerVerb, ScopeState previous)
         {
             if (ownerVerb == null || ActiveVerb != ownerVerb)
@@ -393,32 +322,7 @@ namespace KRWF.RimKata
                 return;
             }
 
-            DiscardPendingCloseHits();
-            if (pendingCloseHits != null)
-            {
-                reusablePendingCloseHits ??= new Stack<List<PendingCloseHit>>();
-                reusablePendingCloseHits.Push(pendingCloseHits);
-            }
             previous.Restore();
-        }
-
-        private static void DiscardPendingCloseHits()
-        {
-            if (pendingCloseHits == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < pendingCloseHits.Count; i++)
-            {
-                Projectile projectile = pendingCloseHits[i].projectile;
-                if (projectile != null && !projectile.Destroyed)
-                {
-                    projectile.Destroy();
-                }
-            }
-
-            pendingCloseHits.Clear();
         }
     }
 
@@ -427,33 +331,50 @@ namespace KRWF.RimKata
         private struct ImpactScope
         {
             public Projectile previousProjectile;
-            public Map impactMap;
+            public RimKataCloseProjectileState previousCloseShot;
+            public RimKataMapComponent component;
+            public bool ownsDefenseScope;
         }
 
         [ThreadStatic] private static Stack<ImpactScope> projectileStack;
         [ThreadStatic] public static Projectile CurrentProjectile;
+        [ThreadStatic] internal static RimKataCloseProjectileState CurrentCloseShot;
 
         public static void Enter(Projectile projectile)
         {
             projectileStack ??= new Stack<ImpactScope>();
+            bool ownsDefenseScope = projectile != CurrentProjectile;
+            RimKataMapComponent component = ownsDefenseScope
+                ? projectile?.Map?.GetComponent<RimKataMapComponent>()
+                : null;
             projectileStack.Push(new ImpactScope
             {
                 previousProjectile = CurrentProjectile,
-                impactMap = projectile?.Map
+                previousCloseShot = CurrentCloseShot,
+                component = component,
+                ownsDefenseScope = ownsDefenseScope
             });
             CurrentProjectile = projectile;
-            RimKataDefenseUtility.EnterProjectileImpact();
+            if (ownsDefenseScope)
+            {
+                CurrentCloseShot = component?.CloseShotFor(projectile);
+                RimKataDefenseUtility.EnterProjectileImpact();
+            }
         }
 
         public static void Exit()
         {
-            RimKataDefenseUtility.ExitProjectileImpact();
             Projectile exitingProjectile = CurrentProjectile;
             ImpactScope scope = projectileStack != null
                 && projectileStack.Count > 0
                     ? projectileStack.Pop()
                     : default(ImpactScope);
             CurrentProjectile = scope.previousProjectile;
+            CurrentCloseShot = scope.previousCloseShot;
+            if (scope.ownsDefenseScope)
+            {
+                RimKataDefenseUtility.ExitProjectileImpact();
+            }
 
             // Projectile.Impact can be entered once by an override and again
             // by its base implementation.  Keep the tracked result until the
@@ -462,8 +383,7 @@ namespace KRWF.RimKata
             if (exitingProjectile != null
                 && exitingProjectile != CurrentProjectile)
             {
-                scope.impactMap?.GetComponent<RimKataMapComponent>()?
-                    .NotifyRangedProjectileImpactFinished(exitingProjectile);
+                scope.component?.NotifyRangedProjectileImpactFinished(exitingProjectile);
             }
         }
     }
@@ -625,7 +545,6 @@ namespace KRWF.RimKata
             try
             {
                 verb.WarmupComplete();
-                RimKataFireContext.ResolvePendingCloseHits();
                 return RimKataFireContext.ShotFired;
             }
             catch (Exception exception)
@@ -756,59 +675,9 @@ namespace KRWF.RimKata
             return target.Position;
         }
 
-        public static void ResolveCloseImpact(Projectile projectile, LocalTargetInfo usedTarget)
-        {
-            Thing target = RimKataFireContext.CloseTarget;
-            if (projectile == null
-                || projectile.Destroyed
-                || target == null
-                || !target.Spawned
-                || target.Map != projectile.Map)
-            {
-                if (projectile != null && !projectile.Destroyed)
-                {
-                    projectile.Destroy();
-                }
-
-                return;
-            }
-
-            bool meleeResolution = RimKataFireContext.CloseMeleeResolution;
-            bool meleeHit = !meleeResolution || RimKataFireContext.CloseMeleeHit;
-            IntVec3 impactCell = meleeHit
-                ? target.Position
-                : FindCloseMissCell(RimKataFireContext.Shooter, target, projectile.Map);
-            if (!PrepareImmediateImpact(projectile, impactCell))
-            {
-                projectile.Destroy();
-                return;
-            }
-
-            Thing impactThing;
-            if (meleeResolution)
-            {
-                impactThing = meleeHit && target.Spawned && target.Map == projectile.Map
-                    ? target
-                    : null;
-            }
-            else
-            {
-                impactThing = usedTarget.HasThing
-                    && usedTarget.Thing.Spawned
-                    && usedTarget.Thing.Map == projectile.Map
-                        ? usedTarget.Thing
-                        : null;
-            }
-
-            Impact(projectile, impactThing);
-        }
-
         public static void SpawnDeflectedMiss(Projectile source, Pawn attacker, Pawn defender, Verb sourceVerb)
         {
-            RimKataDirectCloseHit? directHit = source == null
-                ? RimKataFireContext.DirectCloseHit
-                : null;
-            ThingDef sourceDef = source?.def ?? directHit?.projectileDef;
+            ThingDef sourceDef = source?.def;
             if (sourceDef == null || attacker?.Map == null || defender?.Map != attacker.Map)
             {
                 return;
@@ -828,31 +697,23 @@ namespace KRWF.RimKata
             }
 
             GenSpawn.Spawn(redirected, attacker.Position, map);
-            if (source != null)
+            redirected.damageDefOverride = source.damageDefOverride;
+            if (source.extraDamages != null)
             {
-                redirected.damageDefOverride = source.damageDefOverride;
-                if (source.extraDamages != null)
-                {
-                    redirected.extraDamages = new List<ExtraDamage>(source.extraDamages);
-                }
-            }
-            else
-            {
-                directHit.Value.ConfigureProjectile(redirected);
+                redirected.extraDamages = new List<ExtraDamage>(source.extraDamages);
             }
 
             ProjectileHitFlags flags = ProjectileHitFlags.NonTargetPawns | ProjectileHitFlags.NonTargetWorld;
+            bool previousSuppression = RimKataFireContext.SuppressCloseLaunch;
             RimKataFireContext.SuppressCloseLaunch = true;
             try
             {
                 redirected.Launch(attacker, attacker.DrawPos, missCell, defender, flags, false, sourceVerb?.EquipmentSource);
-                redirected.stoppingPower = source != null
-                    ? source.stoppingPower
-                    : directHit.Value.stoppingPower;
+                redirected.stoppingPower = source.stoppingPower;
             }
             finally
             {
-                RimKataFireContext.SuppressCloseLaunch = false;
+                RimKataFireContext.SuppressCloseLaunch = previousSuppression;
             }
         }
 
@@ -897,32 +758,11 @@ namespace KRWF.RimKata
         }
     }
 
-
-    [HarmonyPatch(typeof(Verb_LaunchProjectile), "TryCastShot")]
-    public static class Patch_VerbLaunchProjectile_RimKataCloseDamage
-    {
-        public static bool Prefix(
-            Verb_LaunchProjectile __instance,
-            bool ___canHitNonTargetPawnsNow,
-            ref int ___lastShotTick,
-            ref bool __result)
-        {
-            if (!RimKataDirectCloseShot.TryPrepare(
-                    __instance, ___canHitNonTargetPawnsNow, out RimKataDirectCloseHit hit))
-            {
-                return true;
-            }
-
-            ___lastShotTick = Find.TickManager.TicksGame;
-            RimKataFireContext.QueueDirectCloseHit(hit);
-            __result = true;
-            return false;
-        }
-    }
-
     [HarmonyPatch]
     public static class Patch_Verb_TryCastShot_RimKata
     {
+        [ThreadStatic] internal static Verb CurrentVerb;
+
         public static IEnumerable<MethodBase> TargetMethods()
         {
             HashSet<MethodBase> methods = new HashSet<MethodBase>();
@@ -963,6 +803,17 @@ namespace KRWF.RimKata
                     }
                 }
             }
+        }
+
+        public static void Prefix(Verb __instance, out Verb __state)
+        {
+            __state = CurrentVerb;
+            CurrentVerb = __instance;
+        }
+
+        public static void Finalizer(Verb __state)
+        {
+            CurrentVerb = __state;
         }
 
         public static void Postfix(Verb __instance, bool __result)
@@ -1200,6 +1051,40 @@ namespace KRWF.RimKata
                 });
         }
 
+        public static void Prefix(
+            Thing launcher,
+            Thing equipment,
+            ref LocalTargetInfo usedTarget,
+            LocalTargetInfo intendedTarget,
+            ref ProjectileHitFlags hitFlags,
+            ref ThingDef targetCoverDef)
+        {
+            if (launcher != RimKataFireContext.Shooter
+                || equipment != RimKataFireContext.ActiveVerb?.EquipmentSource
+                || !RimKataFireContext.CloseShot
+                || !RimKataFireContext.CloseMeleeResolution
+                || RimKataFireContext.InterceptionShot
+                || RimKataFireContext.SuppressCloseLaunch
+                || !IntendedForCloseTarget(intendedTarget))
+            {
+                return;
+            }
+
+            Thing target = RimKataFireContext.CloseTarget;
+            targetCoverDef = null;
+            if (RimKataFireContext.CloseMeleeHit)
+            {
+                usedTarget = target;
+                hitFlags |= ProjectileHitFlags.IntendedTarget;
+            }
+            else
+            {
+                usedTarget = new LocalTargetInfo(RimKataProjectileUtility.FindCloseMissCell(
+                    RimKataFireContext.Shooter, target, launcher.Map));
+                hitFlags &= ~ProjectileHitFlags.IntendedTarget;
+            }
+        }
+
         public static void Postfix(
             Projectile __instance,
             Thing launcher,
@@ -1212,29 +1097,10 @@ namespace KRWF.RimKata
                 launchMap?.GetComponent<RimKataMapComponent>();
             component?.RegisterLaunchedExplosiveProjectile(__instance);
 
-            Pawn usedPawn = usedTarget.Pawn;
-            Pawn intendedPawn = intendedTarget.Pawn;
-            if (usedPawn != null
-                && usedPawn == intendedPawn
-                && IsTrackableOrdinaryRangedProjectile(__instance)
-                && RimKataEligibility.HasRimKataAccess(usedPawn)
-                && launcher != usedPawn
-                && (launcher?.Faction == null
-                    || usedPawn.Faction == null
-                    || launcher.Faction != usedPawn.Faction))
-            {
-                component?.RegisterLaunchedRangedProjectile(
-                    __instance,
-                    usedPawn);
-            }
-
-            if (launcher != RimKataFireContext.Shooter
-                || equipment != RimKataFireContext.ActiveVerb?.EquipmentSource)
-            {
-                return;
-            }
-
-            if (RimKataFireContext.InterceptionShot)
+            bool ownedShot = launcher == RimKataFireContext.Shooter
+                && RimKataFireContext.ActiveVerb != null
+                && equipment == RimKataFireContext.ActiveVerb.EquipmentSource;
+            if (ownedShot && RimKataFireContext.InterceptionShot)
             {
                 Projectile interceptionTarget = RimKataFireContext.InterceptionTarget;
                 if (!__instance.Destroyed
@@ -1263,15 +1129,82 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (!RimKataFireContext.CloseShot
-                || RimKataFireContext.SuppressCloseLaunch
-                || !IntendedForCloseTarget(intendedTarget)
-                || __instance.Destroyed)
+            if (ownedShot
+                && RimKataFireContext.CloseShot
+                && !RimKataFireContext.SuppressCloseLaunch
+                && IntendedForCloseTarget(intendedTarget)
+                && !__instance.Destroyed)
+            {
+                component?.RegisterCloseProjectile(new RimKataCloseProjectileState
+                {
+                    projectile = __instance,
+                    target = RimKataFireContext.CloseTarget,
+                    attackingVerb = RimKataFireContext.ActiveVerb,
+                    meleeResolution = RimKataFireContext.CloseMeleeResolution,
+                    meleeHit = RimKataFireContext.CloseMeleeHit,
+                    precheck = RimKataFireContext.CloseDefensePrecheck
+                });
+                return;
+            }
+
+            if (RegisterIncomingCloseShot(
+                    component, __instance, launcher, usedTarget, intendedTarget))
             {
                 return;
             }
 
-            RimKataFireContext.QueueCloseImpact(__instance, usedTarget);
+            Pawn usedPawn = usedTarget.Pawn;
+            Pawn intendedPawn = intendedTarget.Pawn;
+            if (usedPawn != null
+                && usedPawn == intendedPawn
+                && IsTrackableOrdinaryRangedProjectile(__instance)
+                && RimKataEligibility.HasRimKataAccess(usedPawn)
+                && launcher != usedPawn
+                && (launcher?.Faction == null
+                    || usedPawn.Faction == null
+                    || launcher.Faction != usedPawn.Faction))
+            {
+                component?.RegisterLaunchedRangedProjectile(__instance, usedPawn);
+            }
+        }
+
+        private static bool RegisterIncomingCloseShot(
+            RimKataMapComponent component,
+            Projectile projectile,
+            Thing launcher,
+            LocalTargetInfo usedTarget,
+            LocalTargetInfo intendedTarget)
+        {
+            Pawn defender = intendedTarget.Pawn;
+            Pawn attacker = launcher as Pawn;
+            // Classify Touch once, before flight. Ordinary distant shots never
+            // enter the close-defense eligibility or reachability checks.
+            if (component == null
+                || RimKataFireContext.SuppressCloseLaunch
+                || defender == null
+                || attacker == null
+                || attacker == defender
+                || usedTarget.Pawn != defender
+                || attacker.Map != defender.Map
+                || !attacker.Position.AdjacentTo8WayOrInside(defender.Position)
+                || !IsTrackableOrdinaryRangedProjectile(projectile)
+                || !RimKataTargeting.IsAutomaticEnemy(defender, attacker)
+                || !defender.CanReachImmediate(attacker, PathEndMode.Touch)
+                || !RimKataEligibility.CanUseDefense(defender))
+            {
+                return false;
+            }
+
+            Verb verb = Patch_Verb_TryCastShot_RimKata.CurrentVerb;
+            component.RegisterCloseProjectile(new RimKataCloseProjectileState
+            {
+                projectile = projectile,
+                target = defender,
+                attackingVerb = verb?.CasterPawn == attacker ? verb : null,
+                meleeResolution = true,
+                meleeHit = true
+            });
+            return true;
         }
 
         private static bool IsTrackableOrdinaryRangedProjectile(
