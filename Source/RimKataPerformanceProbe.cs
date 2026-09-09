@@ -1,11 +1,13 @@
 // Temporary diagnostics. Delete this file, rebuild the normal DLL and restart
 // the game to remove every probe. No gameplay source, settings or save field
-// depends on this file. All times describe qualified JobTracker entry trees.
+// depends on this file. Drafted timings describe qualified JobTracker trees;
+// SearchProbe windows also cover search stages and occupancy outside those trees.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.CompilerServices;
 using System.Text;
 using HarmonyLib;
@@ -43,7 +45,7 @@ namespace KRWF.RimKata
 
         internal enum Part
         {
-            Entry, Prepare, Cycle, NestedJob, Close, Normalize, Search,
+            Entry, Prepare, Cycle, NestedJob, Close, Normalize, Search, SearchCollect, SearchBuffer, SearchInit,
             Select, Reserve, Slot, Fire, CloseHit, Continuity, Aim, BattleLog,
             Available, CanHit, FireContext, ShotPrepare, Warmup, Burst, Cast,
             Sound, Stance, AutoAttack, DirectHit, MeleeDamage, Damage, DamageLog,
@@ -230,6 +232,7 @@ namespace KRWF.RimKata
 
         internal static void Reset()
         {
+            RimKataSearchProbe.Reset();
             generation++;
             depth = 0;
             detailDepth = 0;
@@ -253,6 +256,7 @@ namespace KRWF.RimKata
                 Reset();
                 game = Current.Game;
             }
+            RimKataSearchProbe.BeginFrame();
             int number = Time.frameCount;
             if (frame.number == number)
             {
@@ -643,6 +647,12 @@ namespace KRWF.RimKata
             if (depth > 0 && result) frame.fired++;
         }
 
+        internal static void ExcludeSearchReplay(long elapsed)
+        {
+            // Scratch-only comparison runs after the collection clock stops.
+            for (int i = 0; i < depth; i++) stack[i].start += elapsed;
+        }
+
         internal static void CompleteFrame()
         {
             if (depth != 0 || !ReferenceEquals(game, Current.Game)) return;
@@ -687,7 +697,7 @@ namespace KRWF.RimKata
         private static void Report()
         {
             var text = new StringBuilder(3800);
-            text.Append(Prefix).Append("version=6 frame=").Append(peak.number)
+            text.Append(Prefix).Append("version=7 frame=").Append(peak.number)
                 .Append(" ticks=").Append(peak.firstTick).Append("..").Append(peak.lastTick)
                 .Append(" frame_ms=").Append(Ms(peak.total))
                 .Append(" root_calls=").Append(peak.rootCalls)
@@ -790,7 +800,7 @@ namespace KRWF.RimKata
         {
             FrameData sample = deathSampleFrame;
             var text = new StringBuilder(4000);
-            text.Append("[RimKata.DraftedFireProbe.Death] version=6 frame=")
+            text.Append("[RimKata.DraftedFireProbe.Death] version=7 frame=")
                 .Append(sample.number).Append(" ticks=").Append(sample.firstTick)
                 .Append("..").Append(sample.lastTick)
                 .Append(" sampled_frame_ms=").Append(Ms(sample.total))
@@ -883,6 +893,9 @@ namespace KRWF.RimKata
                 Add(controller, "NormalizeUnavailableCycleWork", 5, Part.Normalize);
                 Add(typeof(RimKataSharedTargetSearch), "Begin", 3, Part.Search);
                 Add(typeof(RimKataSharedTargetSearch), "Advance", 3, Part.Search);
+                Add(typeof(RimKataSharedTargetSearch), "CollectAutomaticTargetsInRing", 2, Part.SearchCollect);
+                Add(typeof(RimKataSharedTargetSearch), "ProcessNextBufferedCandidate", 7, Part.SearchBuffer);
+                Add(typeof(RimKataPawnOccupancyGrid), "For", 1, Part.SearchInit);
                 Add(typeof(RimKataSharedTargetSearch), "TrySelectCandidate", 10, Part.Select);
                 Add(controller, "TryCacheSharedCandidate", 7, Part.Reserve);
                 Add(controller, "TickWeaponCycle", 15, Part.Slot);
@@ -990,7 +1003,7 @@ namespace KRWF.RimKata
                 Add(thoughts, "GetSocialThoughts", 3, Part.SocialGroupFilter);
                 Add(thoughts, "GetDistinctSocialThoughtGroups", 2, Part.SocialGroups);
                 Add(thoughts, "OpinionOffsetOfGroup", 2, Part.GroupOpinion);
-                Log.Message(Prefix + "enabled version=6; qualified ProcessJobTrackerTick trees only; "
+                Log.Message(Prefix + "enabled version=7; qualified ProcessJobTrackerTick trees only; "
                     + "frame threshold=1.000ms; self_ms entries are exclusive ms/calls; "
                     + "inclusive_ms entries overlap; window averages use active sampled frames; "
                     + "outside JobDriver work excluded, synchronous nested Job work included; "
@@ -1194,7 +1207,11 @@ namespace KRWF.RimKata
     internal static class RimKataProbeFramePatch
     {
         private static void Prefix() => RimKataPerformanceProbe.BeginFrame();
-        private static void Postfix() => RimKataPerformanceProbe.CompleteFrame();
+        private static void Postfix()
+        {
+            RimKataPerformanceProbe.CompleteFrame();
+            RimKataSearchProbe.CompleteFrame();
+        }
     }
 
     [HarmonyPatch(typeof(Current), nameof(Current.Game), MethodType.Setter)]
@@ -1204,5 +1221,429 @@ namespace KRWF.RimKata
         {
             if (!ReferenceEquals(Current.Game, __0)) RimKataPerformanceProbe.Reset();
         }
+    }
+
+    // Independent windows include occupancy maintenance outside JobTracker.
+    // All shadow work is read-only and remains in this removable probe file.
+    internal static class RimKataSearchProbe
+    {
+        private const int SampleStride = 32;
+        private const int ReplayPasses = 8;
+        private static readonly int[] cells = new int[256];
+        private static readonly HashSet<int> scratchIds = new HashSet<int>();
+        private static readonly List<Pawn> scratchPawns = new List<Pawn>(256);
+        private static readonly List<Pawn> maskedPawns = new List<Pawn>(256);
+        private static readonly long[] calls = new long[(int)Metric.Count];
+        private static readonly long[] samples = new long[(int)Metric.Count];
+        private static readonly long[] elapsed = new long[(int)Metric.Count];
+        private static readonly long[] sequence = new long[(int)Metric.Count];
+        private static readonly double TickToMs = 1000.0 / Stopwatch.Frequency;
+        private static bool enabled, announced, hadSearch, hadMutation, sampling;
+        private static int generation, frames, searchFrames, mutationFrames, firstTick, collectionDepth, cellCount;
+        private static long windowStart, offsets, inMap, maskHits, lists, listEntries, uniquePawns;
+        private static long rings, draws, accepted, failures, replayPairs, replayCells, replayDropped;
+        private static long mismatches, sampledEmpty, sampledClutter, sampledEntries, sampledPawnEntries;
+        private static long maskReplay, directReplay, replayOverhead;
+        private static bool directFirst;
+
+        internal enum Metric { Collection, Buffer, GridLookup, GridCreate, CapturePawn, CaptureOther,
+            FinishLive, FinishEmpty, Count }
+
+        internal struct Timer
+        {
+            internal long start;
+            internal Metric metric;
+            internal bool entered, active, outerCollection;
+            internal int generation, beforeCount;
+        }
+
+        internal static void Reset()
+        {
+            generation++;
+            enabled = sampling = hadSearch = hadMutation = false;
+            collectionDepth = cellCount = 0;
+            Array.Clear(sequence, 0, sequence.Length);
+            ClearWindow();
+            scratchIds.Clear();
+            scratchPawns.Clear();
+            maskedPawns.Clear();
+        }
+
+        private static void ClearWindow()
+        {
+            Array.Clear(calls, 0, calls.Length);
+            Array.Clear(samples, 0, samples.Length);
+            Array.Clear(elapsed, 0, elapsed.Length);
+            frames = searchFrames = mutationFrames = 0;
+            offsets = inMap = maskHits = lists = listEntries = uniquePawns = rings = 0;
+            draws = accepted = failures = replayPairs = replayCells = replayDropped = mismatches = 0;
+            sampledEmpty = sampledClutter = sampledEntries = sampledPawnEntries = 0;
+            maskReplay = directReplay = replayOverhead = 0;
+            windowStart = 0;
+            firstTick = -1;
+        }
+
+        internal static void BeginFrame()
+        {
+            enabled = Current.Game != null;
+            if (!enabled || windowStart != 0) return;
+            windowStart = Stopwatch.GetTimestamp();
+            firstTick = Find.TickManager?.TicksGame ?? -1;
+        }
+
+        internal static Timer Enter(Metric metric, bool sampled = false)
+        {
+            if (!enabled) return default;
+            int index = (int)metric;
+            calls[index]++;
+            if (metric >= Metric.CapturePawn) hadMutation = true;
+            if (metric == Metric.Collection || metric == Metric.Buffer) hadSearch = true;
+            Timer timer = new Timer { metric = metric, entered = true, generation = generation };
+            if (sampled && (sequence[index]++ % SampleStride) != 0) return timer;
+            samples[index]++;
+            timer.active = true;
+            timer.start = Stopwatch.GetTimestamp();
+            return timer;
+        }
+
+        internal static void Exit(Timer timer, bool failed)
+        {
+            if (!timer.entered || timer.generation != generation) return;
+            if (timer.active)
+                elapsed[(int)timer.metric] += Math.Max(0, Stopwatch.GetTimestamp() - timer.start);
+            if (failed) failures++;
+        }
+
+        internal static Timer EnterCollection(RimKataRingSearchRuntime runtime)
+        {
+            if (!enabled) return default;
+            bool outer = collectionDepth++ == 0;
+            if (outer)
+            {
+                cellCount = 0;
+                sampling = sequence[(int)Metric.Collection]++ % SampleStride == 0;
+            }
+            Timer timer = Enter(Metric.Collection);
+            timer.outerCollection = outer;
+            timer.beforeCount = runtime.discovered.Count;
+            // No scratch preparation inside the measured collection.
+            return timer;
+        }
+
+        internal static void ExitCollection(Timer timer, RimKataRingSearchRuntime runtime, bool failed)
+        {
+            Exit(timer, failed);
+            if (!timer.active || timer.generation != generation) return;
+            collectionDepth--;
+            uniquePawns += runtime.discovered.Count - timer.beforeCount;
+            if (runtime.collectionComplete) rings++;
+            if (!timer.outerCollection) return;
+            bool compare = sampling && !failed && cellCount > 0 && cellCount <= cells.Length;
+            sampling = false;
+            if (!compare) return;
+            long start = Stopwatch.GetTimestamp();
+            try
+            {
+                CompareSlice(runtime, timer.beforeCount);
+            }
+            catch (Exception)
+            {
+                // A diagnostic failure must never cancel a weapon/search operation.
+                failures++;
+            }
+            finally
+            {
+                scratchIds.Clear();
+                scratchPawns.Clear();
+                maskedPawns.Clear();
+                long duration = Math.Max(0, Stopwatch.GetTimestamp() - start);
+                replayOverhead += duration;
+                RimKataPerformanceProbe.ExcludeSearchReplay(duration);
+            }
+        }
+
+        // Only the collection call site is replaced. No global HasPawn/TryNext clocks.
+        internal static bool Next(RimKataRingTraversal traversal, out IntVec3 offset)
+        {
+            bool result = traversal.TryNext(out offset);
+            if (enabled && result) offsets++;
+            return result;
+        }
+
+        internal static bool HasPawn(RimKataPawnOccupancyGrid grid, int index)
+        {
+            bool result = grid.HasPawn(index);
+            if (!enabled) return result;
+            inMap++;
+            if (result) maskHits++;
+            if (sampling && collectionDepth == 1)
+            {
+                if (cellCount < cells.Length) cells[cellCount] = index;
+                else replayDropped++;
+                cellCount++;
+            }
+            return result;
+        }
+
+        internal static void CountList(List<Thing> things)
+        {
+            if (!enabled) return;
+            lists++;
+            listEntries += things.Count;
+        }
+
+        internal static void CountAdmission(bool result)
+        {
+            if (!enabled) return;
+            draws++;
+            if (result) accepted++;
+        }
+
+        private static void PrepareScratch(RimKataRingSearchRuntime runtime, int beforeCount)
+        {
+            scratchIds.Clear();
+            scratchPawns.Clear();
+            for (int i = 0; i < beforeCount; i++)
+                scratchIds.Add(runtime.discovered[i].thingIDNumber);
+        }
+
+        private static void ReadCells(RimKataRingSearchRuntime runtime, bool useMask)
+        {
+            for (int i = 0; i < cellCount; i++)
+            {
+                int index = cells[i];
+                if (useMask && !runtime.occupancy.HasPawn(index)) continue;
+                List<Thing> things = runtime.map.thingGrid.ThingsListAtFast(index);
+                for (int j = 0; j < things.Count; j++)
+                    if (things[j] is Pawn pawn && scratchIds.Add(pawn.thingIDNumber))
+                        scratchPawns.Add(pawn);
+            }
+        }
+
+        private static bool SamePawns(List<Pawn> other)
+        {
+            if (scratchPawns.Count != other.Count) return false;
+            for (int i = 0; i < other.Count; i++)
+                if (!ReferenceEquals(scratchPawns[i], other[i])) return false;
+            return true;
+        }
+
+        private static long Replay(RimKataRingSearchRuntime runtime, int beforeCount, bool useMask)
+        {
+            long ticks = 0;
+            for (int pass = 0; pass < ReplayPasses; pass++)
+            {
+                PrepareScratch(runtime, beforeCount);
+                long start = Stopwatch.GetTimestamp();
+                ReadCells(runtime, useMask);
+                ticks += Math.Max(0, Stopwatch.GetTimestamp() - start);
+            }
+            return ticks;
+        }
+
+        private static void CompareSlice(RimKataRingSearchRuntime runtime, int beforeCount)
+        {
+            // Warm both paths and grow scratch capacity before timing either one.
+            PrepareScratch(runtime, beforeCount);
+            ReadCells(runtime, true);
+            maskedPawns.AddRange(scratchPawns);
+            bool valid = runtime.discovered.Count - beforeCount == maskedPawns.Count;
+            for (int i = 0; valid && i < maskedPawns.Count; i++)
+                valid = ReferenceEquals(runtime.discovered[beforeCount + i], maskedPawns[i]);
+            PrepareScratch(runtime, beforeCount);
+            ReadCells(runtime, false);
+            valid &= SamePawns(maskedPawns);
+            if (!valid)
+            {
+                mismatches++;
+                return;
+            }
+
+            for (int i = 0; i < cellCount; i++)
+            {
+                List<Thing> things = runtime.map.thingGrid.ThingsListAtFast(cells[i]);
+                sampledEntries += things.Count;
+                int pawns = 0;
+                for (int j = 0; j < things.Count; j++) if (things[j] is Pawn) pawns++;
+                sampledPawnEntries += pawns;
+                if (things.Count == 0) sampledEmpty++;
+                else if (pawns == 0) sampledClutter++;
+            }
+
+            if (directFirst)
+            {
+                directReplay += Replay(runtime, beforeCount, false);
+                maskReplay += Replay(runtime, beforeCount, true);
+            }
+            else
+            {
+                maskReplay += Replay(runtime, beforeCount, true);
+                directReplay += Replay(runtime, beforeCount, false);
+            }
+            directFirst = !directFirst;
+            replayPairs++;
+            replayCells += cellCount;
+        }
+
+        private static string Ms(long ticks) => (ticks * TickToMs).ToString("F6", CultureInfo.InvariantCulture);
+
+        internal static void CompleteFrame()
+        {
+            if (!enabled || windowStart == 0) return;
+            frames++;
+            if (hadSearch) searchFrames++;
+            if (hadMutation) mutationFrames++;
+            hadSearch = hadMutation = false;
+            long now = Stopwatch.GetTimestamp();
+            if (now - windowStart < Stopwatch.Frequency) return;
+            bool work = false;
+            for (int i = 0; i < calls.Length; i++) work |= calls[i] != 0;
+            if (work)
+            {
+                if (!announced)
+                {
+                    announced = true;
+                    Log.Message("[RimKata.SearchProbe] enabled version=1; collection/buffer/grid windows include work outside drafted roots, not peak-only; "
+                        + "scope_ms format=sum_ms/samples/calls; maintenance sampled 1/32 per category, includes no native grid work; "
+                        + "GridCreate is nested in GridLookup; replay samples 1/32 slices, 8 warm-cache passes per pair, same cells and scratch Pawn intake; "
+                        + "replay/preparation excluded from drafted clocks; other probe/Harmony overhead remains; "
+                        + "scope clocks omit outer occupancy dispatch; replay omits real buffer growth; no total-CPU saving established; "
+                        + "no gameplay mask bypass; empty/clutter counts are sampled cells only.");
+                }
+                var text = new StringBuilder(1400);
+                text.Append("[RimKata.SearchProbe] version=1 ticks=").Append(firstTick)
+                    .Append("..").Append(Find.TickManager?.TicksGame ?? -1)
+                    .Append(" wall_ms=").Append(Ms(now - windowStart)).Append(" frames=").Append(frames)
+                    .Append(" search_frames=").Append(searchFrames).Append(" mutation_frames=").Append(mutationFrames)
+                    .Append(" scope_ms{");
+                for (int i = 0; i < calls.Length; i++)
+                {
+                    if (i > 0) text.Append(',');
+                    text.Append((Metric)i).Append('=').Append(Ms(elapsed[i]))
+                        .Append('/').Append(samples[i]).Append('/').Append(calls[i]);
+                }
+                text.Append("} cells{offsets=").Append(offsets).Append(",in_map=").Append(inMap)
+                    .Append(",mask_positive=").Append(maskHits).Append(",lists=").Append(lists)
+                    .Append(",list_entries=").Append(listEntries).Append(",new_ids=").Append(uniquePawns)
+                    .Append(",slices_finishing_ring=").Append(rings).Append("} buffer{draws=").Append(draws)
+                    .Append(",accepted=").Append(accepted).Append("} replay{pairs=").Append(replayPairs)
+                    .Append(",passes=").Append(ReplayPasses).Append(",cells=").Append(replayCells)
+                    .Append(",empty=").Append(sampledEmpty).Append(",pawnless_clutter=").Append(sampledClutter)
+                    .Append(",entries=").Append(sampledEntries).Append(",pawn_entries=").Append(sampledPawnEntries)
+                    .Append(",mask_ms=").Append(Ms(maskReplay)).Append(",direct_ms=").Append(Ms(directReplay))
+                    .Append(",probe_ms=").Append(Ms(replayOverhead)).Append(",mismatch=").Append(mismatches)
+                    .Append(",dropped_cells=").Append(replayDropped).Append("} errors=").Append(failures);
+                Log.Message(text.ToString());
+            }
+            ClearWindow();
+        }
+    }
+
+    [HarmonyPatch(typeof(RimKataSharedTargetSearch), "CollectAutomaticTargetsInRing")]
+    internal static class RimKataSearchProbeCollectionPatch
+    {
+        [HarmonyPriority(Priority.First)]
+        private static void Prefix(RimKataRingSearchRuntime runtime, out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.EnterCollection(runtime);
+        [HarmonyPriority(Priority.Last)]
+        private static void Finalizer(RimKataRingSearchRuntime runtime,
+            RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.ExitCollection(__state, runtime, __exception != null);
+
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = new List<CodeInstruction>(instructions);
+            MethodInfo next = AccessTools.Method(typeof(RimKataRingTraversal), "TryNext");
+            MethodInfo hasPawn = AccessTools.Method(typeof(RimKataPawnOccupancyGrid), "HasPawn");
+            int nextCount = 0, maskCount = 0;
+            foreach (CodeInstruction item in code)
+            {
+                if (item.Calls(next)) nextCount++;
+                if (item.Calls(hasPawn)) maskCount++;
+            }
+            if (nextCount != 1 || maskCount != 1)
+            {
+                Log.Warning("[RimKata.SearchProbe] collection call sites changed; cell counters/replay unavailable");
+                return code;
+            }
+            foreach (CodeInstruction item in code)
+            {
+                if (item.Calls(next))
+                {
+                    item.opcode = OpCodes.Call;
+                    item.operand = AccessTools.Method(typeof(RimKataSearchProbe), "Next");
+                }
+                else if (item.Calls(hasPawn))
+                {
+                    item.opcode = OpCodes.Call;
+                    item.operand = AccessTools.Method(typeof(RimKataSearchProbe), "HasPawn");
+                }
+            }
+            return code;
+        }
+    }
+
+    [HarmonyPatch(typeof(RimKataSharedTargetSearch), "CollectAutomaticTargetsInCell")]
+    internal static class RimKataSearchProbeListPatch
+    {
+        private static void Prefix(List<Thing> things) => RimKataSearchProbe.CountList(things);
+    }
+
+    [HarmonyPatch(typeof(RimKataSharedTargetSearch), "ProcessNextBufferedCandidate")]
+    internal static class RimKataSearchProbeBufferPatch
+    {
+        private static void Prefix(out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.Enter(RimKataSearchProbe.Metric.Buffer);
+        private static void Finalizer(RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.Exit(__state, __exception != null);
+    }
+
+    [HarmonyPatch(typeof(RimKataSharedTargetSearch), "TryAddBufferedAutomaticTarget")]
+    internal static class RimKataSearchProbeAdmissionPatch
+    {
+        private static void Postfix(bool __result) => RimKataSearchProbe.CountAdmission(__result);
+    }
+
+    [HarmonyPatch(typeof(RimKataPawnOccupancyGrid), "For")]
+    internal static class RimKataSearchProbeLookupPatch
+    {
+        private static void Prefix(out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.Enter(RimKataSearchProbe.Metric.GridLookup);
+        private static void Finalizer(RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.Exit(__state, __exception != null);
+    }
+
+    [HarmonyPatch(typeof(RimKataPawnOccupancyGrid), MethodType.Constructor, new[] { typeof(Map) })]
+    internal static class RimKataSearchProbeCreatePatch
+    {
+        private static void Prefix(out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.Enter(RimKataSearchProbe.Metric.GridCreate);
+        private static void Finalizer(RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.Exit(__state, __exception != null);
+    }
+
+    [HarmonyPatch(typeof(RimKataPawnOccupancyGrid), "CaptureMutation")]
+    internal static class RimKataSearchProbeCapturePatch
+    {
+        private static void Prefix(Thing thing, out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.Enter(thing is Pawn
+                ? RimKataSearchProbe.Metric.CapturePawn : RimKataSearchProbe.Metric.CaptureOther, true);
+        private static void Finalizer(RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.Exit(__state, __exception != null);
+    }
+
+    [HarmonyPatch]
+    internal static class RimKataSearchProbeFinishPatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            yield return AccessTools.Method(typeof(RimKataPawnOccupancyGrid.CellMutation), "FinishRegistration");
+            yield return AccessTools.Method(typeof(RimKataPawnOccupancyGrid.CellMutation), "FinishDeregistration");
+        }
+        private static void Prefix(RimKataPawnOccupancyGrid ___grid, out RimKataSearchProbe.Timer __state)
+            => __state = RimKataSearchProbe.Enter(___grid != null
+                ? RimKataSearchProbe.Metric.FinishLive : RimKataSearchProbe.Metric.FinishEmpty, true);
+        private static void Finalizer(RimKataSearchProbe.Timer __state, Exception __exception)
+            => RimKataSearchProbe.Exit(__state, __exception != null);
     }
 }
