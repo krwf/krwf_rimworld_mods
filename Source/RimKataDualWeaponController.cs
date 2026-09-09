@@ -3232,21 +3232,20 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            bool liveCloseTarget = state.dualCloseCombatActive
-                && IsImmediateCloseTarget(
-                    pawn,
-                    state.dualCloseTarget,
-                    pawn.CurJob?.playerForced == true,
-                    pawn.CurJob?.killIncappedTarget == true);
-            bool movementContinuation = state.dualEngagementActive
-                && state.MovementFireContinuityActive;
-            return liveCloseTarget
-                || state.sharedTargetSearch?.KeepsCombatAlive == true
-                || movementContinuation
+            // Existing work can establish continuity without rechecking a
+            // close target's hostility, live state and Touch reachability.
+            return state.sharedTargetSearch?.KeepsCombatAlive == true
+                || (state.dualEngagementActive && state.MovementFireContinuityActive)
                 || state.DodgeMovementActive
                 || state.DraftedMovementSearchTriggerPending
                 || state.idleProjectileSearchTriggerPending
                 || state.dedicatedFollowupJobPending
+                || (state.dualCloseCombatActive
+                    && IsImmediateCloseTarget(
+                        pawn,
+                        state.dualCloseTarget,
+                        pawn.CurJob?.playerForced == true,
+                        pawn.CurJob?.killIncappedTarget == true))
                 || HasDedicatedTargetContinuity(pawn, state)
                 || HasAnyCycleTargetWork(pawn, state, randomAttackEnabled,
                     ref primaryAvailability, ref secondaryAvailability)
