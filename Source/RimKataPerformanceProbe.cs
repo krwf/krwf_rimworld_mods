@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using HarmonyLib;
 using UnityEngine;
@@ -20,6 +21,7 @@ namespace KRWF.RimKata
         private static readonly double TickToMs = 1000.0 / Stopwatch.Frequency;
         private static readonly FrameData frame = new FrameData();
         private static readonly FrameData peak = new FrameData();
+        private static readonly FrameData deathSampleFrame = new FrameData();
         private static readonly Dictionary<MethodBase, Part> parts =
             new Dictionary<MethodBase, Part>();
         private static Game game;
@@ -34,6 +36,7 @@ namespace KRWF.RimKata
         [ThreadStatic] private static int logDepth;
         [ThreadStatic] private static int injuryDepth;
         [ThreadStatic] private static int deathDepth;
+        [ThreadStatic] private static int deathThoughtDepth;
         [ThreadStatic] private static int modDeathDepth;
         [ThreadStatic] private static DamageWorker.DamageResult lastDamageResult;
         [ThreadStatic] private static DamageContext lastDamage;
@@ -48,6 +51,17 @@ namespace KRWF.RimKata
             DamagePre, Injury, DamagePost, LogText, InjuryAdd, HealthState,
             Death, DeathEffects, DeathModify, DeathThoughts, DeathDespawn,
             DeathCorpse, DeathPlace, ModDeath,
+            RemoveLost, RemoveRescued, GiveDeathThoughts, GetDeathThoughts,
+            HumanDeathThoughts, RelationDeathThoughts, VeneratedDeathThoughts,
+            WorldPawnList, WorldPawnListBuild, MapPawnList, ColonistPawnList,
+            RelatedPawns, RelatedPawnsNext, FamilyPawns, FamilyPawnsNext,
+            RemoveOtherMemories, RemoveMemory, MakeThought, AddIndividualThought,
+            AddAllThought, GainMemoryDef, GainMemory, CanGetThought,
+            ShouldGetThoughtAbout,
+            WitnessedDeath, ThoughtLineOfSight, ImportantRelation, RelationsNext,
+            PawnOpinion, TotalOpinion, SocialThoughts, SocialGroupFilter, SocialGroups, GroupOpinion,
+            MergeMemory, GroupMemoryCount, GroupMemoryOldest,
+            DefMemoryCount, DefMemoryOldest,
             Count
         }
 
@@ -104,6 +118,17 @@ namespace KRWF.RimKata
             internal bool recorded;
         }
 
+        private struct DeathTraceSample
+        {
+            internal bool recorded;
+            internal long elapsed, captureTicks;
+            internal int tick, rootPawnId, deathPawnId;
+            internal ShotContext shot;
+            internal DamageContext damage;
+            internal StackTrace trace;
+            internal string failure;
+        }
+
         private sealed class FrameData
         {
             internal readonly long[] self = new long[(int)Part.Count];
@@ -128,6 +153,7 @@ namespace KRWF.RimKata
             internal long modDeathTreeTicks, modDeathMaxTicks;
             internal int modDeathTreeCalls, modDeathPawnId, modDeathShotId, modDeathTick;
             internal MethodBase modDeathMethod;
+            internal DeathTraceSample deathTrace;
 
             internal void Clear()
             {
@@ -153,6 +179,7 @@ namespace KRWF.RimKata
                 modDeathTreeTicks = modDeathMaxTicks = 0;
                 modDeathTreeCalls = modDeathPawnId = modDeathShotId = modDeathTick = 0;
                 modDeathMethod = null;
+                deathTrace = default;
             }
 
             internal void CopyFrom(FrameData value)
@@ -197,6 +224,7 @@ namespace KRWF.RimKata
                 modDeathShotId = value.modDeathShotId;
                 modDeathTick = value.modDeathTick;
                 modDeathMethod = value.modDeathMethod;
+                deathTrace = value.deathTrace;
             }
         }
 
@@ -208,10 +236,12 @@ namespace KRWF.RimKata
             logDepth = 0;
             injuryDepth = 0;
             deathDepth = modDeathDepth = 0;
+            deathThoughtDepth = 0;
             ClearDamageResult();
             game = null;
             frame.Clear();
             peak.Clear();
+            deathSampleFrame.Clear();
             windowFrames = windowHighFrames = 0;
             windowTicks = lastReport = 0;
         }
@@ -282,6 +312,7 @@ namespace KRWF.RimKata
                 && stack[depth - 1].damage.sequence == 0) return default;
             if (part == Part.LogText && logDepth == 0) return default;
             if (part >= Part.DeathEffects && deathDepth == 0) return default;
+            if (part >= Part.RemoveLost && deathThoughtDepth == 0) return default;
             Scope scope = Push(part);
             if (scope.depth != 0) stack[depth - 1].method = method;
             return scope;
@@ -472,6 +503,7 @@ namespace KRWF.RimKata
             if (part == Part.DamageLog) logDepth++;
             if (part == Part.Injury) injuryDepth++;
             if (part == Part.Death) deathDepth++;
+            if (part == Part.DeathThoughts) deathThoughtDepth++;
             if (part == Part.ModDeath) modDeathDepth++;
             return new Scope { depth = depth, generation = generation };
         }
@@ -526,6 +558,17 @@ namespace KRWF.RimKata
             if (entry.part == Part.DamageLog) logDepth--;
             if (entry.part == Part.Injury) injuryDepth--;
             if (entry.part == Part.Death) deathDepth--;
+            if (entry.part == Part.DeathThoughts)
+            {
+                deathThoughtDepth--;
+                // The Harmony finalizer is still under DropBeforeDying's caller.
+                // Keep one slow death's real caller chain, not a per-hit trace.
+                if (!frame.deathTrace.recorded && !deathSampleFrame.deathTrace.recorded
+                    && elapsed * TickToMs >= FrameThresholdMs)
+                {
+                    CaptureDeathTrace(entry, elapsed);
+                }
+            }
             if (depth > 0)
             {
                 stack[depth - 1].children += elapsed;
@@ -543,6 +586,35 @@ namespace KRWF.RimKata
                 }
             }
             stack[depth] = default;
+        }
+
+        private static void CaptureDeathTrace(Entry entry, long elapsed)
+        {
+            long start = Stopwatch.GetTimestamp();
+            var sample = new DeathTraceSample
+            {
+                recorded = true, elapsed = elapsed,
+                tick = Find.TickManager?.TicksGame ?? -1,
+                rootPawnId = entry.pawnId, deathPawnId = entry.deathPawnId,
+                shot = entry.shot, damage = entry.damage
+            };
+            try
+            {
+                sample.trace = new StackTrace(1, false);
+            }
+            catch (Exception exception)
+            {
+                // Diagnostic capture must not interrupt native death processing.
+                sample.failure = exception.GetType().Name;
+            }
+            finally
+            {
+                sample.captureTicks = Math.Max(0, Stopwatch.GetTimestamp() - start);
+                // The measured child already ended. Remove only this diagnostic
+                // pause from every still-running ancestor, preserving child sums.
+                for (int i = 0; i < depth; i++) stack[i].start += sample.captureTicks;
+            }
+            frame.deathTrace = sample;
         }
 
         internal static void CountResult(MethodBase method, bool result)
@@ -584,6 +656,8 @@ namespace KRWF.RimKata
                     frame.gc2 = GC.CollectionCount(2) - frame.gc2;
                     windowFrames++;
                     windowTicks += frame.total;
+                    // A later non-death peak must not discard the captured death.
+                    if (frame.deathTrace.recorded) deathSampleFrame.CopyFrom(frame);
                     if (frame.total * TickToMs >= FrameThresholdMs)
                     {
                         windowHighFrames++;
@@ -597,8 +671,10 @@ namespace KRWF.RimKata
             // The first crossing is immediate; subsequent crossings are coalesced
             // for one second, retaining the worst full frame and window counts.
             Report();
+            if (deathSampleFrame.deathTrace.recorded) ReportDeathSample();
             lastReport = Stopwatch.GetTimestamp();
             peak.Clear();
+            deathSampleFrame.Clear();
             windowFrames = windowHighFrames = 0;
             windowTicks = 0;
         }
@@ -611,7 +687,7 @@ namespace KRWF.RimKata
         private static void Report()
         {
             var text = new StringBuilder(3800);
-            text.Append(Prefix).Append("version=5 frame=").Append(peak.number)
+            text.Append(Prefix).Append("version=6 frame=").Append(peak.number)
                 .Append(" ticks=").Append(peak.firstTick).Append("..").Append(peak.lastTick)
                 .Append(" frame_ms=").Append(Ms(peak.total))
                 .Append(" root_calls=").Append(peak.rootCalls)
@@ -697,7 +773,81 @@ namespace KRWF.RimKata
                     .Append(" mod_death_shot_id=").Append(peak.modDeathShotId)
                     .Append(" mod_death_tick=").Append(peak.modDeathTick);
             }
+            text.Append(" death_thought_inclusive_ms{");
+            separator = false;
+            for (int i = (int)Part.RemoveLost; i < (int)Part.Count; i++)
+            {
+                if (peak.calls[i] == 0) continue;
+                if (separator) text.Append(',');
+                separator = true;
+                text.Append((Part)i).Append('=').Append(Ms(peak.inclusive[i]));
+            }
+            text.Append('}');
             Log.Message(text.ToString());
+        }
+
+        private static void ReportDeathSample()
+        {
+            FrameData sample = deathSampleFrame;
+            var text = new StringBuilder(4000);
+            text.Append("[RimKata.DraftedFireProbe.Death] version=6 frame=")
+                .Append(sample.number).Append(" ticks=").Append(sample.firstTick)
+                .Append("..").Append(sample.lastTick)
+                .Append(" sampled_frame_ms=").Append(Ms(sample.total))
+                .Append(" death_frame_self_ms{");
+            bool separator = false;
+            for (int i = (int)Part.Death; i < (int)Part.Count; i++)
+            {
+                if (sample.calls[i] == 0) continue;
+                if (separator) text.Append(',');
+                separator = true;
+                text.Append((Part)i).Append('=').Append(Ms(sample.self[i]))
+                    .Append('/').Append(sample.calls[i]);
+            }
+            text.Append("} death_frame_inclusive_ms{");
+            separator = false;
+            for (int i = (int)Part.Death; i < (int)Part.Count; i++)
+            {
+                if (sample.calls[i] == 0) continue;
+                if (separator) text.Append(',');
+                separator = true;
+                text.Append((Part)i).Append('=').Append(Ms(sample.inclusive[i]));
+            }
+            text.Append('}');
+            AppendDeathTrace(text, sample.deathTrace);
+            Log.Message(text.ToString());
+        }
+
+        private static void AppendDeathTrace(StringBuilder text, DeathTraceSample sample)
+        {
+            if (!sample.recorded) return;
+            text.Append(" death_trace_tick=").Append(sample.tick)
+                .Append(" death_trace_root_pawn_id=").Append(sample.rootPawnId)
+                .Append(" death_trace_pawn_id=").Append(sample.deathPawnId)
+                .Append(" death_trace_shot_id=").Append(sample.shot.sequence)
+                .Append(" death_trace_shooter_id=").Append(sample.shot.pawnId)
+                .Append(" death_trace_target_id=").Append(sample.shot.targetId)
+                .Append(" death_trace_weapon=").Append(sample.shot.weaponDef)
+                .Append('#').Append(sample.shot.weaponId)
+                .Append(" death_trace_damage_id=").Append(sample.damage.sequence)
+                .Append(" death_trace_recipient_id=").Append(sample.damage.recipientId)
+                .Append(" death_trace_drop_ms=").Append(Ms(sample.elapsed))
+                .Append(" death_trace_method=Verse.Pawn:DropBeforeDying")
+                .Append(" death_trace_capture_ms=").Append(Ms(sample.captureTicks))
+                .Append(" death_trace_failure=").Append(sample.failure ?? "none")
+                .Append(" death_trace{");
+            // Format only after the measured frame has ended. No Pawn/Verb
+            // references or source-file information are retained by the trace.
+            int count = sample.trace?.FrameCount ?? 0;
+            for (int i = 0; i < count && i < 64; i++)
+            {
+                if (i > 0) text.Append(" <- ");
+                MethodBase method = sample.trace.GetFrame(i)?.GetMethod();
+                text.Append(method?.DeclaringType?.FullName ?? "<dynamic>")
+                    .Append(':').Append(method?.Name ?? "<unknown>");
+            }
+            if (count > 64) text.Append(" <- <truncated>");
+            text.Append('}');
         }
 
         private static string HealthStateName(byte flags)
@@ -787,7 +937,60 @@ namespace KRWF.RimKata
                 Add(typeof(ThoughtWorker_MindNumbSerumEmotionRemoval), "CurrentStateInternal", 1, Part.ModDeath);
                 Add(typeof(ThoughtWorker_MindNumbSerumDependencyOvercome), "CurrentStateInternal", 1, Part.ModDeath);
                 Add(typeof(Thought_MindNumbSerumWithdrawal), "MoodOffset", 0, Part.ModDeath);
-                Log.Message(Prefix + "enabled version=5; qualified ProcessJobTrackerTick trees only; "
+                // Descendants are timed only while a measured DropBeforeDying
+                // is active. Do not patch generic lists or per-memory predicates.
+                Type deathThoughts = typeof(RimWorld.PawnDiedOrDownedThoughtsUtility);
+                Add(deathThoughts, "RemoveLostThoughts", 1, Part.RemoveLost);
+                Add(deathThoughts, "RemoveResuedRelativeThought", 1, Part.RemoveRescued);
+                Add(deathThoughts, "TryGiveThoughts", 3, Part.GiveDeathThoughts);
+                Add(deathThoughts, "GetThoughts", 5, Part.GetDeathThoughts);
+                Add(deathThoughts, "AppendThoughts_ForHumanlike", 5, Part.HumanDeathThoughts);
+                Add(deathThoughts, "AppendThoughts_Relations", 5, Part.RelationDeathThoughts);
+                Add(deathThoughts, "GiveVeneratedAnimalDiedThoughts", 2, Part.VeneratedDeathThoughts);
+                Type finder = typeof(RimWorld.PawnsFinder);
+                Add(finder, "get_AllMapsWorldAndTemporary_Alive", 0, Part.WorldPawnList);
+                Add(finder, "get_AllMapsWorldAndTemporary_AliveOrDead", 0, Part.WorldPawnListBuild);
+                Add(finder, "get_AllMapsCaravansAndTravellingTransporters_Alive", 0, Part.MapPawnList);
+                Add(finder, "get_AllMapsCaravansAndTravellingTransporters_Alive_Colonists", 0, Part.ColonistPawnList);
+                Type relations = typeof(RimWorld.Pawn_RelationsTracker);
+                Add(relations, "get_PotentiallyRelatedPawns", 0, Part.RelatedPawns);
+                AddIterator(relations, "get_PotentiallyRelatedPawns", Part.RelatedPawnsNext);
+                Add(relations, "get_FamilyByBlood", 0, Part.FamilyPawns);
+                AddIterator(relations, "get_FamilyByBlood_Internal", Part.FamilyPawnsNext);
+                Add(relations, "OpinionOf", 1, Part.PawnOpinion);
+                Type relationUtility = typeof(RimWorld.PawnRelationUtility);
+                Add(relationUtility, "GetMostImportantRelation", 2, Part.ImportantRelation);
+                AddIterator(relationUtility, "GetRelations", Part.RelationsNext);
+                Type memories = typeof(RimWorld.MemoryThoughtHandler);
+                Add(memories, "RemoveMemoriesOfDefWhereOtherPawnIs", 2, Part.RemoveOtherMemories);
+                Add(memories, "RemoveMemory", 1, Part.RemoveMemory);
+                Add(memories, "TryGainMemory", new[]
+                    { typeof(RimWorld.ThoughtDef), typeof(Pawn), typeof(RimWorld.Precept) }, Part.GainMemoryDef);
+                Add(memories, "TryGainMemory", new[]
+                    { typeof(RimWorld.Thought_Memory), typeof(Pawn) }, Part.GainMemory);
+                Add(memories, "NumMemoriesInGroup", 1, Part.GroupMemoryCount);
+                Add(memories, "OldestMemoryInGroup", 1, Part.GroupMemoryOldest);
+                Add(memories, "NumMemoriesOfDef", 1, Part.DefMemoryCount);
+                Add(memories, "OldestMemoryOfDef", 1, Part.DefMemoryOldest);
+                Add(typeof(RimWorld.Thought_Memory), "TryMergeWithExistingMemory", 1, Part.MergeMemory);
+                Add(typeof(RimWorld.Thought_MemorySocial), "TryMergeWithExistingMemory", 1, Part.MergeMemory);
+                Add(typeof(RimWorld.IndividualThoughtToAdd), "Add", 0, Part.AddIndividualThought);
+                Add(typeof(RimWorld.ThoughtToAddToAll), "Add", 1, Part.AddAllThought);
+                Add(typeof(RimWorld.ThoughtMaker), "MakeThought", 1, Part.MakeThought);
+                Add(typeof(RimWorld.ThoughtMaker), "MakeThought", new[]
+                    { typeof(RimWorld.ThoughtDef), typeof(RimWorld.Precept) }, Part.MakeThought);
+                Add(typeof(RimWorld.ThoughtUtility), "CanGetThought", 3, Part.CanGetThought);
+                Add(typeof(RimWorld.ThoughtUtility), "Witnessed", 2, Part.WitnessedDeath);
+                Add(typeof(RimWorld.PawnUtility), "ShouldGetThoughtAbout", 2, Part.ShouldGetThoughtAbout);
+                Add(typeof(GenSight), "LineOfSight", new[]
+                    { typeof(IntVec3), typeof(IntVec3), typeof(Map) }, Part.ThoughtLineOfSight);
+                Type thoughts = typeof(RimWorld.ThoughtHandler);
+                Add(thoughts, "TotalOpinionOffset", 1, Part.TotalOpinion);
+                Add(thoughts, "GetSocialThoughts", 2, Part.SocialThoughts);
+                Add(thoughts, "GetSocialThoughts", 3, Part.SocialGroupFilter);
+                Add(thoughts, "GetDistinctSocialThoughtGroups", 2, Part.SocialGroups);
+                Add(thoughts, "OpinionOffsetOfGroup", 2, Part.GroupOpinion);
+                Log.Message(Prefix + "enabled version=6; qualified ProcessJobTrackerTick trees only; "
                     + "frame threshold=1.000ms; self_ms entries are exclusive ms/calls; "
                     + "inclusive_ms entries overlap; window averages use active sampled frames; "
                     + "outside JobDriver work excluded, synchronous nested Job work included; "
@@ -806,9 +1009,29 @@ namespace KRWF.RimKata
                     + "mod_death_tree_ms counts audited outermost RimKata callback subtrees once, "
                     + "including their descendants; it overlaps stage totals and is not all mod overhead; "
                     + "mod_death_cause_pawn_id is the death victim, not necessarily the helper's receiver; "
-                    + "first crossing then worst frame per 1s; timing includes instrumentation overhead.");
+                    + "first crossing then worst frame per 1s; "
+                    + "death-thought descendants, including relation iterator MoveNext, run only inside measured DropBeforeDying; "
+                    + "death_thought_inclusive_ms overlaps self_ms and parent totals; "
+                    + "the separate DraftedFireProbe.Death row retains the first DropBeforeDying >=1ms per reporting window even if a non-death frame becomes the peak; "
+                    + "death-frame child totals cover that entire frame, while death_trace IDs identify one invocation; "
+                    + "death_trace is the caller chain at DropBeforeDying completion (not returned child frames), capped at64 frames; "
+                    + "stack capture cost is reported separately and excluded from active ancestor clocks; other timing includes instrumentation overhead.");
             }
             return parts.Keys;
+        }
+
+        private static void AddIterator(Type type, string name, Part part)
+        {
+            MethodInfo factory = AccessTools.DeclaredMethod(type, name);
+            Type iterator = factory?.GetCustomAttribute<IteratorStateMachineAttribute>()?.StateMachineType;
+            MethodInfo moveNext = iterator == null ? null
+                : AccessTools.DeclaredMethod(iterator, "MoveNext", Type.EmptyTypes);
+            if (moveNext == null || moveNext.ReturnType != typeof(bool))
+            {
+                Log.Warning(Prefix + "missing iterator body " + type.Name + "." + name);
+                return;
+            }
+            parts.Add(moveNext, part);
         }
 
         private static void Add(Type type, string name, int parameters, Part part)
