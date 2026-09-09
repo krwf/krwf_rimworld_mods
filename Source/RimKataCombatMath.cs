@@ -251,6 +251,14 @@ namespace KRWF.RimKata
                     adjustedWarmupTicks / originalBurstCount));
         }
 
+        internal static int WarmupTicksForSingleShotWithAimingFactor(
+            Verb verb, float aimingFactor)
+        {
+            return verb == null ? 0 : Mathf.Max(0, Mathf.RoundToInt(
+                AdjustedWarmupTicks(verb, aimingFactor)
+                    / BurstCountForSingleShotTiming(verb)));
+        }
+
         public static int CooldownTicksForSingleShot(Verb verb, Pawn pawn, bool afterSuccessfulResponse)
         {
             if (verb?.verbProps == null || pawn == null)
@@ -318,6 +326,11 @@ namespace KRWF.RimKata
         private static float AdjustedWarmupTicks(Verb verb)
         {
             float aimingFactor = verb.CasterPawn?.GetStatValue(StatDefOf.AimingDelayFactor) ?? 1f;
+            return AdjustedWarmupTicks(verb, aimingFactor);
+        }
+
+        private static float AdjustedWarmupTicks(Verb verb, float aimingFactor)
+        {
             // The native Verb already carries the converted warmup. Keep the
             // original fixed input here so the established cycle rounding is exact.
             float warmupSeconds = verb.verbProps is RimKataPreparedVerbProperties prepared

@@ -259,6 +259,7 @@ namespace KRWF.RimKata
             internal bool actualCombatWasActive;
             internal bool awaitingCombatEnd;
             internal bool restoreHostileWatchPending;
+            internal bool suspendedHostileWatch;
             internal HashSet<IAttackTarget> hostileTargets;
             internal readonly HashSet<Pawn> receivers =
                 new HashSet<Pawn>();
@@ -287,7 +288,8 @@ namespace KRWF.RimKata
             bool actualCombatWasActive = entry?.actualCombatWasActive == true;
             bool awaitingCombatEnd = entry?.awaitingCombatEnd == true;
             bool watchingHostiles = entry?.hostileTargets != null
-                || entry?.restoreHostileWatchPending == true;
+                || entry?.restoreHostileWatchPending == true
+                || entry?.suspendedHostileWatch == true;
             Scribe_Values.Look(ref forcedNormalSpeedWasActive,
                 "rimKataHostileWatchForcedSpeedWasActive", false);
             Scribe_Values.Look(ref actualCombatWasActive,
@@ -328,7 +330,7 @@ namespace KRWF.RimKata
             }
             else if (ByMap.TryGetValue(map, out MapEntry entry))
             {
-                entry.receivers.Remove(pawn);
+                RemoveReceiver(entry, pawn);
             }
         }
 
@@ -340,14 +342,13 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (IsLiveReceiverMember(pawn, map)
-                && RimKataEligibility.HasRimKataAccess(pawn))
+            if (IsLiveReceiverMember(pawn, map))
             {
                 ByMap.GetValue(map, CreateEntry).receivers.Add(pawn);
             }
             else if (ByMap.TryGetValue(map, out MapEntry entry))
             {
-                entry.receivers.Remove(pawn);
+                RemoveReceiver(entry, pawn);
             }
         }
 
@@ -367,8 +368,16 @@ namespace KRWF.RimKata
             if (map != null
                 && ByMap.TryGetValue(map, out MapEntry entry))
             {
-                entry.receivers.Remove(pawn);
+                RemoveReceiver(entry, pawn);
                 entry.pendingHostiles.Remove(pawn);
+            }
+        }
+
+        internal static void NotifyMapRemoved(Map map)
+        {
+            if (map != null)
+            {
+                ByMap.Remove(map);
             }
         }
 
@@ -430,12 +439,31 @@ namespace KRWF.RimKata
                 AcquireHostileCacheAfterCombat(map, entry);
             }
 
-            if (entry.restoreHostileWatchPending)
+            if (entry.restoreHostileWatchPending
+                || (entry.suspendedHostileWatch && entry.receivers.Count > 0))
             {
                 AcquireHostileCacheAfterCombat(map, entry);
             }
 
-            if (entry.hostileTargets == null || entry.hostileTargets.Count == 0)
+            if (entry.suspendedHostileWatch)
+            {
+                return;
+            }
+
+            if (entry.receivers.Count == 0)
+            {
+                if (entry.hostileTargets != null)
+                {
+                    SuspendHostileWatch(entry);
+                }
+                return;
+            }
+
+            if (entry.hostileTargets == null)
+            {
+                return;
+            }
+            if (entry.hostileTargets.Count == 0)
             {
                 ClearHostileCache(entry);
                 return;
@@ -447,6 +475,11 @@ namespace KRWF.RimKata
             }
 
             BuildLiveReceiverSnapshot(map, entry);
+            if (entry.receiverSnapshot.Count == 0)
+            {
+                SuspendHostileWatch(entry);
+                return;
+            }
             BuildPendingHostileSnapshot(map, entry);
             for (int i = 0;
                 i < entry.receiverSnapshot.Count
@@ -472,43 +505,38 @@ namespace KRWF.RimKata
                 return;
             }
 
-            if (Find.TickManager?.slower?.ForcedNormalSpeed != false)
+            ByMap.TryGetValue(map, out MapEntry existing);
+            if (IsLiveReceiverMember(pawn, map))
             {
-                return;
-            }
-
-            if (!ByMap.TryGetValue(map, out MapEntry existing))
-            {
-                if (!IsLiveReceiverMember(pawn, map)
-                    || !RimKataEligibility.HasRimKataAccess(pawn))
-                {
-                    return;
-                }
-
-                existing = ByMap.GetValue(map, CreateEntry);
-            }
-
-            if (!existing.awaitingCombatEnd
-                && existing.hostileTargets?.Count > 0
-                && existing.hostileTargets.Contains(pawn))
-            {
-                if (existing.receivers.Count > 0
-                    && IsLiveMovingHostile(pawn, map, existing.hostileTargets))
-                {
-                    existing.pendingHostiles.Add(pawn);
-                }
-                return;
-            }
-
-            existing.pendingHostiles.Remove(pawn);
-            if (IsLiveReceiverMember(pawn, map)
-                && RimKataEligibility.HasRimKataAccess(pawn))
-            {
+                // Membership follows path events even during combat; watching
+                // hostile movement still waits for the combat-end transition.
+                existing ??= ByMap.GetValue(map, CreateEntry);
                 existing.receivers.Add(pawn);
+                return;
+            }
+
+            if (existing == null)
+            {
+                return;
+            }
+
+            RemoveReceiver(existing, pawn);
+            if (existing.receivers.Count == 0
+                || existing.suspendedHostileWatch
+                || existing.awaitingCombatEnd
+                || existing.hostileTargets == null
+                || Find.TickManager?.slower?.ForcedNormalSpeed != false)
+            {
+                return;
+            }
+
+            if (IsLiveMovingHostile(pawn, map, existing.hostileTargets))
+            {
+                existing.pendingHostiles.Add(pawn);
             }
             else
             {
-                existing.receivers.Remove(pawn);
+                existing.pendingHostiles.Remove(pawn);
             }
         }
 
@@ -516,7 +544,17 @@ namespace KRWF.RimKata
             Map map,
             MapEntry entry)
         {
+            BuildLiveReceiverSnapshot(map, entry);
+            if (entry.receiverSnapshot.Count == 0)
+            {
+                // This marker can only originate from completed combat or a
+                // saved watch. A peaceful movement event cannot create it.
+                SuspendHostileWatch(entry);
+                return;
+            }
+            entry.receiverSnapshot.Clear();
             entry.restoreHostileWatchPending = false;
+            entry.suspendedHostileWatch = false;
             entry.hostileTargets = Faction.OfPlayer != null
                 ? map.attackTargetsCache?.TargetsHostileToColony
                 : null;
@@ -529,8 +567,36 @@ namespace KRWF.RimKata
         private static void ClearHostileCache(MapEntry entry)
         {
             entry.restoreHostileWatchPending = false;
+            entry.suspendedHostileWatch = false;
             entry.hostileTargets = null;
             entry.pendingHostiles.Clear();
+            entry.hostileSnapshot.Clear();
+            entry.receiverSnapshot.Clear();
+        }
+
+        private static void SuspendHostileWatch(MapEntry entry)
+        {
+            ClearHostileCache(entry);
+            entry.suspendedHostileWatch = true;
+        }
+
+        private static void RemoveReceiver(MapEntry entry, Pawn pawn)
+        {
+            if (!entry.receivers.Remove(pawn) || entry.receivers.Count > 0)
+            {
+                return;
+            }
+
+            if (entry.hostileTargets != null
+                || entry.restoreHostileWatchPending
+                || entry.suspendedHostileWatch)
+            {
+                SuspendHostileWatch(entry);
+            }
+            else
+            {
+                entry.pendingHostiles.Clear();
+            }
         }
 
         private static void BuildLiveReceiverSnapshot(
@@ -572,14 +638,8 @@ namespace KRWF.RimKata
 
         private static bool IsLiveReceiverMember(Pawn pawn, Map map)
         {
-            return pawn != null
-                && !pawn.Destroyed
-                && pawn.Spawned
-                && !pawn.Dead
-                && pawn.Map == map
-                && pawn.IsPlayerControlled
-                && pawn.Drafted
-                && pawn.pather?.Moving == true;
+            return RimKataDualWeaponController.CanReceiveDormantMovingHostiles(pawn)
+                && pawn.Map == map;
         }
 
         private static bool IsLiveMovingHostile(
@@ -594,6 +654,17 @@ namespace KRWF.RimKata
                 && pawn.Map == map
                 && pawn.pather?.Moving == true
                 && hostileTargets?.Contains(pawn) == true;
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn_DraftController), nameof(Pawn_DraftController.FireAtWill),
+        MethodType.Setter)]
+    public static class Patch_PawnDraftController_RimKataDormantFirePermission
+    {
+        public static void Postfix(Pawn_DraftController __instance)
+        {
+            RimKataDormantHostileMovementRegistry.NotifyDraftStatusChanged(
+                __instance?.pawn);
         }
     }
 

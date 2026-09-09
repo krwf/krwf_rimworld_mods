@@ -1561,6 +1561,7 @@ namespace KRWF.RimKata
         public override void FinalizeInit()
         {
             base.FinalizeInit();
+            RimKataEligibilityCache.InitializeMap(map);
             RefreshWeatherRangeRevision(true);
             lock (statesLock)
             {
@@ -1585,6 +1586,8 @@ namespace KRWF.RimKata
 
         public override void MapRemoved()
         {
+            RimKataEligibilityCache.ForgetMap(map);
+            RimKataDormantHostileMovementRegistry.NotifyMapRemoved(map);
             lock (statesLock)
             {
                 for (int i = 0; i < states.Count; i++)

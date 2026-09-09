@@ -1197,11 +1197,12 @@ namespace KRWF.RimKata
                 return;
             }
 
+            RimKataEligibilityCache.RefreshSettings();
             NormalizeAllSpawnedLoadouts();
             List<Map> maps = Find.Maps;
             for (int mapIndex = 0; mapIndex < maps.Count; mapIndex++)
             {
-                IReadOnlyList<Pawn> pawns = maps[mapIndex].mapPawns.AllPawnsSpawned;
+                IReadOnlyList<Pawn> pawns = RimKataEligibilityCache.GetQualifiedPawns(maps[mapIndex]);
                 for (int pawnIndex = pawns.Count - 1; pawnIndex >= 0; pawnIndex--)
                 {
                     Pawn pawn = pawns[pawnIndex];
@@ -1224,7 +1225,7 @@ namespace KRWF.RimKata
 
             RimKataPawnCombatState state =
                 RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
-            if (!RimKataEligibilityCache.IsRegisteredUser(pawn))
+            if (!RimKataEligibilityCache.IsCachedQualifiedPawn(pawn))
             {
                 RimKataColonistBarWeaponCache.Refresh(pawn);
                 return;
@@ -1323,6 +1324,7 @@ namespace KRWF.RimKata
 
         public static void Postfix(Pawn __instance, bool respawningAfterLoad, bool __state)
         {
+            RimKataEligibilityCache.NotifyPawnSpawned(__instance);
             RimKataSettings settings = RimKataMod.Settings;
             if (respawningAfterLoad
                 || __state

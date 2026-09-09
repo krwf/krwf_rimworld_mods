@@ -197,6 +197,7 @@ namespace KRWF.RimKata
             if (previousFriendlyEffects != settings.enableFriendlyPawnEffects
                 || previousHostileEffects != settings.enableHostilePawnEffects)
             {
+                RimKataEligibilityCache.RefreshPermissions();
                 RimKataColonistBarWeaponCache.RefreshAll();
             }
             y += RowHeight + 8f;

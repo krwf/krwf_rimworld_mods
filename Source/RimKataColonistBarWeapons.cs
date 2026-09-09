@@ -114,7 +114,11 @@ namespace KRWF.RimKata
     {
         private static void Prefix(Game __0)
         {
-            if (!ReferenceEquals(Current.Game, __0)) RimKataColonistBarWeaponCache.Reset();
+            if (!ReferenceEquals(Current.Game, __0))
+            {
+                RimKataColonistBarWeaponCache.Reset();
+                RimKataEligibilityCache.ResetGame();
+            }
         }
     }
 
@@ -122,7 +126,10 @@ namespace KRWF.RimKata
     internal static class Patch_PawnSetFaction_RimKataColonistBarWeapons
     {
         private static void Postfix(Pawn __instance)
-            => RimKataColonistBarWeaponCache.Refresh(__instance);
+        {
+            RimKataEligibilityCache.NotifyPawnSpawned(__instance);
+            RimKataColonistBarWeaponCache.Refresh(__instance);
+        }
     }
 
     [HarmonyPatch(typeof(Faction), nameof(Faction.Notify_RelationKindChanged))]
@@ -134,6 +141,7 @@ namespace KRWF.RimKata
             if (other == Faction.OfPlayer && settings != null
                 && settings.enableFriendlyPawnEffects != settings.enableHostilePawnEffects)
             {
+                RimKataEligibilityCache.RefreshFaction(__instance);
                 RimKataColonistBarWeaponCache.RefreshFaction(__instance);
             }
         }

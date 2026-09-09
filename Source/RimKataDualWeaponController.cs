@@ -890,6 +890,7 @@ namespace KRWF.RimKata
                 state.ResetCandidateSaturationExpansion(true);
             }
 
+            bool candidateWorkAdvanced = false;
             if (state.idleProjectileSearchTriggerPending)
             {
                 if (allowAutomaticRangedFire && state.primaryWeaponCycle.weapon != null)
@@ -911,7 +912,7 @@ namespace KRWF.RimKata
                         randomAttackEnabled);
                 }
                 state.ConsumeIdleProjectileSearchTrigger();
-                RefreshDualEngagementState(pawn, state, randomAttackEnabled);
+                candidateWorkAdvanced = true;
             }
 
             if (!allowAutomaticRangedFire
@@ -921,25 +922,22 @@ namespace KRWF.RimKata
                 SuppressNewAutomaticRangedTargeting(pawn, state);
             }
 
-            bool combatContinuityKnown = false;
-            bool combatContinuity = false;
-            if (state.sharedTargetSearch?.scanActive == true)
+            if (state.sharedTargetSearch?.scanActive == true
+                || RimKataSharedTargetSearch.HasPendingCandidates(state))
             {
                 AdvanceSharedTargetSearch(
                     pawn, state, assignedTarget,
                     ref primaryAvailability, ref secondaryAvailability);
-                RefreshDualEngagementState(pawn, state, randomAttackEnabled);
-                combatContinuity = state.dualEngagementActive;
-                combatContinuityKnown = true;
+                candidateWorkAdvanced = true;
             }
 
             bool firePausedForDodge = ShouldPauseFireForDodge(pawn);
-            if (!firePausedForDodge && !(combatContinuityKnown
-                    ? combatContinuity
-                    : HasCombatContinuity(
-                        pawn,
-                        state,
-                        randomAttackEnabled)))
+            if (!firePausedForDodge || candidateWorkAdvanced)
+            {
+                RefreshDualEngagementState(pawn, state, randomAttackEnabled,
+                    ref primaryAvailability, ref secondaryAvailability);
+            }
+            if (!firePausedForDodge && !state.dualEngagementActive)
             {
                 state.CancelDraftedFire(false);
                 CancelUnfiredWarmupForDraftChange(state.primaryWeaponCycle);
@@ -1048,7 +1046,13 @@ namespace KRWF.RimKata
                         ? firstPromotionTarget : secondPromotionTarget,
                     randomAttackEnabled, out Thing _);
             }
-            RefreshDualEngagementState(pawn, state, randomAttackEnabled);
+            if (pawn.CurJob != drivenJob || state.weaponBindingsDirty)
+            {
+                primaryAvailability = default;
+                secondaryAvailability = default;
+            }
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled,
+                ref primaryAvailability, ref secondaryAvailability);
             UpdateBodyAimStance(pawn, state);
         }
 
@@ -1417,149 +1421,120 @@ namespace KRWF.RimKata
             return true;
         }
 
+        internal static bool CanReceiveDormantMovingHostiles(Pawn pawn)
+        {
+            return pawn?.Drafted == true
+                && pawn.Spawned && !pawn.Dead && !pawn.Downed
+                && pawn.pather?.Moving == true
+                && RimKataEligibilityCache.IsCachedQualifiedPawn(pawn)
+                && pawn.drafter?.FireAtWill == true
+                && pawn.IsPlayerControlled
+                && RimKataMod.Settings?.randomAttackEnabled != false
+                && MovingFireEnabledForPawn(pawn)
+                && RimKataDraftedFireController.IsAutomaticFireJob(pawn.CurJobDef)
+                && !pawn.InMentalState
+                && !RimKataTemporaryInactivity.IsInactive(pawn)
+                && pawn.Awake()
+                && !pawn.WorkTagIsDisabled(WorkTags.Violent);
+        }
+
         internal static bool TryReceiveDormantMovingHostiles(
             Pawn pawn,
             IReadOnlyList<Pawn> movingHostiles)
         {
-            if (pawn?.Map == null
-                || !pawn.Spawned
-                || pawn.Dead
-                || pawn.Drafted != true
-                || pawn.drafter?.FireAtWill != true
-                || !pawn.IsPlayerControlled
+            if (!CanReceiveDormantMovingHostiles(pawn)
+                || pawn.Map == null
                 || movingHostiles == null
                 || movingHostiles.Count == 0
-                || Find.TickManager?.slower?.ForcedNormalSpeed != false
-                || RimKataMod.Settings?.randomAttackEnabled == false
-                || !MovingFireEnabledForPawn(pawn)
-                || !RimKataDraftedFireController.IsAutomaticFireJob(
-                    pawn.CurJobDef)
-                || !RimKataEligibility.CanBeginGunKataAttack(pawn))
+                || Find.TickManager?.slower?.ForcedNormalSpeed != false)
             {
                 return false;
             }
 
-            if (HasDormantMovingHostileWakeWork(pawn))
+            RimKataPawnCombatState state = StateFor(pawn, false);
+            if (state?.sharedTargetSearch?.scanActive == true
+                || HasMovementFireCombatWork(state))
             {
                 return false;
             }
 
-            ThingWithComps primary =
-                RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
+            if (state != null)
+            {
+                BindCurrentWeapons(pawn, state, true);
+            }
+            ThingWithComps primary = state != null
+                ? state.primaryWeaponCycle.weapon
+                : RimKataWeaponSlotUtility.PrimaryWeapon(pawn);
             ThingWithComps secondary =
-                RimKataWeaponSlotUtility.CanUseSecondarySlot(
+                state != null ? state.secondaryWeaponCycle.weapon
+                : RimKataWeaponSlotUtility.CanUseSecondarySlot(
                     pawn,
                     primary,
                     true)
                     ? RimKataWeaponSlotUtility
                         .SecondaryWeaponWithVerifiedAccess(pawn)
                     : null;
-            Verb primaryVerb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                primary);
-            Verb secondaryVerb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                secondary);
+            Verb primaryVerb = state != null ? state.primaryWeaponCycle.boundVerb
+                : RimKataWeaponSlotUtility.CombatVerb(pawn, primary);
+            Verb secondaryVerb = state != null ? state.secondaryWeaponCycle.boundVerb
+                : RimKataWeaponSlotUtility.CombatVerb(pawn, secondary);
+            float primaryRadius = DormantCandidateRadius(pawn, primary, primaryVerb);
+            float secondaryRadius = DormantCandidateRadius(pawn, secondary, secondaryVerb);
+            bool? primaryUsable = null;
+            bool? secondaryUsable = null;
+            bool accepted = false;
 
-            Thing firstCandidate = null;
             for (int i = 0; i < movingHostiles.Count; i++)
             {
                 Pawn target = movingHostiles[i];
-                if (IsDormantMovingHostileCandidate(
-                        pawn,
-                        target,
-                        primary,
-                        primaryVerb)
-                    || IsDormantMovingHostileCandidate(
-                        pawn,
-                        target,
-                        secondary,
-                        secondaryVerb))
+                if (target == null || target.Map != pawn.Map
+                    || target.pather?.Moving != true)
                 {
-                    firstCandidate = target;
-                    break;
+                    continue;
                 }
+                int distanceSquared = pawn.Position.DistanceToSquared(target.Position);
+                bool primaryInRange = primaryRadius > 0f
+                    && distanceSquared <= primaryRadius * primaryRadius;
+                bool secondaryInRange = secondaryRadius > 0f
+                    && distanceSquared <= secondaryRadius * secondaryRadius;
+                if (!primaryInRange && !secondaryInRange)
+                {
+                    continue;
+                }
+                if (primaryInRange && !primaryUsable.HasValue)
+                    primaryUsable = RimKataEquipmentUtility.IsWeaponEnabled(primary.def)
+                        && VerbUsable(pawn, primaryVerb, false);
+                if (secondaryInRange && !secondaryUsable.HasValue)
+                    secondaryUsable = RimKataEquipmentUtility.IsWeaponEnabled(secondary.def)
+                        && VerbUsable(pawn, secondaryVerb, false);
+                primaryInRange &= primaryUsable == true;
+                secondaryInRange &= secondaryUsable == true;
+                if (!primaryInRange && !secondaryInRange)
+                {
+                    continue;
+                }
+                if (state == null)
+                {
+                    state = StateFor(pawn, true);
+                    BindCurrentWeapons(pawn, state, true);
+                }
+                accepted |= RimKataSharedTargetSearch.EnqueueDormantMovingTarget(
+                    pawn, state, target, primaryInRange, secondaryInRange);
             }
-
-            // Do not create a combat state merely because a hostile path is
-            // active.  At least one current weapon must actually be able to
-            // accept one of the known moving targets first.
-            if (firstCandidate == null)
-            {
-                return false;
-            }
-
-            RimKataPawnCombatState state = StateFor(pawn, true);
-            BindCurrentWeapons(pawn, state, true);
-            bool accepted = RimKataSharedTargetSearch
-                .TryAddKnownAutomaticTarget(
-                    pawn,
-                    state,
-                    firstCandidate,
-                    true);
-
-            if (!accepted)
-            {
-                return false;
-            }
-
-            TryCacheSharedCandidate(
-                pawn,
-                state,
-                state.primaryWeaponCycle,
-                firstCandidate,
-                true);
-            TryCacheSharedCandidate(
-                pawn,
-                state,
-                state.secondaryWeaponCycle,
-                firstCandidate,
-                true);
-            state.draftedMovementSearchCell = pawn.Position;
-            state.dualLastDrivenTick = -1;
-            RefreshDualEngagementState(pawn, state, true);
-            return true;
+            // Pending validation schedules the existing state. It neither
+            // starts a geometric scan nor declares a weapon action/combat icon.
+            return accepted;
         }
 
-        internal static bool HasDormantMovingHostileWakeWork(Pawn pawn)
-        {
-            RimKataPawnCombatState state = StateFor(pawn, false);
-            return state?.dualEngagementActive == true
-                || HasMovementFireCombatWork(state)
-                || state?.sharedTargetSearch?.KeepsCombatAlive == true;
-        }
-
-        private static bool IsDormantMovingHostileCandidate(
+        private static float DormantCandidateRadius(
             Pawn pawn,
-            Pawn target,
             ThingWithComps weapon,
             Verb verb)
         {
-            if (pawn?.Map == null
-                || target?.Map != pawn.Map
-                || target.pather?.Moving != true
-                || !RimKataTargeting.IsValidAutomaticAttackTarget(
-                    pawn,
-                    target)
-                || weapon == null
-                || !RimKataEquipmentUtility.IsWeaponEnabled(weapon.def)
-                || verb == null
-                || verb.IsMeleeAttack
-                || !VerbUsable(pawn, verb, false))
-            {
-                return false;
-            }
-
-            float candidateCellRadius = Mathf.Max(
-                0f,
-                RimKataRangeUtility.ResolveCandidateCellRadius(
-                    pawn,
-                    weapon,
-                    verb));
-            return candidateCellRadius > 0f
-                && pawn.Position.DistanceToSquared(target.Position)
-                    <= candidateCellRadius * candidateCellRadius
-                && verb.CanHitTarget(target);
+            return weapon != null && verb != null && !verb.IsMeleeAttack
+                ? Mathf.Max(0f, RimKataRangeUtility.ResolveCandidateCellRadius(
+                    pawn, weapon, verb))
+                : 0f;
         }
 
         private static bool PrepareMovementSearch(
@@ -2557,7 +2532,8 @@ namespace KRWF.RimKata
             ref CycleVerbAvailability secondaryAvailability)
         {
             if (pawn?.Map == null
-                || state?.sharedTargetSearch?.sessionActive != true)
+                || (state?.sharedTargetSearch?.sessionActive != true
+                    && !RimKataSharedTargetSearch.HasPendingCandidates(state)))
             {
                 return;
             }
@@ -2994,7 +2970,8 @@ namespace KRWF.RimKata
             Pawn pawn,
             RimKataPawnCombatState state,
             RimKataWeaponCycleState cycle,
-            bool? randomAttackEnabled = null)
+            bool? randomAttackEnabled,
+            ref CycleVerbAvailability availability)
         {
             // DedicatedActive is the cheap structural prerequisite for every
             // target-bearing branch below.  Cooldown/visual-only retained
@@ -3006,16 +2983,19 @@ namespace KRWF.RimKata
 
             bool closeContext = cycle.plannedCloseContext
                 || state?.dualCloseCombatActive == true;
-            Verb verb = RimKataWeaponSlotUtility.CombatVerb(
-                pawn,
-                cycle.weapon);
-            bool ordinaryWeaponEnabled =
-                RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def);
+            bool bindingCurrent = state != null && !state.weaponBindingsDirty
+                && state.weaponConfigurationRevision
+                    == RimKataEquipmentUtility.WeaponConfigurationRevision;
+            Verb verb = bindingCurrent ? BoundCombatVerb(pawn, cycle)
+                : RimKataWeaponSlotUtility.CombatVerb(pawn, cycle.weapon);
+            bool ordinaryWeaponEnabled = bindingCurrent
+                ? cycle.ordinaryWeaponEnabled
+                : RimKataEquipmentUtility.IsWeaponEnabled(cycle.weapon.def);
             if ((!ordinaryWeaponEnabled
                     && (!(verb is Verb_LaunchProjectile)
                         || !HasActiveInterceptionWork(pawn, cycle)))
                 || verb == null
-                || !VerbUsable(pawn, verb, closeContext))
+                || !IsCycleVerbUsable(pawn, verb, closeContext, ref availability))
             {
                 return false;
             }
@@ -3031,7 +3011,8 @@ namespace KRWF.RimKata
                 pawn,
                 cycle,
                 verb,
-                closeContext))
+                closeContext,
+                ref availability))
             {
                 return true;
             }
@@ -3070,7 +3051,8 @@ namespace KRWF.RimKata
                 plannedTarget,
                 playerForced,
                 pawn.CurJob?.killIncappedTarget == true,
-                cycle.plannedCloseContext);
+                cycle.plannedCloseContext,
+                ref availability);
         }
 
         private static bool NormalizeInvalidInterceptionState(
@@ -3146,6 +3128,19 @@ namespace KRWF.RimKata
             RimKataPawnCombatState state,
             bool? randomAttackEnabled = null)
         {
+            CycleVerbAvailability primaryAvailability = default;
+            CycleVerbAvailability secondaryAvailability = default;
+            return HasAnyCycleTargetWork(pawn, state, randomAttackEnabled,
+                ref primaryAvailability, ref secondaryAvailability);
+        }
+
+        private static bool HasAnyCycleTargetWork(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled,
+            ref CycleVerbAvailability primaryAvailability,
+            ref CycleVerbAvailability secondaryAvailability)
+        {
             RimKataWeaponCycleState primary = state?.primaryWeaponCycle;
             RimKataWeaponCycleState secondary = state?.secondaryWeaponCycle;
             if (!randomAttackEnabled.HasValue
@@ -3160,18 +3155,33 @@ namespace KRWF.RimKata
                     pawn,
                     state,
                     primary,
-                    randomAttackEnabled)
+                    randomAttackEnabled,
+                    ref primaryAvailability)
                 || HasCycleTargetWork(
                     pawn,
                     state,
                     secondary,
-                    randomAttackEnabled);
+                    randomAttackEnabled,
+                    ref secondaryAvailability);
         }
 
         private static void RefreshDualEngagementState(
             Pawn pawn,
             RimKataPawnCombatState state,
             bool? randomAttackEnabled = null)
+        {
+            CycleVerbAvailability primaryAvailability = default;
+            CycleVerbAvailability secondaryAvailability = default;
+            RefreshDualEngagementState(pawn, state, randomAttackEnabled,
+                ref primaryAvailability, ref secondaryAvailability);
+        }
+
+        private static void RefreshDualEngagementState(
+            Pawn pawn,
+            RimKataPawnCombatState state,
+            bool? randomAttackEnabled,
+            ref CycleVerbAvailability primaryAvailability,
+            ref CycleVerbAvailability secondaryAvailability)
         {
             if (state == null)
             {
@@ -3182,7 +3192,9 @@ namespace KRWF.RimKata
             state.dualEngagementActive = EvaluateCombatContinuity(
                 pawn,
                 state,
-                randomAttackEnabled);
+                randomAttackEnabled,
+                ref primaryAvailability,
+                ref secondaryAvailability);
             if (wasActive && !state.dualEngagementActive)
             {
                 state.ResetCandidateSaturationExpansion(true);
@@ -3211,7 +3223,9 @@ namespace KRWF.RimKata
         private static bool EvaluateCombatContinuity(
             Pawn pawn,
             RimKataPawnCombatState state,
-            bool? randomAttackEnabled = null)
+            bool? randomAttackEnabled,
+            ref CycleVerbAvailability primaryAvailability,
+            ref CycleVerbAvailability secondaryAvailability)
         {
             if (pawn?.Map == null || pawn.InMentalState || state == null)
             {
@@ -3234,7 +3248,8 @@ namespace KRWF.RimKata
                 || state.idleProjectileSearchTriggerPending
                 || state.dedicatedFollowupJobPending
                 || HasDedicatedTargetContinuity(pawn, state)
-                || HasAnyCycleTargetWork(pawn, state, randomAttackEnabled)
+                || HasAnyCycleTargetWork(pawn, state, randomAttackEnabled,
+                    ref primaryAvailability, ref secondaryAvailability)
                 || state.CloseAttackRequestActive;
         }
 
@@ -7379,16 +7394,30 @@ namespace KRWF.RimKata
 
             int primaryEta = Mathf.Max(0, primary.cooldownTicksRemaining) + Mathf.Max(0, primary.warmupTicksRemaining);
             int secondaryEta = Mathf.Max(0, secondary.cooldownTicksRemaining) + Mathf.Max(0, secondary.warmupTicksRemaining);
+            Verb primaryPendingVerb = primary.warmupTicksRemaining < 0
+                ? CombatVerbForAim(pawn, state, primary) : null;
+            Verb secondaryPendingVerb = secondary.warmupTicksRemaining < 0
+                ? CombatVerbForAim(pawn, state, secondary) : null;
+            bool shareAimingFactor = primaryPendingVerb?.CasterPawn == pawn
+                && secondaryPendingVerb?.CasterPawn == pawn;
+            // Both estimates belong to this one pose decision. Read the live
+            // pawn stat once; actual aim start still resolves its current timing.
+            float aimingFactor = shareAimingFactor
+                ? pawn.GetStatValue(StatDefOf.AimingDelayFactor) : 1f;
             if (primary.warmupTicksRemaining < 0)
             {
-                primaryEta += RimKataCombatMath.WarmupTicksForSingleShot(
-                    CombatVerbForAim(pawn, state, primary));
+                primaryEta += shareAimingFactor
+                    ? RimKataCombatMath.WarmupTicksForSingleShotWithAimingFactor(
+                        primaryPendingVerb, aimingFactor)
+                    : RimKataCombatMath.WarmupTicksForSingleShot(primaryPendingVerb);
             }
 
             if (secondary.warmupTicksRemaining < 0)
             {
-                secondaryEta += RimKataCombatMath.WarmupTicksForSingleShot(
-                    CombatVerbForAim(pawn, state, secondary));
+                secondaryEta += shareAimingFactor
+                    ? RimKataCombatMath.WarmupTicksForSingleShotWithAimingFactor(
+                        secondaryPendingVerb, aimingFactor)
+                    : RimKataCombatMath.WarmupTicksForSingleShot(secondaryPendingVerb);
             }
 
             return primaryEta <= secondaryEta ? primary : secondary;

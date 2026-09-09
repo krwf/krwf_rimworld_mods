@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -30,6 +31,8 @@ namespace KRWF.RimKata
             public bool mindNumbed;
             public bool bondKnown;
             public bool bond;
+            public Map publishedMap;
+            public bool qualified;
         }
 
         private sealed class RegisteredUser
@@ -37,12 +40,25 @@ namespace KRWF.RimKata
             public volatile ThingWithComps secondaryWeapon;
         }
 
-        private static readonly ConditionalWeakTable<Pawn, Entry> entries = new ConditionalWeakTable<Pawn, Entry>();
+        private sealed class MapUsers
+        {
+            internal readonly HashSet<Pawn> permittedSources = new HashSet<Pawn>();
+            internal readonly List<Pawn> qualified = new List<Pawn>();
+            internal readonly Dictionary<Pawn, int> qualifiedIndices = new Dictionary<Pawn, int>();
+            internal bool initialized;
+        }
+
+        private static ConditionalWeakTable<Pawn, Entry> entries = new ConditionalWeakTable<Pawn, Entry>();
         private static readonly ConditionalWeakTable<Pawn, Entry>.CreateValueCallback CreateEntry = delegate { return new Entry(); };
-        private static readonly ConditionalWeakTable<Pawn, RegisteredUser>
+        private static ConditionalWeakTable<Pawn, RegisteredUser>
             registeredUsers = new ConditionalWeakTable<Pawn, RegisteredUser>();
         private static readonly ConditionalWeakTable<Pawn, RegisteredUser>.CreateValueCallback
             CreateRegisteredUser = delegate { return new RegisteredUser(); };
+        private static ConditionalWeakTable<Map, MapUsers> mapUsers = new ConditionalWeakTable<Map, MapUsers>();
+        private static readonly ConditionalWeakTable<Map, MapUsers>.CreateValueCallback
+            CreateMapUsers = delegate { return new MapUsers(); };
+        private static readonly Pawn[] NoQualifiedPawns = Array.Empty<Pawn>();
+        private static bool publishedAccessRestrictionsDisabled;
         private static HediffDef mindNumbSerumDef;
         private static HediffDef psychicBondDef;
         private static bool anomalyDefsResolved;
@@ -69,52 +85,166 @@ namespace KRWF.RimKata
             return true;
         }
 
-        // !!! Debug HUD !!!
-        public static bool DebugHasRawAccessSource(Pawn pawn)
+        internal static IReadOnlyList<Pawn> GetQualifiedPawns(Map map)
         {
-            if (pawn == null)
+            return map != null && mapUsers.TryGetValue(map, out MapUsers users)
+                ? users.qualified
+                : (IReadOnlyList<Pawn>)NoQualifiedPawns;
+        }
+
+        internal static bool IsCachedQualifiedPawn(Pawn pawn)
+        {
+            return TryGetEntry(pawn, out Entry entry) && entry.qualified;
+        }
+
+        internal static void InitializeMap(Map map)
+        {
+            if (map == null) return;
+            MapUsers users = mapUsers.GetValue(map, CreateMapUsers);
+            if (users.initialized) return;
+            users.initialized = true;
+            IReadOnlyList<Pawn> pawns = map.mapPawns.AllPawnsSpawned;
+            for (int i = 0; i < pawns.Count; i++) NotifyPawnSpawned(pawns[i]);
+        }
+
+        internal static void NotifyPawnSpawned(Pawn pawn)
+        {
+            if (pawn?.Spawned != true || pawn.Dead) return;
+            bool wasQualified = IsCachedQualifiedPawn(pawn);
+            bool hasSource = HasAnyAccessSource(pawn);
+            PublishAccess(pawn, hasSource);
+            if (wasQualified && IsCachedQualifiedPawn(pawn))
+                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(pawn, true);
+        }
+
+        internal static void NotifyPawnDespawned(Pawn pawn)
+        {
+            if (TryGetEntry(pawn, out Entry entry)) RemovePublishedAccess(pawn, entry);
+        }
+
+        internal static void ForgetMap(Map map)
+        {
+            if (map == null || !mapUsers.TryGetValue(map, out MapUsers users)) return;
+            foreach (Pawn pawn in users.permittedSources)
             {
-                return false;
+                if (TryGetEntry(pawn, out Entry entry) && entry.publishedMap == map)
+                {
+                    entry.publishedMap = null;
+                    entry.qualified = false;
+                }
             }
+            mapUsers.Remove(map);
+        }
 
-            bool gene =
-                ModsConfig.BiotechActive
-                && pawn.genes != null
-                && RimKataDefOf.RimKata_G != null
-                && pawn.genes.HasActiveGene(RimKataDefOf.RimKata_G);
+        internal static void ResetGame()
+        {
+            mapUsers = new ConditionalWeakTable<Map, MapUsers>();
+            entries = new ConditionalWeakTable<Pawn, Entry>();
+            registeredUsers = new ConditionalWeakTable<Pawn, RegisteredUser>();
+            publishedAccessRestrictionsDisabled = RimKataMod.Settings?.accessRestrictionsDisabled == true;
+        }
 
-            bool ampoule =
-                RimKataDefOf.RimKata_A_Effect != null
-                && pawn.health?.hediffSet?.HasHediff(
-                    RimKataDefOf.RimKata_A_Effect) == true;
+        internal static void RefreshFaction(Faction faction)
+        {
+            if (Current.Game == null) return;
+            List<Map> maps = Find.Maps;
+            for (int i = 0; i < maps.Count; i++)
+            {
+                if (!mapUsers.TryGetValue(maps[i], out MapUsers users)) continue;
+                foreach (Pawn pawn in users.permittedSources)
+                {
+                    if (pawn.Faction == faction && TryGetEntry(pawn, out Entry entry))
+                        SetQualified(pawn, entry, users, RimKataEligibility.FactionEffectsEnabled(pawn));
+                }
+            }
+        }
 
-            bool psycast =
-                ModsConfig.RoyaltyActive
-                && RimKataDefOf.RimKata_P != null
-                && pawn.abilities?.GetAbility(
-                    RimKataDefOf.RimKata_P,
-                    true) != null;
+        internal static void RefreshPermissions()
+        {
+            if (Current.Game == null) return;
+            List<Map> maps = Find.Maps;
+            for (int i = 0; i < maps.Count; i++)
+            {
+                if (!mapUsers.TryGetValue(maps[i], out MapUsers users)) continue;
+                foreach (Pawn pawn in users.permittedSources)
+                {
+                    if (!TryGetEntry(pawn, out Entry entry)) continue;
+                    bool wasQualified = entry.qualified;
+                    SetQualified(pawn, entry, users, RimKataEligibility.FactionEffectsEnabled(pawn));
+                    if (wasQualified && entry.qualified)
+                        RimKataDormantHostileMovementRegistry.NotifyAccessChanged(pawn, true);
+                }
+            }
+        }
 
-            bool role =
-                ModsConfig.IdeologyActive
-                && RimKataDefOf.RimKata_I != null
-                && pawn.Ideo?.GetRole(pawn)?.def == RimKataDefOf.RimKata_I;
+        internal static void RefreshSettings()
+        {
+            if (Current.Game == null) return;
+            bool restrictionsDisabled = RimKataMod.Settings?.accessRestrictionsDisabled == true;
+            if (publishedAccessRestrictionsDisabled == restrictionsDisabled)
+            {
+                RefreshPermissions();
+                return;
+            }
+            publishedAccessRestrictionsDisabled = restrictionsDisabled;
+            List<Map> maps = Find.Maps;
+            for (int i = 0; i < maps.Count; i++)
+            {
+                // An override can qualify a previously negative Pawn; only this event needs all Pawns.
+                IReadOnlyList<Pawn> pawns = maps[i].mapPawns.AllPawnsSpawned;
+                for (int j = 0; j < pawns.Count; j++)
+                {
+                    NotifyPawnSpawned(pawns[j]);
+                }
+            }
+        }
 
-            GeneDef dependencyDef =
-                RimKataAnomalyUtility.DependencyGeneDef;
+        private static void PublishAccess(Pawn pawn, bool hasSource)
+        {
+            if (pawn?.Spawned != true || pawn.Dead) return;
+            Entry entry = entries.GetValue(pawn, CreateEntry);
+            Map map = pawn.Map;
+            bool permittedSource = hasSource || RimKataMod.Settings?.accessRestrictionsDisabled == true;
+            if (entry.publishedMap != null && (entry.publishedMap != map || !permittedSource))
+                RemovePublishedAccess(pawn, entry);
+            if (!permittedSource || map == null) return;
+            MapUsers users = mapUsers.GetValue(map, CreateMapUsers);
+            users.permittedSources.Add(pawn);
+            entry.publishedMap = map;
+            SetQualified(pawn, entry, users, RimKataEligibility.FactionEffectsEnabled(pawn));
+        }
 
-            Gene dependencyGene =
-                dependencyDef == null
-                    ? null
-                    : pawn.genes?.GetGene(dependencyDef);
+        private static void SetQualified(Pawn pawn, Entry entry, MapUsers users, bool qualified)
+        {
+            if (entry.qualified == qualified) return;
+            entry.qualified = qualified;
+            if (qualified)
+            {
+                users.qualifiedIndices.Add(pawn, users.qualified.Count);
+                users.qualified.Add(pawn);
+            }
+            else if (users.qualifiedIndices.TryGetValue(pawn, out int index))
+            {
+                int lastIndex = users.qualified.Count - 1;
+                Pawn last = users.qualified[lastIndex];
+                users.qualified[index] = last;
+                users.qualifiedIndices[last] = index;
+                users.qualified.RemoveAt(lastIndex);
+                users.qualifiedIndices.Remove(pawn);
+            }
+            RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
+            RimKataDormantHostileMovementRegistry.NotifyAccessChanged(pawn, qualified);
+        }
 
-            bool dependency = dependencyGene?.Active == true;
-
-            return gene
-                || ampoule
-                || psycast
-                || role
-                || dependency;
+        private static void RemovePublishedAccess(Pawn pawn, Entry entry)
+        {
+            if (entry.publishedMap != null && mapUsers.TryGetValue(entry.publishedMap, out MapUsers users))
+            {
+                SetQualified(pawn, entry, users, false);
+                users.permittedSources.Remove(pawn);
+            }
+            entry.qualified = false;
+            entry.publishedMap = null;
         }
 
         public static bool HasAnyAccessSource(Pawn pawn)
@@ -388,10 +518,13 @@ namespace KRWF.RimKata
         private static ThingWithComps BeginAccessInvalidation(Pawn pawn)
         {
             RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
-            ThingWithComps registeredSecondary = pawn?.Spawned == true
-                ? RimKataSecondaryWeaponRegistry.CurrentRegistry
-                    ?.GetRegistered(pawn)
-                : null;
+            ThingWithComps registeredSecondary = null;
+            if (pawn?.Spawned == true
+                && !TryGetRegisteredSecondaryWeapon(pawn, out registeredSecondary)
+                && IsCachedQualifiedPawn(pawn))
+            {
+                registeredSecondary = RimKataSecondaryWeaponRegistry.CurrentRegistry?.GetRegistered(pawn);
+            }
             RemoveRegisteredUser(pawn);
             return registeredSecondary;
         }
@@ -400,13 +533,19 @@ namespace KRWF.RimKata
             Pawn pawn,
             ThingWithComps registeredSecondary)
         {
-            if (pawn?.Spawned != true || registeredSecondary == null)
+            if (pawn?.Spawned != true)
             {
                 RimKataColonistBarWeaponCache.Refresh(pawn);
                 return;
             }
 
-            if (RimKataEligibility.HasRimKataAccess(pawn))
+            NotifyPawnSpawned(pawn);
+            bool hasAccess = IsCachedQualifiedPawn(pawn);
+            if (registeredSecondary == null)
+            {
+                RimKataColonistBarWeaponCache.Refresh(pawn);
+            }
+            else if (hasAccess)
             {
                 UpdateRegisteredSecondaryWeapon(pawn, registeredSecondary, accessVerified: true);
             }
@@ -475,17 +614,12 @@ namespace KRWF.RimKata
                     CreateRegisteredUser);
                 registeredUser.secondaryWeapon =
                     RimKataSecondaryWeaponRegistry.CurrentRegistry?.Get(pawn);
-                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
-                    pawn,
-                    true);
             }
             else
             {
                 registeredUsers.Remove(pawn);
-                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
-                    pawn,
-                    false);
             }
+            PublishAccess(pawn, hasAccess);
         }
 
         private static void RemoveRegisteredUser(Pawn pawn)
@@ -493,9 +627,6 @@ namespace KRWF.RimKata
             if (pawn != null)
             {
                 registeredUsers.Remove(pawn);
-                RimKataDormantHostileMovementRegistry.NotifyAccessChanged(
-                    pawn,
-                    false);
             }
         }
 
@@ -610,6 +741,15 @@ namespace KRWF.RimKata
             mindNumbSerumDef = DefDatabase<HediffDef>.GetNamedSilentFail("MindNumbSerum");
             psychicBondDef = DefDatabase<HediffDef>.GetNamedSilentFail("PsychicBond");
             anomalyDefsResolved = true;
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn), nameof(Pawn.DeSpawn))]
+    internal static class Patch_PawnDeSpawn_RimKataEligibilityCache
+    {
+        private static void Prefix(Pawn __instance)
+        {
+            RimKataEligibilityCache.NotifyPawnDespawned(__instance);
         }
     }
 

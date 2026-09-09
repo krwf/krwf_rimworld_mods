@@ -38,7 +38,6 @@ namespace KRWF.RimKata
         }
 
         private static SearchGraphics searchGraphics;
-        private static readonly List<Pawn> DebugPawns = new List<Pawn>();
         private static readonly List<IntVec3> SearchCells = new List<IntVec3>();
         private static readonly HashSet<IntVec3> UniqueSearchCells =
             new HashSet<IntVec3>();
@@ -272,7 +271,6 @@ namespace KRWF.RimKata
             previousUsingState.Clear();
             usingPopups.Clear();
             lowerPopups.Clear();
-            DebugPawns.Clear();
         }
 
         public static void SetSearchRangeEnabled(bool enabled)
@@ -362,29 +360,10 @@ namespace KRWF.RimKata
                 return;
             }
 
-            var pawns = map.mapPawns.AllPawnsSpawned;
-            DebugPawns.Clear();
-
+            IReadOnlyList<Pawn> pawns = RimKataEligibilityCache.GetQualifiedPawns(map);
             for (int i = 0; i < pawns.Count; i++)
             {
-                Pawn pawn = pawns[i];
-
-                if (pawn == null || !pawn.Spawned)
-                {
-                    continue;
-                }
-
-                if (!RimKataEligibilityCache.DebugHasRawAccessSource(pawn))
-                {
-                    continue;
-                }
-
-                DebugPawns.Add(pawn);
-            }
-
-            for (int i = 0; i < DebugPawns.Count; i++)
-            {
-                DrawPawnDebug(DebugPawns[i]);
+                DrawPawnDebug(pawns[i]);
             }
         }
 
@@ -820,7 +799,7 @@ namespace KRWF.RimKata
             if (!Prefs.DevMode
                 || pawn == null
                 || !pawn.Spawned
-                || !RimKataEligibilityCache.DebugHasRawAccessSource(pawn))
+                || !RimKataEligibilityCache.IsCachedQualifiedPawn(pawn))
             {
                 yield break;
             }
@@ -831,7 +810,7 @@ namespace KRWF.RimKata
                     .FirstOrDefault(
                         p => p != null
                             && p.Spawned
-                            && RimKataEligibilityCache.DebugHasRawAccessSource(p));
+                            && RimKataEligibilityCache.IsCachedQualifiedPawn(p));
 
             if (firstRimKataPawn != pawn)
             {

@@ -148,6 +148,7 @@ namespace KRWF.RimKata
             RimKataEquipmentUtility.InvalidateCaches();
             if (settingsChanged)
             {
+                RimKataEligibilityCache.RefreshSettings();
                 RimKataWeaponSlotUtility.NormalizeAllSpawnedLoadouts();
             }
 
@@ -164,6 +165,7 @@ namespace KRWF.RimKata
         internal static void ApplyEligibilitySettingsChange()
         {
             RimKataEquipmentUtility.InvalidateCaches();
+            RimKataEligibilityCache.RefreshSettings();
             RimKataWeaponSlotUtility.NormalizeAllSpawnedLoadouts();
             RefreshSettingsSnapshot();
         }
