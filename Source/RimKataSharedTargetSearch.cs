@@ -102,7 +102,6 @@ namespace KRWF.RimKata
     internal sealed class RimKataRingSearchRuntime
     {
         internal Map map;
-        internal RimKataPawnOccupancyGrid occupancy;
         internal readonly RimKataRingTraversal traversal = new RimKataRingTraversal();
         internal readonly List<Pawn> discovered = new List<Pawn>();
         internal readonly HashSet<int> discoveredIds = new HashSet<int>();
@@ -127,7 +126,6 @@ namespace KRWF.RimKata
         internal void Clear()
         {
             ClearRing();
-            occupancy = null;
             map = null;
         }
     }
@@ -345,7 +343,6 @@ namespace KRWF.RimKata
             if (runtime.map == null)
             {
                 runtime.map = pawn.Map;
-                runtime.occupancy = RimKataPawnOccupancyGrid.For(pawn.Map);
             }
             if (runtime.map != pawn.Map)
             {
@@ -808,14 +805,11 @@ namespace KRWF.RimKata
                     continue;
                 }
 
-                // Empty in-map cells consume the geometry quota, but never open a Thing list.
+                // Every in-map cell consumes the same geometry quota.
                 checkedCells++;
                 int cellIndex = map.cellIndices.CellToIndex(x, z);
-                if (runtime.occupancy.HasPawn(cellIndex))
-                {
-                    CollectAutomaticTargetsInCell(
-                        map.thingGrid.ThingsListAtFast(cellIndex), runtime);
-                }
+                CollectAutomaticTargetsInCell(
+                    map.thingGrid.ThingsListAtFast(cellIndex), runtime);
                 if (recordSearchCells)
                 {
                     RimKataDebugHUD.RecordActualSearchCell(map, new IntVec3(x, 0, z));
