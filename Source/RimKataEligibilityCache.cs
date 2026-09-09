@@ -185,15 +185,20 @@ namespace KRWF.RimKata
 
         public static void NotifySecondaryWeaponChanged(
             Pawn pawn,
-            ThingWithComps secondaryWeapon)
+            ThingWithComps secondaryWeapon,
+            bool accessVerified = false,
+            bool slotVerified = false)
         {
             RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
-            UpdateRegisteredSecondaryWeapon(pawn, secondaryWeapon);
+            UpdateRegisteredSecondaryWeapon(pawn, secondaryWeapon, accessVerified, slotVerified);
         }
 
         internal static void UpdateRegisteredSecondaryWeapon(
             Pawn pawn,
-            ThingWithComps secondaryWeapon)
+            ThingWithComps secondaryWeapon,
+            bool accessVerified = false,
+            bool slotVerified = false,
+            ThingWithComps heldPairPrimary = null)
         {
             if (pawn != null
                 && registeredUsers.TryGetValue(
@@ -202,6 +207,9 @@ namespace KRWF.RimKata
             {
                 registeredUser.secondaryWeapon = secondaryWeapon;
             }
+
+            RimKataColonistBarWeaponCache.Set(
+                pawn, secondaryWeapon, accessVerified, slotVerified, heldPairPrimary);
         }
 
         public static bool HasActiveDependencyGene(Pawn pawn)
@@ -394,12 +402,13 @@ namespace KRWF.RimKata
         {
             if (pawn?.Spawned != true || registeredSecondary == null)
             {
+                RimKataColonistBarWeaponCache.Refresh(pawn);
                 return;
             }
 
             if (RimKataEligibility.HasRimKataAccess(pawn))
             {
-                UpdateRegisteredSecondaryWeapon(pawn, registeredSecondary);
+                UpdateRegisteredSecondaryWeapon(pawn, registeredSecondary, accessVerified: true);
             }
             else
             {

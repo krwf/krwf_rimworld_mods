@@ -8,6 +8,137 @@ using Verse;
 
 namespace KRWF.RimKata
 {
+    // Registry/equipment/access events prepare the pair. GUI code only reads it.
+    internal static class RimKataColonistBarWeaponCache
+    {
+        private sealed class WeaponPair
+        {
+            internal ThingWithComps primary;
+            internal ThingWithComps secondary;
+        }
+
+        private static readonly Dictionary<Pawn, WeaponPair> registeredPairs =
+            new Dictionary<Pawn, WeaponPair>();
+        private static readonly Dictionary<Thing, ThingWithComps> displayedWeapons =
+            new Dictionary<Thing, ThingWithComps>();
+
+        internal static ThingWithComps SecondaryFor(Thing primary)
+        {
+            return primary != null
+                && displayedWeapons.TryGetValue(primary, out ThingWithComps secondary)
+                    ? secondary
+                    : null;
+        }
+
+        internal static void Set(Pawn pawn, ThingWithComps secondary,
+            bool accessVerified = false, bool slotVerified = false,
+            ThingWithComps heldPairPrimary = null)
+        {
+            if (pawn == null) return;
+            if (!registeredPairs.TryGetValue(pawn, out WeaponPair pair))
+            {
+                if (secondary == null) return;
+                pair = new WeaponPair();
+                registeredPairs.Add(pawn, pair);
+            }
+
+            if (secondary == null)
+            {
+                Hide(pair);
+                registeredPairs.Remove(pawn);
+                return;
+            }
+
+            pair.secondary = secondary;
+            Refresh(pawn, pair, accessVerified, slotVerified, heldPairPrimary);
+        }
+
+        internal static void Refresh(Pawn pawn)
+        {
+            if (pawn != null && registeredPairs.TryGetValue(pawn, out WeaponPair pair))
+                Refresh(pawn, pair);
+        }
+
+        internal static void RefreshFaction(Faction faction)
+        {
+            foreach (KeyValuePair<Pawn, WeaponPair> entry in registeredPairs)
+            {
+                if (entry.Key.Faction == faction) Refresh(entry.Key, entry.Value);
+            }
+        }
+
+        internal static void RefreshAll()
+        {
+            foreach (KeyValuePair<Pawn, WeaponPair> entry in registeredPairs)
+                Refresh(entry.Key, entry.Value);
+        }
+
+        private static void Refresh(Pawn pawn, WeaponPair pair,
+            bool accessVerified = false, bool slotVerified = false,
+            ThingWithComps heldPairPrimary = null)
+        {
+            Hide(pair);
+            ThingWithComps primary = heldPairPrimary ?? pawn.equipment?.Primary;
+            ThingWithComps secondary = pair.secondary;
+            // Reuse only facts verified by this event, never store validation flags.
+            if (primary == null || secondary == null
+                || (heldPairPrimary == null && (secondary.Destroyed
+                    || secondary == primary
+                    || !pawn.equipment.AllEquipmentListForReading.Contains(secondary)))
+                || (!slotVerified && !RimKataVisualUtility.IsSecondaryUsable(pawn, primary, secondary))
+                || (!accessVerified && !RimKataEligibility.HasRimKataAccess(pawn)))
+            {
+                return;
+            }
+
+            pair.primary = primary;
+            displayedWeapons[primary] = secondary;
+        }
+
+        private static void Hide(WeaponPair pair)
+        {
+            if (pair.primary == null) return;
+            displayedWeapons.Remove(pair.primary);
+            pair.primary = null;
+        }
+
+        internal static void Reset()
+        {
+            displayedWeapons.Clear();
+            registeredPairs.Clear();
+        }
+    }
+
+    [HarmonyPatch(typeof(Current), nameof(Current.Game), MethodType.Setter)]
+    internal static class Patch_CurrentGame_RimKataColonistBarWeapons
+    {
+        private static void Prefix(Game __0)
+        {
+            if (!ReferenceEquals(Current.Game, __0)) RimKataColonistBarWeaponCache.Reset();
+        }
+    }
+
+    [HarmonyPatch(typeof(Pawn), nameof(Pawn.SetFaction))]
+    internal static class Patch_PawnSetFaction_RimKataColonistBarWeapons
+    {
+        private static void Postfix(Pawn __instance)
+            => RimKataColonistBarWeaponCache.Refresh(__instance);
+    }
+
+    [HarmonyPatch(typeof(Faction), nameof(Faction.Notify_RelationKindChanged))]
+    internal static class Patch_FactionRelation_RimKataColonistBarWeapons
+    {
+        private static void Postfix(Faction __instance, Faction other)
+        {
+            RimKataSettings settings = RimKataMod.Settings;
+            if (other == Faction.OfPlayer && settings != null
+                && settings.enableFriendlyPawnEffects != settings.enableHostilePawnEffects)
+            {
+                RimKataColonistBarWeaponCache.RefreshFaction(__instance);
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(ColonistBar), nameof(ColonistBar.ColonistBarOnGUI))]
     public static class Patch_ColonistBar_RimKataDualWeaponIcons
     {
@@ -122,23 +253,7 @@ namespace KRWF.RimKata
             float scale,
             bool grayscale)
         {
-            Pawn pawn = RimKataVisualUtility.FindPawnOwner(primary);
-            ThingWithComps primaryWeapon = primary as ThingWithComps;
-            ThingWithComps secondary = null;
-            if (pawn?.equipment?.Primary == primaryWeapon
-                && RimKataVisualUtility.TryGetUiLoadout(
-                    pawn,
-                    out ThingWithComps cachedPrimary,
-                    out ThingWithComps rawSecondary)
-                && cachedPrimary == primaryWeapon
-                && RimKataVisualUtility.IsSecondaryUsable(
-                    pawn,
-                    cachedPrimary,
-                    rawSecondary))
-            {
-                secondary = rawSecondary;
-            }
-
+            ThingWithComps secondary = RimKataColonistBarWeaponCache.SecondaryFor(primary);
             if (secondary != null)
             {
                 DrawRotatedIcon(

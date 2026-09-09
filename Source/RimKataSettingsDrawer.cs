@@ -189,9 +189,16 @@ namespace KRWF.RimKata
                 Find.WindowStack.Add(new Dialog_RimKataCombatFeatures(settings));
             }
             y += RowHeight;
+            bool previousFriendlyEffects = settings.enableFriendlyPawnEffects;
+            bool previousHostileEffects = settings.enableHostilePawnEffects;
             Widgets.CheckboxLabeled(new Rect(0f, y, viewRect.width, RowHeight), "KRWF_RimKata_EnableFriendlyPawnEffects".Translate(), ref settings.enableFriendlyPawnEffects);
             y += RowHeight;
             Widgets.CheckboxLabeled(new Rect(0f, y, viewRect.width, RowHeight), "KRWF_RimKata_EnableHostilePawnEffects".Translate(), ref settings.enableHostilePawnEffects);
+            if (previousFriendlyEffects != settings.enableFriendlyPawnEffects
+                || previousHostileEffects != settings.enableHostilePawnEffects)
+            {
+                RimKataColonistBarWeaponCache.RefreshAll();
+            }
             y += RowHeight + 8f;
             Widgets.DrawLineHorizontal(0f, y, viewRect.width);
             y += 5f;

@@ -119,6 +119,7 @@ namespace KRWF.RimKata
                 Pawn pawn = pawns[i];
                 if (pawn?.Spawned != true)
                 {
+                    RimKataColonistBarWeaponCache.Set(pawn, weapons[i]);
                     continue;
                 }
 
@@ -132,7 +133,9 @@ namespace KRWF.RimKata
                 {
                     RimKataEligibilityCache.NotifySecondaryWeaponChanged(
                         pawn,
-                        secondary);
+                        secondary,
+                        accessVerified: true,
+                        slotVerified: true);
                 }
             }
         }
@@ -1215,6 +1218,7 @@ namespace KRWF.RimKata
             if (pawn?.Spawned != true
                 || changedEquipment == null)
             {
+                RimKataColonistBarWeaponCache.Refresh(pawn);
                 return;
             }
 
@@ -1222,6 +1226,7 @@ namespace KRWF.RimKata
                 RimKataDualWeaponController.InvalidateWeaponBindings(pawn);
             if (!RimKataEligibilityCache.IsRegisteredUser(pawn))
             {
+                RimKataColonistBarWeaponCache.Refresh(pawn);
                 return;
             }
 
@@ -1256,7 +1261,8 @@ namespace KRWF.RimKata
             {
                 RimKataEligibilityCache.UpdateRegisteredSecondaryWeapon(
                     pawn,
-                    registeredSecondary);
+                    registeredSecondary,
+                    heldPairPrimary: primary);
             }
 
             NotifyLoadoutChanged(pawn, state);
