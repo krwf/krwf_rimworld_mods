@@ -1085,7 +1085,12 @@ namespace KRWF.RimKata
         private static bool IsHostileBufferTarget(Pawn pawn, Pawn target)
         {
             return target != pawn && !target.Destroyed && target.Spawned
-                && target.Map == pawn.Map && target.HostileTo(pawn);
+                && target.Map == pawn.Map
+                // Do not spend hostility work or a buffered draw on an already
+                // incapacitated target. Other admission checks stay in the buffer.
+                && !target.Dead
+                && !RimKataTargeting.IsIncapacitatedTarget(target)
+                && target.HostileTo(pawn);
         }
 
         private static void AddBufferedIdentity(

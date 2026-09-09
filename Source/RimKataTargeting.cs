@@ -33,8 +33,8 @@ namespace KRWF.RimKata
         public static bool IsCombatCapableCrawling(Pawn pawn)
         {
             return pawn?.Downed == true
-                && pawn.Crawling
-                && pawn.CanAttackWhileCrawling;
+                && pawn.CanAttackWhileCrawling
+                && pawn.Crawling;
         }
 
         public static bool IsIncapacitatedTarget(Pawn pawn)
@@ -49,10 +49,10 @@ namespace KRWF.RimKata
         {
             return pawn != null
                 && !pawn.Dead
-                && !pawn.IsPsychologicallyInvisible()
                 && (!pawn.Downed
-                    || IsCombatCapableCrawling(pawn)
-                    || allowIncapacitated);
+                    || allowIncapacitated
+                    || IsCombatCapableCrawling(pawn))
+                && !pawn.IsPsychologicallyInvisible();
         }
 
         public static float MaximumAutomaticCandidateCellRadius(Pawn pawn)
