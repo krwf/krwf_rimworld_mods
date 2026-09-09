@@ -690,7 +690,11 @@ namespace KRWF.RimKata
                 return;
             if (RimKataDualWeaponController.ShouldConvertVanillaOpeningToSingleShot(__instance))
             {
-                RimKataPreparedWeaponData.Bind(__instance);
+                if (__instance.verbProps is not RimKataPreparedVerbProperties prepared
+                    || prepared.ConfigurationRevision != RimKataEquipmentUtility.WeaponConfigurationRevision)
+                {
+                    RimKataPreparedWeaponData.Bind(__instance);
+                }
                 __state.convertedOpening = true;
             }
         }

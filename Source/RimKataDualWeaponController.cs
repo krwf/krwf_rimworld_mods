@@ -2296,6 +2296,9 @@ namespace KRWF.RimKata
                         verb,
                         castTarget)))
             {
+                // Excluded native attacks must not retain a former conversion.
+                // Eligible attacks keep their already prepared data below.
+                RimKataPreparedWeaponData.Restore(verb);
                 return;
             }
 
@@ -7468,10 +7471,6 @@ namespace KRWF.RimKata
                 __result = false;
                 return false;
             }
-
-            // Native-only attacks must not inherit a former owner's conversion.
-            // A qualified entry below binds the prepared data again as needed.
-            RimKataPreparedWeaponData.Restore(__instance);
 
             __state = RimKataDualWeaponController.PrepareVanillaOpening(
                 __instance?.CasterPawn,
