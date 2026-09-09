@@ -16,6 +16,11 @@ namespace KRWF.RimKata
         public IntVec3 origin = IntVec3.Invalid;
         public int lastAdvancedTick = -1;
         internal RimKataRingSearchRuntime ringRuntime;
+        internal readonly HashSet<int> neutralPawnIds = new HashSet<int>();
+        private Map neutralMap;
+        private RimKataNeutralTargetInvalidation.Version neutralVersion;
+        private int neutralMapRevision;
+        private int neutralGlobalRevision;
 
         public bool KeepsCombatAlive => scanActive || ringRuntime?.HasPending == true;
 
@@ -39,6 +44,7 @@ namespace KRWF.RimKata
                     maximumCandidateCellRadius);
                 lastAdvancedTick = -1;
                 ClearRingRuntime();
+                ClearNeutralTargets();
                 if (scanActive)
                 {
                     sessionActive = true;
@@ -52,6 +58,7 @@ namespace KRWF.RimKata
         public void Reset()
         {
             ClearRingRuntime();
+            ClearNeutralTargets();
             sessionActive = false;
             scanActive = false;
             maximumRing = 0;
@@ -64,6 +71,36 @@ namespace KRWF.RimKata
         internal void ClearRingRuntime()
         {
             ringRuntime?.Clear();
+        }
+
+        internal void RefreshNeutralTargets(Map map)
+        {
+            if (neutralMap != map || neutralVersion == null)
+            {
+                neutralMap = map;
+                neutralVersion = RimKataNeutralTargetInvalidation.ForMap(map);
+                neutralPawnIds.Clear();
+                ringRuntime?.discoveredIds.Clear();
+                neutralMapRevision = neutralVersion.revision;
+                neutralGlobalRevision = RimKataNeutralTargetInvalidation.GlobalRevision;
+            }
+            else if (neutralMapRevision != neutralVersion.revision
+                || neutralGlobalRevision != RimKataNeutralTargetInvalidation.GlobalRevision)
+            {
+                neutralPawnIds.Clear();
+                // A formerly neutral pawn must not remain hidden by this scan's
+                // seen-ID set. Candidates, pending draws and geometry stay intact.
+                ringRuntime?.discoveredIds.Clear();
+                neutralMapRevision = neutralVersion.revision;
+                neutralGlobalRevision = RimKataNeutralTargetInvalidation.GlobalRevision;
+            }
+        }
+
+        private void ClearNeutralTargets()
+        {
+            neutralPawnIds.Clear();
+            neutralMap = null;
+            neutralVersion = null;
         }
     }
 
@@ -376,6 +413,7 @@ namespace KRWF.RimKata
                 return false;
             }
             search.lastAdvancedTick = currentTick;
+            search.RefreshNeutralTargets(pawn.Map);
 
             if (search.scanActive)
             {
@@ -553,6 +591,7 @@ namespace KRWF.RimKata
             {
                 return false;
             }
+            search.RefreshNeutralTargets(pawn.Map);
             RimKataRingSearchRuntime runtime = search.ringRuntime;
             if (runtime == null)
             {
@@ -569,7 +608,7 @@ namespace KRWF.RimKata
             secondaryEligible &= !combatState.secondaryWeaponCycle.ContainsAutomaticCandidate(target)
                 && !runtime.secondaryPendingIds.Contains(target.thingIDNumber);
             if ((!primaryEligible && !secondaryEligible)
-                || !IsHostileBufferTarget(pawn, target))
+                || !IsHostileBufferTarget(pawn, target, search))
             {
                 return false;
             }
@@ -1024,6 +1063,7 @@ namespace KRWF.RimKata
             for (int i = 0; i < things.Count; i++)
             {
                 if (things[i] is Pawn candidate
+                    && !combatState.sharedTargetSearch.neutralPawnIds.Contains(candidate.thingIDNumber)
                     && runtime.discoveredIds.Add(candidate.thingIDNumber)
                     && ((primaryOpen
                             && !combatState.primaryWeaponCycle.ContainsAutomaticCandidate(candidate)
@@ -1070,7 +1110,8 @@ namespace KRWF.RimKata
                     && distanceSquared <= secondarySlot.configuredRadiusSquared
                     && !secondarySlot.cycle.ContainsAutomaticCandidate(target)
                     && !runtime.secondaryPendingIds.Contains(target.thingIDNumber);
-                if ((!primary && !secondary) || !IsHostileBufferTarget(pawn, target))
+                if ((!primary && !secondary)
+                    || !IsHostileBufferTarget(pawn, target, combatState.sharedTargetSearch))
                 {
                     continue;
                 }
@@ -1082,15 +1123,48 @@ namespace KRWF.RimKata
             }
         }
 
-        private static bool IsHostileBufferTarget(Pawn pawn, Pawn target)
+        private static bool IsHostileBufferTarget(
+            Pawn pawn, Pawn target, RimKataSharedTargetSearchState search)
         {
-            return target != pawn && !target.Destroyed && target.Spawned
-                && target.Map == pawn.Map
-                // Do not spend hostility work or a buffered draw on an already
-                // incapacitated target. Other admission checks stay in the buffer.
-                && !target.Dead
-                && !RimKataTargeting.IsIncapacitatedTarget(target)
-                && target.HostileTo(pawn);
+            if (target == pawn || target.Destroyed || !target.Spawned
+                || target.Map != pawn.Map || target.Dead
+                || RimKataTargeting.IsIncapacitatedTarget(target)
+                || RimKataTargeting.IsSleepingOrDormant(target))
+            {
+                return false;
+            }
+            if (target.HostileTo(pawn))
+            {
+                return true;
+            }
+
+            // Only a completed nonhostile verdict enters this temporary list.
+            // Some native hostility rules change without a target-cache event.
+            if (CanRememberNonhostile(pawn, target))
+            {
+                search.neutralPawnIds.Add(target.thingIDNumber);
+            }
+            return false;
+        }
+
+        private static bool CanRememberNonhostile(Pawn pawn, Pawn target)
+        {
+            RaceProperties pawnRace = pawn.RaceProps;
+            RaceProperties targetRace = target.RaceProps;
+            // Predator distance and a colony roamer's recent-combat timeout
+            // can change hostility while the same jobs/relations remain active.
+            if (pawnRace.predator || targetRace.predator
+                || (pawnRace.roamMtbDays.HasValue && pawn.Faction == Faction.OfPlayer)
+                || (targetRace.roamMtbDays.HasValue && target.Faction == Faction.OfPlayer))
+            {
+                return false;
+            }
+            // Releasing a herd animal changes shambler hostility without a
+            // target-cache notification. Ordinary pawn pairs skip this getter.
+            return !(pawnRace.Animal && pawnRace.herdAnimal
+                    && pawn.Faction != null && target.IsShambler)
+                && !(targetRace.Animal && targetRace.herdAnimal
+                    && target.Faction != null && pawn.IsShambler);
         }
 
         private static void AddBufferedIdentity(

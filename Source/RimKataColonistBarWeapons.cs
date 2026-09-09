@@ -118,6 +118,7 @@ namespace KRWF.RimKata
             {
                 RimKataColonistBarWeaponCache.Reset();
                 RimKataEligibilityCache.ResetGame();
+                RimKataNeutralTargetInvalidation.ResetGame();
             }
         }
     }
@@ -127,6 +128,7 @@ namespace KRWF.RimKata
     {
         private static void Postfix(Pawn __instance)
         {
+            RimKataNeutralTargetInvalidation.Invalidate(__instance.Map);
             RimKataEligibilityCache.NotifyPawnSpawned(__instance);
             RimKataColonistBarWeaponCache.Refresh(__instance);
         }
@@ -137,6 +139,7 @@ namespace KRWF.RimKata
     {
         private static void Postfix(Faction __instance, Faction other)
         {
+            RimKataNeutralTargetInvalidation.InvalidateAll();
             RimKataSettings settings = RimKataMod.Settings;
             if (other == Faction.OfPlayer && settings != null
                 && settings.enableFriendlyPawnEffects != settings.enableHostilePawnEffects)
