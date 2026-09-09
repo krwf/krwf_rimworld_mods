@@ -118,6 +118,7 @@ namespace KRWF.RimKata
             enabledArmorDefNames = null;
             enabledOneHandGeneratableWeapons = null;
             RimKataGripUtility.InvalidateCache();
+            RimKataPreparedWeaponData.RefreshDefinitions();
         }
 
         private static void EnsureCaches()

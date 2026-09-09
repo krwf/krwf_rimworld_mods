@@ -293,9 +293,11 @@ namespace KRWF.RimKata
             }
 
             // Vanilla burst intervals are separate from cooldown stat modifiers.
-            float burstSpacingTicks = originalBurstCount > 1
-                ? (originalBurstCount - 1) * Mathf.Max(0, verb.TicksBetweenBurstShots)
-                : 0f;
+            float burstSpacingTicks = verb.verbProps is RimKataPreparedVerbProperties prepared
+                ? prepared.TotalBurstSpacingTicks
+                : originalBurstCount > 1
+                    ? (originalBurstCount - 1) * RimKataPreparedWeaponData.GetOriginalBurstSpacing(verb)
+                    : 0f;
             float ticks = (cooldownTicks + burstSpacingTicks) / originalBurstCount;
             if (originalBurstCount <= 1)
             {
@@ -316,25 +318,38 @@ namespace KRWF.RimKata
         private static float AdjustedWarmupTicks(Verb verb)
         {
             float aimingFactor = verb.CasterPawn?.GetStatValue(StatDefOf.AimingDelayFactor) ?? 1f;
-            float warmupSeconds = Mathf.Max(0f, verb.WarmupTime);
+            // The native Verb already carries the converted warmup. Keep the
+            // original fixed input here so the established cycle rounding is exact.
+            float warmupSeconds = verb.verbProps is RimKataPreparedVerbProperties prepared
+                ? prepared.OriginalWarmupSeconds
+                : Mathf.Max(0f, verb.WarmupTime);
             return Mathf.Max(0f, warmupSeconds * aimingFactor * 60f);
         }
 
         private static int BurstCountForSingleShotTiming(Verb verb)
         {
+            if (verb?.verbProps is RimKataPreparedVerbProperties prepared)
+            {
+                return prepared.TimingBurstCount;
+            }
+
             if (!UsesConvertedSingleShotTiming(verb))
             {
                 return 1;
             }
 
-            // Keep runtime Verb overrides authoritative instead of reading the def field.
-            return Mathf.Max(1, verb.BurstShotCount);
+            return RimKataPreparedWeaponData.GetOriginalBurstCount(verb);
         }
 
         private static int BurstCountForSingleShotTiming(
             Verb verb,
             int originalBurstCount)
         {
+            if (verb?.verbProps is RimKataPreparedVerbProperties prepared)
+            {
+                return prepared.TimingBurstCount;
+            }
+
             return UsesConvertedSingleShotTiming(verb)
                 ? Mathf.Max(1, originalBurstCount)
                 : 1;

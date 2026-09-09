@@ -14,6 +14,7 @@ namespace KRWF.RimKata
     {
         static RimKataBootstrap()
         {
+            RimKataPreparedWeaponData.RefreshDefinitions();
             Harmony harmony;
             try
             {

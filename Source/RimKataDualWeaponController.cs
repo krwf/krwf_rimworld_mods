@@ -56,6 +56,7 @@ namespace KRWF.RimKata
         private int lastTimerTick = -1;
         private int responseCooldownAppliedTick = -1;
         internal Verb boundVerb;
+        internal RimKataNativeAttack nativeAttack;
         internal bool ordinaryWeaponEnabled;
         internal int lastDrivenTick = -1;
 
@@ -218,6 +219,12 @@ namespace KRWF.RimKata
             responseCooldownAppliedTick = Find.TickManager?.TicksGame ?? -1;
         }
 
+        internal void StampNativeActionTick()
+        {
+            lastTimerTick = Find.TickManager?.TicksGame ?? -1;
+            lastDrivenTick = lastTimerTick;
+        }
+
         public void TickTimers()
         {
             int currentTick = Find.TickManager?.TicksGame ?? -1;
@@ -266,6 +273,7 @@ namespace KRWF.RimKata
 
         public void ClearPlan(bool resetWarmup = true)
         {
+            nativeAttack?.Cancel();
             plannedTarget = null;
             plannedInterception = false;
             plannedCloseAttack = false;
@@ -394,6 +402,9 @@ namespace KRWF.RimKata
 
         public void Reset()
         {
+            nativeAttack?.ForgetBinding();
+            if (nativeAttack?.Executing != true)
+                RimKataPreparedWeaponData.Restore(boundVerb);
             weapon = null;
             boundVerb = null;
             ordinaryWeaponEnabled = false;
@@ -486,17 +497,12 @@ namespace KRWF.RimKata
     public struct RimKataVanillaOpeningAttempt
     {
         public bool prepared;
-        public bool singleShotTimingPrepared;
-        public int originalBurstCount;
         public ThingWithComps weapon;
         public Thing target;
-        public Thing singleShotTarget;
     }
 
     public static class RimKataDualWeaponController
     {
-        [ThreadStatic] private static Pawn activePhysicalMeleePawn;
-        [ThreadStatic] private static RimKataWeaponCycleState activePhysicalMeleeCycle;
         [ThreadStatic] private static Verb pendingVanillaOpeningVerb;
 
         private readonly struct CombatTickPermissions
@@ -993,27 +999,17 @@ namespace KRWF.RimKata
                     ? state.secondaryWeaponCycle
                     : null;
             Thing firstPromotionTarget = null;
-            bool firstActionAttempted = false;
             if (firstCycle != null)
             {
                 TickWeaponCycle(
                     pawn, state, firstCycle, assignedTarget, playerForced,
                     killIncappedTarget, closeCombatContext, blockedByStance,
-                    out firstPromotionTarget, out firstActionAttempted, allowAutomaticRangedFire,
+                    out firstPromotionTarget, allowAutomaticRangedFire,
                     randomAttackEnabled, currentTick, weaponScopedFocusJobWeapon,
                     ref (firstCycle == state.primaryWeaponCycle
                         ? ref primaryAvailability : ref secondaryAvailability));
             }
 
-            // Damage/response callbacks can replace equipment or the current Job.
-            // Do not carry the first slot's command context into a different Job.
-            if (firstActionAttempted && (pawn.CurJob != drivenJob
-                || pawn.Dead || pawn.Downed || !pawn.Spawned || pawn.InMentalState))
-            {
-                RefreshDualEngagementState(pawn, state, randomAttackEnabled);
-                UpdateBodyAimStance(pawn, state);
-                return;
-            }
             if (state.weaponBindingsDirty
                 || state.weaponConfigurationRevision
                     != RimKataEquipmentUtility.WeaponConfigurationRevision)
@@ -1022,7 +1018,7 @@ namespace KRWF.RimKata
                 primaryAvailability = default;
                 secondaryAvailability = default;
             }
-            // A surviving secondary may have become the primary during the shot.
+            // Slot ownership can change when bindings are refreshed.
             RimKataWeaponCycleState secondCycle = state.primaryWeaponCycle != firstCycle
                 && state.primaryWeaponCycle.weapon != null
                     ? state.primaryWeaponCycle
@@ -1030,36 +1026,13 @@ namespace KRWF.RimKata
                         && state.secondaryWeaponCycle.weapon != null
                             ? state.secondaryWeaponCycle
                             : null;
-            if (firstActionAttempted
-                && (secondCycle != null || firstPromotionTarget != null))
-            {
-                primaryAvailability = default;
-                secondaryAvailability = default;
-                if (MovementBlocksFire(pawn, state) || ShouldPauseFireForDodge(pawn))
-                {
-                    RefreshDualEngagementState(pawn, state, randomAttackEnabled);
-                    UpdateBodyAimStance(pawn, state);
-                    return;
-                }
-                if (secondCycle != null)
-                {
-                    allowAutomaticRangedFire = new CombatTickPermissions(pawn, drivenJob)
-                        .allowAutomaticRangedFire;
-                }
-                if (!closeCombatContext && drivenJob?.def == RimKataDefOf.RimKata_Attack)
-                {
-                    assignedTarget = drivenJob.targetA.Thing;
-                    playerForced = drivenJob.playerForced;
-                    killIncappedTarget = drivenJob.killIncappedTarget;
-                }
-            }
             Thing secondPromotionTarget = null;
             if (secondCycle != null)
             {
                 TickWeaponCycle(
                     pawn, state, secondCycle, assignedTarget, playerForced,
                     killIncappedTarget, closeCombatContext, StanceBlocksRimKata(pawn),
-                    out secondPromotionTarget, out bool _, allowAutomaticRangedFire,
+                    out secondPromotionTarget, allowAutomaticRangedFire,
                     randomAttackEnabled, currentTick, weaponScopedFocusJobWeapon,
                     ref (secondCycle == state.primaryWeaponCycle
                         ? ref primaryAvailability : ref secondaryAvailability));
@@ -2307,7 +2280,7 @@ namespace KRWF.RimKata
             return attempt;
         }
 
-        internal static void PrepareVanillaSingleShotTiming(
+        internal static void PrepareVanillaShotData(
             Pawn pawn,
             Verb verb,
             LocalTargetInfo castTarget,
@@ -2326,35 +2299,9 @@ namespace KRWF.RimKata
                 return;
             }
 
-            int originalBurstCount = Mathf.Max(1, verb.BurstShotCount);
-            if (originalBurstCount <= 1)
-            {
-                return;
-            }
-
-            attempt.singleShotTimingPrepared = true;
-            attempt.originalBurstCount = originalBurstCount;
-            attempt.singleShotTarget = castTarget.Thing;
+            RimKataNativeAttack.Bind(verb);
         }
 
-        internal static void ApplyVanillaSingleShotWarmup(
-            Pawn pawn,
-            Verb verb,
-            RimKataVanillaOpeningAttempt attempt)
-        {
-            if (!attempt.singleShotTimingPrepared
-                || pawn?.stances?.curStance is not Stance_Warmup warmup
-                || warmup.verb != verb
-                || !warmup.focusTarg.HasThing
-                || warmup.focusTarg.Thing != attempt.singleShotTarget)
-            {
-                return;
-            }
-
-            warmup.ticksLeft = RimKataCombatMath.WarmupTicksForSingleShot(
-                verb,
-                attempt.originalBurstCount);
-        }
 
         public static void CommitVanillaOpening(
             Pawn pawn,
@@ -2537,7 +2484,7 @@ namespace KRWF.RimKata
                         pawn,
                         verb,
                         verb.CurrentTarget))
-                && verb.BurstShotCount > 1;
+                && RimKataPreparedWeaponData.GetOriginalBurstCount(verb) > 1;
         }
 
         private static bool IsQualifiedNativeSingleShot(
@@ -4319,9 +4266,8 @@ namespace KRWF.RimKata
                 return false;
             }
 
-            if (activePhysicalMeleePawn == pawn
-                && activePhysicalMeleeCycle != null
-                && RimKataFireContext.ActiveVerb == verb)
+            if (RimKataFireContext.ActiveVerb == verb
+                && RimKataNativeAttack.OwnsActiveMelee(verb))
             {
                 return true;
             }
@@ -5655,8 +5601,12 @@ namespace KRWF.RimKata
                 : RimKataWeaponSlotUtility.CombatVerb(pawn, cycle.weapon);
             if (previousVerb != cycle.boundVerb)
             {
+                cycle.nativeAttack?.Cancel();
+                if (cycle.nativeAttack?.Executing != true)
+                    RimKataPreparedWeaponData.Restore(previousVerb);
                 cycle.plannedActionVerb = null;
             }
+            RimKataNativeAttack.Bind(cycle.boundVerb);
         }
 
         private static Verb BoundCombatVerb(Pawn pawn, RimKataWeaponCycleState cycle)
@@ -5820,7 +5770,6 @@ namespace KRWF.RimKata
             bool closeCombatContext,
             bool blockedByStance,
             out Thing promotedAutomaticTarget,
-            out bool actionAttempted,
             bool allowAutomaticRangedFire,
             bool randomAttackEnabled,
             int currentTick,
@@ -5828,7 +5777,6 @@ namespace KRWF.RimKata
             ref CycleVerbAvailability availability)
         {
             promotedAutomaticTarget = null;
-            actionAttempted = false;
             if (weaponScopedFocusJobWeapon != null
                 && cycle.weapon != weaponScopedFocusJobWeapon)
             {
@@ -5841,6 +5789,10 @@ namespace KRWF.RimKata
                 return;
             }
             cycle.lastDrivenTick = currentTick;
+            if (cycle.nativeAttack?.Pending == true)
+            {
+                return;
+            }
             if (cycle.ResponseCooldownAppliedThisTick)
             {
                 // A response retains its target reference, but offensive preparation
@@ -6170,9 +6122,6 @@ namespace KRWF.RimKata
                 return;
             }
 
-            bool physicalMeleeAction = UsesPhysicalMeleeAction(
-                verb,
-                closeCombatContext);
             Verb actionVerb = cycle.plannedActionVerb
                 ?? ResolveCycleActionVerb(
                     pawn,
@@ -6211,73 +6160,83 @@ namespace KRWF.RimKata
                     actionVerb,
                     target);
             }
-            ThingWithComps firedWeapon = cycle.weapon;
-            actionAttempted = true;
-            bool acted;
-            Projectile interceptedProjectile = cycle.plannedTarget as Projectile;
-            if (actionVerb.IsMeleeAttack)
-            {
-                if (physicalMeleeAction)
-                {
-                    Pawn previousPawn = activePhysicalMeleePawn;
-                    RimKataWeaponCycleState previousCycle = activePhysicalMeleeCycle;
-                    activePhysicalMeleePawn = pawn;
-                    activePhysicalMeleeCycle = cycle;
-                    try
-                    {
-                        acted = RimKataVerbUtility.FireSingleShot(
-                            actionVerb,
-                            target,
-                            false,
-                            false);
-                    }
-                    finally
-                    {
-                        activePhysicalMeleePawn = previousPawn;
-                        activePhysicalMeleeCycle = previousCycle;
-                    }
-                }
-                else
-                {
-                    acted = RimKataVerbUtility.FireSingleShot(
-                        actionVerb,
-                        target,
-                        false,
-                        false);
-                }
-            }
-            else if (cycle.plannedInterception)
-            {
-                acted = RimKataVerbUtility.FireSingleShot(actionVerb, target, pawn.pather?.MovingNow == true, false, true, false, false, RimKataCloseDefensePrecheck.None, interceptedProjectile);
-            }
-            else if (cycle.plannedCloseAttack)
-            {
-                bool rangedHit = RimKataCombatMath.RollCloseRangedNonMiss(pawn, actionVerb, target);
+            RimKataNativeAttack attack = cycle.nativeAttack ??= new RimKataNativeAttack();
+            attack.pawn = pawn;
+            attack.state = state;
+            attack.cycle = cycle;
+            attack.weapon = cycle.weapon;
+            attack.verb = actionVerb;
+            attack.cycleVerb = verb;
+            attack.job = pawn.CurJob;
+            attack.assignedTarget = assignedTarget;
+            attack.firedTarget = cycle.plannedTarget;
+            attack.target = target;
+            attack.playerForced = playerForced;
+            attack.killIncappedTarget = killIncappedTarget;
+            attack.closeCombatContext = closeCombatContext;
+            attack.allowAutomaticRangedFire = allowAutomaticRangedFire;
+            attack.randomAttackEnabled = randomAttackEnabled;
+            attack.firedFromVanillaOpening = firedFromVanillaOpening;
+            attack.movingShot = !actionVerb.IsMeleeAttack && !cycle.plannedCloseAttack
+                && pawn.pather?.MovingNow == true;
+            attack.closeShot = !actionVerb.IsMeleeAttack && cycle.plannedCloseAttack;
+            attack.interceptionShot = cycle.plannedInterception;
+            attack.interceptionTarget = cycle.plannedTarget as Projectile;
+            attack.closeMeleeResolution = attack.closeShot;
+            attack.closeMeleeHit = false;
+            attack.closeDefensePrecheck = RimKataCloseDefensePrecheck.None;
 
-                RimKataCloseDefensePrecheck precheck = RimKataDefenseUtility.PrecheckCloseGunfire(pawn, cycle.plannedTarget, actionVerb, rangedHit);
+            // The actual Verb is executed by its native equipment/body owner.
+            // A busy shared physical Verb is retried without discarding this plan.
+            if (cycle.weapon != attack.weapon || !attack.Queue())
+                attack.ClearCompletedReferences();
+            return;
+        }
 
-                bool accidentalShot = precheck == RimKataCloseDefensePrecheck.ResponseSucceededWithAccidentalShot;
+        internal static bool NativeAttackStillAllowed(RimKataNativeAttack attack)
+        {
+            return !attack.cycle.ResponseCooldownAppliedThisTick
+                && !MovementBlocksFire(attack.pawn, attack.state)
+                && !ShouldPauseFireForDodge(attack.pawn)
+                && !StanceBlocksRimKata(attack.pawn);
+        }
 
-                acted =
-                    precheck
-                        == RimKataCloseDefensePrecheck.ResponseSucceeded
-                    || RimKataVerbUtility.FireSingleShot(
-                        actionVerb,
-                        target,
-                        false,
-                        true,
-                        false,
-                        true,
-                        accidentalShot
-                            ? false
-                            : rangedHit,
-                        precheck);
-            }
-            else
+        internal static void CompleteNativeAttack(RimKataNativeAttack attack, bool acted, bool cancelled)
+        {
+            CycleVerbAvailability availability = default;
+            FinishCycleAction(attack, acted, cancelled, out Thing promoted, ref availability);
+            Pawn pawn = attack.pawn;
+            RimKataPawnCombatState state = attack.state;
+            if (promoted != null && pawn.CurJob == attack.job)
             {
-                acted = RimKataVerbUtility.FireSingleShot(actionVerb, target, pawn.pather?.MovingNow == true, false);
+                TryPromoteAutomaticJobTarget(
+                    pawn, state, attack.assignedTarget, attack.playerForced,
+                    attack.cycle == state.primaryWeaponCycle ? promoted : null,
+                    attack.cycle == state.secondaryWeaponCycle ? promoted : null,
+                    attack.randomAttackEnabled, out Thing _);
             }
+        }
 
+        private static void FinishCycleAction(
+            RimKataNativeAttack attack, bool acted, bool cancelled,
+            out Thing promotedAutomaticTarget, ref CycleVerbAvailability availability)
+        {
+            promotedAutomaticTarget = null;
+            Pawn pawn = attack.pawn;
+            RimKataPawnCombatState state = attack.state;
+            RimKataWeaponCycleState cycle = attack.cycle;
+            Verb verb = attack.cycleVerb;
+            Verb actionVerb = attack.verb;
+            ThingWithComps firedWeapon = attack.weapon;
+            Thing assignedTarget = attack.assignedTarget;
+            bool playerForced = attack.playerForced;
+            bool killIncappedTarget = attack.killIncappedTarget;
+            bool closeCombatContext = attack.closeCombatContext;
+            bool allowAutomaticRangedFire = attack.allowAutomaticRangedFire;
+            bool randomAttackEnabled = attack.randomAttackEnabled;
+            bool firedFromVanillaOpening = attack.firedFromVanillaOpening;
+            bool requestAutomaticRefill = allowAutomaticRangedFire && !closeCombatContext && randomAttackEnabled;
+            if (cycle.weapon != firedWeapon) return;
             // A shot or defense response can change targets, equipment and availability.
             availability = default;
             if (state.weaponBindingsDirty
@@ -6299,6 +6258,7 @@ namespace KRWF.RimKata
                 return;
             }
 
+            cycle.StampNativeActionTick();
             cycle.cooldownFromVanillaOpening = firedFromVanillaOpening;
 
             cycle.firedInCurrentOpening = firedFromVanillaOpening;
@@ -6312,10 +6272,14 @@ namespace KRWF.RimKata
             cycle.openingWarmupBonusTicks = 0;
             cycle.openingWarmupPending = false;
 
-            bool useFullBurst = RimKataMod.Settings?.singleShotConversionEnabled == false && !actionVerb.IsMeleeAttack;
+            bool keepActionOwnership = !cancelled && pawn.CurJob == attack.job
+                && !pawn.Dead && !pawn.Downed && pawn.Spawned && !pawn.InMentalState
+                && cycle.plannedTarget == attack.firedTarget;
+            bool useFullBurst = keepActionOwnership
+                && RimKataMod.Settings?.singleShotConversionEnabled == false && !actionVerb.IsMeleeAttack;
             if (useFullBurst && cycle.burstShotsRemaining <= 0)
             {
-                cycle.burstShotsRemaining = Mathf.Max(1, actionVerb.BurstShotCount);
+                cycle.burstShotsRemaining = RimKataPreparedWeaponData.GetOriginalBurstCount(actionVerb);
             }
 
             if (cycle.burstShotsRemaining > 0)
@@ -6325,13 +6289,13 @@ namespace KRWF.RimKata
 
             if (useFullBurst && cycle.burstShotsRemaining > 0)
             {
-                cycle.burstTicksUntilNextShot = Mathf.Max(1, actionVerb.TicksBetweenBurstShots);
-                cycle.visualTarget = cycle.plannedTarget;
+                cycle.burstTicksUntilNextShot = Mathf.Max(1, RimKataPreparedWeaponData.GetOriginalBurstSpacing(actionVerb));
+                cycle.visualTarget = attack.firedTarget;
                 cycle.visualAimTicksRemaining = Mathf.Max(cycle.visualAimTicksRemaining, cycle.burstTicksUntilNextShot);
                 return;
             }
 
-            Thing firedTarget = cycle.plannedTarget;
+            Thing firedTarget = attack.firedTarget;
             int cooldown = RimKataCombatMath.CooldownTicksForSingleShot(actionVerb, pawn, false);
             cycle.cooldownTicksRemaining = cooldown;
             cycle.lastFiredTarget = firedTarget;
@@ -6339,7 +6303,8 @@ namespace KRWF.RimKata
             cycle.visualAimTicksRemaining = cooldown;
             cycle.ClearPlan();
 
-            if (!allowAutomaticContinuation)
+            if (!allowAutomaticContinuation || cancelled || pawn.CurJob != attack.job
+                || pawn.Dead || pawn.Downed || !pawn.Spawned || pawn.InMentalState)
             {
                 cycle.cachedCandidateTarget = null;
                 cycle.cachedCandidateInterception = false;
@@ -7490,6 +7455,11 @@ namespace KRWF.RimKata
             out RimKataVanillaOpeningAttempt __state)
         {
             __state = default(RimKataVanillaOpeningAttempt);
+            if (RimKataNativeAttack.WaitingForNativeTick(__instance))
+            {
+                __result = false;
+                return false;
+            }
             if (RimKataDualWeaponController.ShouldSuppressVanillaCast(
                 __instance?.CasterPawn,
                 __instance,
@@ -7499,11 +7469,15 @@ namespace KRWF.RimKata
                 return false;
             }
 
+            // Native-only attacks must not inherit a former owner's conversion.
+            // A qualified entry below binds the prepared data again as needed.
+            RimKataPreparedWeaponData.Restore(__instance);
+
             __state = RimKataDualWeaponController.PrepareVanillaOpening(
                 __instance?.CasterPawn,
                 __instance,
                 __0);
-            RimKataDualWeaponController.PrepareVanillaSingleShotTiming(
+            RimKataDualWeaponController.PrepareVanillaShotData(
                 __instance?.CasterPawn,
                 __instance,
                 __0,
@@ -7520,10 +7494,6 @@ namespace KRWF.RimKata
             {
                 if (__result)
                 {
-                    RimKataDualWeaponController.ApplyVanillaSingleShotWarmup(
-                        __instance?.CasterPawn,
-                        __instance,
-                        __state);
                     if (__state.prepared)
                     {
                         RimKataDualWeaponController.CommitVanillaOpening(

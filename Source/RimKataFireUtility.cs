@@ -56,75 +56,6 @@ namespace KRWF.RimKata
         }
     }
 
-    public struct RimKataVanillaSingleShotContextState
-    {
-        internal bool pushed;
-        internal Verb previousVerb;
-        internal int previousOriginalBurstCount;
-        internal int previousDepth;
-    }
-
-    public static class RimKataVanillaSingleShotContext
-    {
-        [ThreadStatic] private static Verb activeVerb;
-        [ThreadStatic] private static int originalBurstCount;
-        [ThreadStatic] private static int depth;
-
-        public static bool ActiveFor(Verb verb)
-        {
-            return depth > 0 && verb != null && activeVerb == verb;
-        }
-
-        public static RimKataVanillaSingleShotContextState Push(Verb verb)
-        {
-            int nextOriginalBurstCount = ActiveFor(verb)
-                ? originalBurstCount
-                : Mathf.Max(1, verb?.BurstShotCount ?? 1);
-            RimKataVanillaSingleShotContextState state =
-                new RimKataVanillaSingleShotContextState
-                {
-                    pushed = verb != null,
-                    previousVerb = activeVerb,
-                    previousOriginalBurstCount = originalBurstCount,
-                    previousDepth = depth
-                };
-            if (verb != null)
-            {
-                activeVerb = verb;
-                originalBurstCount = nextOriginalBurstCount;
-                depth++;
-            }
-
-            return state;
-        }
-
-        public static void Pop(RimKataVanillaSingleShotContextState state)
-        {
-            if (!state.pushed)
-            {
-                return;
-            }
-
-            activeVerb = state.previousVerb;
-            originalBurstCount = state.previousOriginalBurstCount;
-            depth = state.previousDepth;
-        }
-
-        internal static bool TryGetOriginalBurstCount(
-            Verb verb,
-            out int burstCount)
-        {
-            if (ActiveFor(verb))
-            {
-                burstCount = Mathf.Max(1, originalBurstCount);
-                return true;
-            }
-
-            burstCount = 1;
-            return false;
-        }
-    }
-
     public enum RimKataCloseDefensePrecheck
     {
         None,
@@ -203,7 +134,6 @@ namespace KRWF.RimKata
             private float movingAccuracyMultiplier;
             private float interceptionAccuracyBonusMultiplier;
             private float serumInterceptionMultiplier;
-            private int originalBurstCount;
             private bool shotFired;
             private bool suppressCloseLaunch;
             private RimKataCloseDefensePrecheck closeDefensePrecheck;
@@ -224,7 +154,6 @@ namespace KRWF.RimKata
                     movingAccuracyMultiplier = MovingAccuracyMultiplier,
                     interceptionAccuracyBonusMultiplier = InterceptionAccuracyBonusMultiplier,
                     serumInterceptionMultiplier = SerumInterceptionMultiplier,
-                    originalBurstCount = OriginalBurstCount,
                     shotFired = ShotFired,
                     suppressCloseLaunch = SuppressCloseLaunch,
                     closeDefensePrecheck = CloseDefensePrecheck,
@@ -245,7 +174,6 @@ namespace KRWF.RimKata
                 MovingAccuracyMultiplier = movingAccuracyMultiplier;
                 InterceptionAccuracyBonusMultiplier = interceptionAccuracyBonusMultiplier;
                 SerumInterceptionMultiplier = serumInterceptionMultiplier;
-                OriginalBurstCount = originalBurstCount;
                 ShotFired = shotFired;
                 SuppressCloseLaunch = suppressCloseLaunch;
                 CloseDefensePrecheck = closeDefensePrecheck;
@@ -264,7 +192,6 @@ namespace KRWF.RimKata
         [ThreadStatic] public static float MovingAccuracyMultiplier;
         [ThreadStatic] public static float InterceptionAccuracyBonusMultiplier;
         [ThreadStatic] public static float SerumInterceptionMultiplier;
-        [ThreadStatic] public static int OriginalBurstCount;
         [ThreadStatic] public static bool ShotFired;
         [ThreadStatic] public static bool SuppressCloseLaunch;
         [ThreadStatic] public static RimKataCloseDefensePrecheck CloseDefensePrecheck;
@@ -293,11 +220,7 @@ namespace KRWF.RimKata
                 && RimKataSerumUtility.IsMindNumbed(shooter)
                     ? settings.GetSerumInterceptionMultiplier(shooter)
                     : 1f;
-            int nextOriginalBurstCount = ActiveVerb == verb
-                ? OriginalBurstCount
-                : Mathf.Max(1, verb?.BurstShotCount ?? 1);
             ScopeState previous = ScopeState.Capture();
-            OriginalBurstCount = Mathf.Max(1, nextOriginalBurstCount);
             ActiveVerb = verb;
             Shooter = shooter;
             CloseTarget = closeTarget;
@@ -394,12 +317,6 @@ namespace KRWF.RimKata
             Verb verb,
             LocalTargetInfo target);
 
-        private static readonly FieldInfo CurrentTargetField = AccessTools.Field(typeof(Verb), "currentTarget");
-        private static readonly FieldInfo CurrentDestinationField = AccessTools.Field(typeof(Verb), "currentDestination");
-        private static readonly FieldInfo SurpriseAttackField = AccessTools.Field(typeof(Verb), "surpriseAttack");
-        private static readonly FieldInfo CanHitNonTargetPawnsField = AccessTools.Field(typeof(Verb), "canHitNonTargetPawnsNow");
-        private static readonly FieldInfo PreventFriendlyFireField = AccessTools.Field(typeof(Verb), "preventFriendlyFire");
-        private static readonly FieldInfo NonInterruptingSelfCastField = AccessTools.Field(typeof(Verb), "nonInterruptingSelfCast");
         private static readonly CausesTimeSlowdownDelegate CausesTimeSlowdown =
             ResolveCausesTimeSlowdown();
         private static TickManager lastNormalSpeedSignalManager;
@@ -467,134 +384,6 @@ namespace KRWF.RimKata
             lastNormalSpeedSignalTick = tickManager.TicksGame;
         }
 
-        public static bool FireSingleShot(
-            Verb verb,
-            LocalTargetInfo target,
-            bool movingShot,
-            bool closeShot,
-            bool interceptionShot = false,
-            bool closeMeleeResolution = false,
-            bool closeMeleeHit = false,
-            RimKataCloseDefensePrecheck closeDefensePrecheck = RimKataCloseDefensePrecheck.None,
-            Projectile interceptionTarget = null)
-        {
-            Pawn pawn = verb?.CasterPawn;
-            bool available = verb != null
-                && (closeShot && !verb.IsMeleeAttack
-                    ? RimKataEligibility.IsRangedVerbAvailableInCloseCombat(pawn, verb)
-                    : verb.Available());
-            if (pawn == null || !pawn.Spawned || !target.IsValid || !available)
-            {
-                return false;
-            }
-
-            if (!closeShot && !verb.CanHitTarget(target))
-            {
-                return false;
-            }
-
-            if (verb.state != VerbState.Idle)
-            {
-                return false;
-            }
-
-            object oldCurrentTarget = CurrentTargetField.GetValue(verb);
-            object oldCurrentDestination = CurrentDestinationField.GetValue(verb);
-            object oldSurpriseAttack = SurpriseAttackField.GetValue(verb);
-            object oldCanHitNonTargetPawns = CanHitNonTargetPawnsField.GetValue(verb);
-            object oldPreventFriendlyFire = PreventFriendlyFireField.GetValue(verb);
-            object oldNonInterruptingSelfCast = NonInterruptingSelfCastField.GetValue(verb);
-            Stance_RimKataAim aimBeforeShot =
-                pawn.stances?.curStance as Stance_RimKataAim;
-
-            LocalTargetInfo castTarget = target;
-            if (closeShot
-                && closeMeleeResolution
-                && !closeMeleeHit
-                && !(verb is Verb_LaunchProjectile)
-                && target.HasThing)
-            {
-                IntVec3 missCell = RimKataProjectileUtility.FindCloseMissCell(pawn, target.Thing, pawn.Map);
-                if (missCell.IsValid)
-                {
-                    castTarget = new LocalTargetInfo(missCell);
-                }
-            }
-
-            pawn.rotationTracker.FaceCell(castTarget.Cell);
-            verb.Reset();
-            CurrentTargetField.SetValue(verb, castTarget);
-            CurrentDestinationField.SetValue(verb, LocalTargetInfo.Invalid);
-            SurpriseAttackField.SetValue(verb, false);
-            CanHitNonTargetPawnsField.SetValue(verb, true);
-            PreventFriendlyFireField.SetValue(verb, false);
-            NonInterruptingSelfCastField.SetValue(verb, true);
-
-            RimKataFireContext.ScopeState fireContext =
-                RimKataFireContext.Begin(
-                    verb,
-                    pawn,
-                    closeShot ? target.Thing : null,
-                    movingShot,
-                    closeShot,
-                    interceptionShot,
-                    interceptionTarget,
-                    closeMeleeResolution,
-                    closeMeleeHit,
-                    closeDefensePrecheck);
-            try
-            {
-                verb.WarmupComplete();
-                return RimKataFireContext.ShotFired;
-            }
-            catch (Exception exception)
-            {
-                Log.Error("[RimKata] Failed to fire a single shot: " + exception);
-                return false;
-            }
-            finally
-            {
-                Stance_Busy ownedBusy = pawn.stances?.curStance as Stance_Busy;
-                if (ownedBusy?.verb != verb)
-                {
-                    ownedBusy = null;
-                }
-
-                verb.Reset();
-                CurrentTargetField.SetValue(verb, oldCurrentTarget);
-                CurrentDestinationField.SetValue(verb, oldCurrentDestination);
-                SurpriseAttackField.SetValue(verb, oldSurpriseAttack);
-                CanHitNonTargetPawnsField.SetValue(verb, oldCanHitNonTargetPawns);
-                PreventFriendlyFireField.SetValue(verb, oldPreventFriendlyFire);
-                NonInterruptingSelfCastField.SetValue(verb, oldNonInterruptingSelfCast);
-
-                RimKataFireContext.End(verb, fireContext);
-
-                if (ownedBusy != null
-                    && pawn.stances?.curStance == ownedBusy)
-                {
-                    if (aimBeforeShot != null)
-                    {
-                        // Restore the existing aim without publishing an intermediate
-                        // stance change. The shared pass reconciles aim after both shots.
-                        pawn.stances.curStance = aimBeforeShot;
-                    }
-                    else
-                    {
-                        RimKataAutomaticCastSuppressionState suppression =
-                            RimKataAutomaticCastSuppression.Push(pawn);
-                        try
-                        {
-                            pawn.stances.SetStance(new Stance_Mobile());
-                        }
-                        finally
-                        {
-                            RimKataAutomaticCastSuppression.Pop(suppression);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     public static class RimKataProjectileUtility
@@ -826,22 +615,18 @@ namespace KRWF.RimKata
         }
     }
 
-    [HarmonyPatch(typeof(Verb), nameof(Verb.BurstShotCount), MethodType.Getter)]
-    public static class Patch_Verb_BurstShotCount_RimKata
+    internal struct RimKataNativeCastScope
     {
-        public static void Postfix(Verb __instance, ref int __result)
-        {
-            if (RimKataFireContext.ActiveVerb == __instance
-                || RimKataVanillaSingleShotContext.ActiveFor(__instance))
-            {
-                __result = 1;
-            }
-        }
+        internal RimKataNativeAttack request;
+        internal bool convertedOpening;
+        internal bool ownsWarmup;
+        internal Verb previousWarmup;
     }
 
     [HarmonyPatch]
     public static class Patch_Verb_WarmupComplete_RimKataOpeningSingleShot
     {
+        [ThreadStatic] private static Verb activeWarmup;
         public static IEnumerable<MethodBase> TargetMethods()
         {
             HashSet<MethodBase> methods = new HashSet<MethodBase>();
@@ -891,45 +676,48 @@ namespace KRWF.RimKata
             }
         }
 
-        public static void Prefix(
+        internal static void Prefix(
             Verb __instance,
-            out RimKataVanillaSingleShotContextState __state)
+            out RimKataNativeCastScope __state)
         {
-            __state = default(RimKataVanillaSingleShotContextState);
-            if (RimKataDualWeaponController
-                .ShouldConvertVanillaOpeningToSingleShot(__instance))
-            {
-                __state = RimKataVanillaSingleShotContext.Push(__instance);
-            }
-        }
-
-        public static void Postfix(
-            Verb __instance,
-            RimKataVanillaSingleShotContextState __state)
-        {
-            Pawn pawn = __instance?.CasterPawn;
-            if (!__state.pushed
-                || pawn?.stances?.curStance is not Stance_Cooldown cooldown
-                || cooldown.verb != __instance
-                || !RimKataVanillaSingleShotContext.TryGetOriginalBurstCount(
-                    __instance,
-                    out int originalBurstCount))
-            {
+            __state = default;
+            if (activeWarmup == __instance) return;
+            __state.ownsWarmup = true;
+            __state.previousWarmup = activeWarmup;
+            activeWarmup = __instance;
+            __state.request = RimKataNativeAttack.BeginNativeCast(__instance);
+            if (__state.request != null || RimKataFireContext.ActiveVerb == __instance)
                 return;
+            if (RimKataDualWeaponController.ShouldConvertVanillaOpeningToSingleShot(__instance))
+            {
+                RimKataPreparedWeaponData.Bind(__instance);
+                __state.convertedOpening = true;
             }
-
-            cooldown.ticksLeft = RimKataCombatMath.CooldownTicksForSingleShot(
-                __instance,
-                pawn,
-                false,
-                originalBurstCount);
         }
 
-        public static Exception Finalizer(
-            Exception __exception,
-            RimKataVanillaSingleShotContextState __state)
+        internal static void Postfix(Verb __instance, RimKataNativeCastScope __state)
         {
-            RimKataVanillaSingleShotContext.Pop(__state);
+            if (__state.convertedOpening
+                && __instance.CasterPawn?.stances?.curStance is Stance_Cooldown cooldown
+                && cooldown.verb == __instance)
+            {
+                cooldown.ticksLeft = RimKataCombatMath.CooldownTicksForSingleShot(
+                    __instance, __instance.CasterPawn, false);
+            }
+        }
+
+        internal static Exception Finalizer(
+            Verb __instance, Exception __exception, RimKataNativeCastScope __state)
+        {
+            try
+            {
+                if (__state.request != null)
+                    __state.request.FinishNativeCast(__exception);
+            }
+            finally
+            {
+                if (__state.ownsWarmup) activeWarmup = __state.previousWarmup;
+            }
             return __exception;
         }
     }
@@ -939,24 +727,7 @@ namespace KRWF.RimKata
     {
         public static void Postfix(Verb ownerVerb, ref float __result)
         {
-            int burstCount;
-            if (RimKataFireContext.ActiveVerb == ownerVerb)
-            {
-                burstCount = RimKataFireContext.OriginalBurstCount;
-            }
-            else if (!RimKataVanillaSingleShotContext
-                .TryGetOriginalBurstCount(ownerVerb, out burstCount))
-            {
-                return;
-            }
-
-            if (burstCount <= 1)
-            {
-                return;
-            }
-
-            float originalBurstSpacing = (burstCount - 1) * ownerVerb.TicksBetweenBurstShots / 60f;
-            __result = (__result + originalBurstSpacing) / burstCount;
+            RimKataPreparedWeaponData.AdjustShootingExperienceCycleTime(ownerVerb, ref __result);
         }
     }
 

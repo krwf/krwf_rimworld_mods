@@ -2,6 +2,7 @@
 // the game to remove every probe. No gameplay source, settings or save field
 // depends on this file. Drafted timings describe qualified JobTracker trees;
 // SearchProbe windows also cover collection and buffer work outside those trees.
+// NativeFireProbe measures handed-off native execution independently of drafted totals.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -46,7 +47,7 @@ namespace KRWF.RimKata
         internal enum Part
         {
             Entry, Prepare, Cycle, NestedJob, Close, Normalize, Search, SearchCollect, SearchBuffer,
-            Select, Reserve, Slot, Fire, CloseHit, Continuity, Aim, BattleLog,
+            Select, Reserve, Slot, Dispatch, CloseHit, Continuity, Aim, BattleLog,
             Available, CanHit, FireContext, ShotPrepare, Warmup, Burst, Cast,
             Sound, Stance, AutoAttack, DirectHit, MeleeDamage, Damage, DamageLog,
             Clamor, Stagger, ExtraDamage, ProjectilePlace, ProjectileImpact, DefenseNotify,
@@ -233,6 +234,7 @@ namespace KRWF.RimKata
         internal static void Reset()
         {
             RimKataSearchProbe.Reset();
+            RimKataNativeFireProbe.Reset();
             generation++;
             depth = 0;
             detailDepth = 0;
@@ -257,6 +259,7 @@ namespace KRWF.RimKata
                 game = Current.Game;
             }
             RimKataSearchProbe.BeginFrame();
+            RimKataNativeFireProbe.BeginFrame();
             int number = Time.frameCount;
             if (frame.number == number)
             {
@@ -322,7 +325,7 @@ namespace KRWF.RimKata
             return scope;
         }
 
-        internal static Scope EnterFire(MethodBase method, Verb verb, LocalTargetInfo target,
+        internal static Scope EnterDispatch(MethodBase method, Verb verb, LocalTargetInfo target,
             bool moving, bool close, bool interception)
         {
             if (depth == 0)
@@ -332,7 +335,7 @@ namespace KRWF.RimKata
             frame.shots++;
             if (close) frame.closeShots++;
             if (interception) frame.interceptionShots++;
-            Scope scope = Push(Part.Fire);
+            Scope scope = Push(Part.Dispatch);
             if (scope.depth != 0)
             {
                 Thing weapon = verb?.EquipmentSource;
@@ -485,7 +488,7 @@ namespace KRWF.RimKata
         }
 
         private static bool OpensDetail(Part part)
-            => part == Part.Fire || part == Part.CloseHit || part == Part.Aim;
+            => part == Part.Dispatch || part == Part.CloseHit || part == Part.Aim;
 
         private static Scope Push(Part part)
         {
@@ -642,7 +645,7 @@ namespace KRWF.RimKata
             }
         }
 
-        internal static void CountFired(bool result)
+        internal static void CountQueued(bool result)
         {
             if (depth > 0 && result) frame.fired++;
         }
@@ -691,7 +694,7 @@ namespace KRWF.RimKata
         private static void Report()
         {
             var text = new StringBuilder(3800);
-            text.Append(Prefix).Append("version=8 occupancy=removed replay=removed frame=").Append(peak.number)
+            text.Append(Prefix).Append("version=9 occupancy=removed replay=removed native_execution=separate frame=").Append(peak.number)
                 .Append(" ticks=").Append(peak.firstTick).Append("..").Append(peak.lastTick)
                 .Append(" frame_ms=").Append(Ms(peak.total))
                 .Append(" root_calls=").Append(peak.rootCalls)
@@ -712,7 +715,7 @@ namespace KRWF.RimKata
             }
             text.Append("} inclusive_ms{Cycle=").Append(Ms(peak.inclusive[(int)Part.Cycle]))
                 .Append(",Slot=").Append(Ms(peak.inclusive[(int)Part.Slot]))
-                .Append(",Fire=").Append(Ms(peak.inclusive[(int)Part.Fire]))
+                .Append(",Dispatch=").Append(Ms(peak.inclusive[(int)Part.Dispatch]))
                 .Append(",CloseHit=").Append(Ms(peak.inclusive[(int)Part.CloseHit]))
                 .Append(",Warmup=").Append(Ms(peak.inclusive[(int)Part.Warmup]))
                 .Append(",Cast=").Append(Ms(peak.inclusive[(int)Part.Cast]))
@@ -730,7 +733,7 @@ namespace KRWF.RimKata
                 .Append("} checks=").Append(peak.checks)
                 .Append(" rejected=").Append(peak.rejected).Append(" removed=").Append(peak.removed)
                 .Append(" search_start/advance=").Append(peak.searchStarts).Append('/').Append(peak.searchSteps)
-                .Append(" shot_attempt/fired/close/intercept=").Append(peak.shots).Append('/')
+                .Append(" dispatch_attempt/queued/close/intercept=").Append(peak.shots).Append('/')
                 .Append(peak.fired).Append('/').Append(peak.closeShots).Append('/').Append(peak.interceptionShots)
                 .Append(" gc_frame=").Append(peak.gc0).Append('/').Append(peak.gc1).Append('/').Append(peak.gc2)
                 .Append(" errors=").Append(peak.errors);
@@ -794,7 +797,7 @@ namespace KRWF.RimKata
         {
             FrameData sample = deathSampleFrame;
             var text = new StringBuilder(4000);
-            text.Append("[RimKata.DraftedFireProbe.Death] version=8 occupancy=removed replay=removed frame=")
+            text.Append("[RimKata.DraftedFireProbe.Death] version=9 occupancy=removed replay=removed native_execution=separate frame=")
                 .Append(sample.number).Append(" ticks=").Append(sample.firstTick)
                 .Append("..").Append(sample.lastTick)
                 .Append(" sampled_frame_ms=").Append(Ms(sample.total))
@@ -891,11 +894,11 @@ namespace KRWF.RimKata
                 Add(typeof(RimKataSharedTargetSearch), "ProcessNextBufferedCandidate", 7, Part.SearchBuffer);
                 Add(typeof(RimKataSharedTargetSearch), "TrySelectCandidate", 10, Part.Select);
                 Add(controller, "TryCacheSharedCandidate", 7, Part.Reserve);
-                Add(controller, "TickWeaponCycle", 15, Part.Slot);
+                Add(controller, "TickWeaponCycle", 14, Part.Slot);
                 Add(controller, "RefreshDualEngagementState", 3, Part.Continuity);
                 Add(controller, "UpdateBodyAimStance", 2, Part.Aim);
                 Add(typeof(Battle), "Add", 1, Part.BattleLog);
-                // Deep native hooks only open clocks inside Fire, CloseHit or Aim.
+                // Deep native hooks only open clocks inside Dispatch, CloseHit or Aim.
                 // Include inherited melee paths as well as projectile overrides.
                 Add(typeof(Verb), "Available", 0, Part.Available);
                 Add(typeof(Verb_LaunchProjectile), "Available", 0, Part.Available);
@@ -996,11 +999,12 @@ namespace KRWF.RimKata
                 Add(thoughts, "GetSocialThoughts", 3, Part.SocialGroupFilter);
                 Add(thoughts, "GetDistinctSocialThoughtGroups", 2, Part.SocialGroups);
                 Add(thoughts, "OpinionOffsetOfGroup", 2, Part.GroupOpinion);
-                Log.Message(Prefix + "enabled version=8; occupancy=removed replay=removed; qualified ProcessJobTrackerTick trees only; "
+                Log.Message(Prefix + "enabled version=9; occupancy=removed replay=removed; qualified ProcessJobTrackerTick trees only; "
                     + "frame threshold=1.000ms; self_ms entries are exclusive ms/calls; "
                     + "inclusive_ms entries overlap; window averages use active sampled frames; "
                     + "outside JobDriver work excluded, synchronous nested Job work included; "
-                    + "deep scopes only inside Fire/CloseHit/Aim; detail_self_ms is the worst single exclusive call; "
+                    + "Dispatch measures request setup only; queued does not mean fired; native execution uses separate NativeFireProbe rows; "
+                    + "deep scopes only inside Dispatch/CloseHit/Aim; detail_self_ms is the worst single exclusive call; "
                     + "active_shot_id is frame-local, zero means outside a shot; shot_target_id is the shot target, "
                     + "not an asserted damage recipient; nested same-category inclusive times overlap too; "
                     + "damage_id is frame-local; damage_incoming_def/amount are the original input before mitigation; "
@@ -1168,14 +1172,14 @@ namespace KRWF.RimKata
             => RimKataPerformanceProbe.Exit(__state, __exception != null);
     }
 
-    [HarmonyPatch(typeof(RimKataVerbUtility), nameof(RimKataVerbUtility.FireSingleShot))]
+    [HarmonyPatch(typeof(RimKataNativeAttack), nameof(RimKataNativeAttack.Queue))]
     internal static class RimKataProbeFirePatch
     {
-        private static void Prefix(MethodBase __originalMethod, Verb verb, LocalTargetInfo target,
-            bool movingShot, bool closeShot, bool interceptionShot, out RimKataPerformanceProbe.Scope __state)
-            => __state = RimKataPerformanceProbe.EnterFire(__originalMethod, verb, target,
-                movingShot, closeShot, interceptionShot);
-        private static void Postfix(bool __result) => RimKataPerformanceProbe.CountFired(__result);
+        private static void Prefix(MethodBase __originalMethod, RimKataNativeAttack __instance,
+            out RimKataPerformanceProbe.Scope __state)
+            => __state = RimKataPerformanceProbe.EnterDispatch(__originalMethod, __instance.verb,
+                __instance.target, __instance.movingShot, __instance.closeShot, __instance.interceptionShot);
+        private static void Postfix(bool __result) => RimKataPerformanceProbe.CountQueued(__result);
         private static void Finalizer(RimKataPerformanceProbe.Scope __state, Exception __exception)
             => RimKataPerformanceProbe.Exit(__state, __exception != null);
     }
@@ -1204,6 +1208,7 @@ namespace KRWF.RimKata
         {
             RimKataPerformanceProbe.CompleteFrame();
             RimKataSearchProbe.CompleteFrame();
+            RimKataNativeFireProbe.CompleteFrame();
         }
     }
 
@@ -1214,6 +1219,140 @@ namespace KRWF.RimKata
         {
             if (!ReferenceEquals(Current.Game, __0)) RimKataPerformanceProbe.Reset();
         }
+    }
+
+    // The native owner executes outside JobTracker. Keep that duration in a
+    // separate window, never in the drafted frame accumulator or timing stack.
+    internal static class RimKataNativeFireProbe
+    {
+        private static readonly double TickToMs = 1000.0 / Stopwatch.Frequency;
+        private static int generation, frames, activeFrames, calls, acted, errors;
+        private static int lastFrame = -1, lastActiveFrame = -1, firstTick = -1, lastTick = -1;
+        private static long windowStart, elapsed, maximum;
+        private static Timer maximumContext;
+        [ThreadStatic] private static bool measuring;
+
+        internal struct Timer
+        {
+            internal bool entered;
+            internal int generation, tick, pawnId, targetId, weaponId;
+            internal long start;
+            internal string weaponDef;
+            internal MethodBase method;
+        }
+
+        internal static void Reset()
+        {
+            generation++;
+            measuring = false;
+            ClearWindow();
+        }
+
+        private static void ClearWindow()
+        {
+            frames = activeFrames = calls = acted = errors = 0;
+            lastFrame = lastActiveFrame = firstTick = lastTick = -1;
+            windowStart = elapsed = maximum = 0;
+            maximumContext = default;
+        }
+
+        internal static void BeginFrame()
+        {
+            if (Current.Game == null) return;
+            if (windowStart == 0) windowStart = Stopwatch.GetTimestamp();
+            int number = Time.frameCount;
+            if (lastFrame == number) return;
+            lastFrame = number;
+            frames++;
+        }
+
+        internal static Timer Enter(MethodBase method, Verb verb)
+        {
+            // Only an actual queued native cast opens FireContext. Inherited
+            // WarmupComplete calls remain inside the one outer execution sample.
+            if (measuring || RimKataFireContext.ActiveVerb != verb || Current.Game == null)
+                return default;
+            BeginFrame();
+            measuring = true;
+            int tick = Find.TickManager?.TicksGame ?? -1;
+            if (firstTick < 0) firstTick = tick;
+            lastTick = tick;
+            if (lastActiveFrame != Time.frameCount)
+            {
+                lastActiveFrame = Time.frameCount;
+                activeFrames++;
+            }
+            Thing weapon = verb.EquipmentSource;
+            Timer timer = new Timer
+            {
+                entered = true,
+                generation = generation,
+                tick = tick,
+                pawnId = verb.CasterPawn?.thingIDNumber ?? 0,
+                targetId = verb.CurrentTarget.Thing?.thingIDNumber ?? 0,
+                weaponId = weapon?.thingIDNumber ?? 0,
+                weaponDef = weapon?.def?.defName,
+                method = method
+            };
+            timer.start = Stopwatch.GetTimestamp();
+            return timer;
+        }
+
+        internal static void Exit(Timer timer, bool failed)
+        {
+            if (!timer.entered || timer.generation != generation) return;
+            long duration = Math.Max(0, Stopwatch.GetTimestamp() - timer.start);
+            measuring = false;
+            calls++;
+            elapsed += duration;
+            if (failed) errors++;
+            else if (RimKataFireContext.ShotFired) acted++;
+            if (duration > maximum)
+            {
+                maximum = duration;
+                maximumContext = timer;
+            }
+        }
+
+        internal static void CompleteFrame()
+        {
+            if (measuring || windowStart == 0 || Current.Game == null) return;
+            if (Stopwatch.GetTimestamp() - windowStart < Stopwatch.Frequency) return;
+            if (calls > 0)
+            {
+                string Ms(double ticks) => (ticks * TickToMs).ToString("F3", CultureInfo.InvariantCulture);
+                Timer context = maximumContext;
+                Log.Message("[RimKata.NativeFireProbe] version=1 owner=VerbTick scope=outer_WarmupComplete "
+                    + "included_in_drafted_total=0 context_setup_and_completion=excluded ticks=" + firstTick + ".." + lastTick
+                    + " frames=" + frames + " active_frames=" + activeFrames
+                    + " total_ms=" + Ms(elapsed) + " avg_frame_ms=" + Ms(elapsed / (double)Math.Max(1, frames))
+                    + " avg_active_frame_ms=" + Ms(elapsed / (double)Math.Max(1, activeFrames))
+                    + " calls=" + calls + " acted=" + acted + " errors=" + errors
+                    + " avg_call_ms=" + Ms(elapsed / (double)Math.Max(1, calls)) + " max_call_ms=" + Ms(maximum)
+                    + " max_tick=" + context.tick + " pawn_id=" + context.pawnId + " target_id=" + context.targetId
+                    + " weapon=" + context.weaponDef + "#" + context.weaponId
+                    + " method=" + context.method?.DeclaringType?.FullName + ":" + context.method?.Name);
+            }
+            ClearWindow();
+        }
+    }
+
+    [HarmonyPatch]
+    internal static class RimKataProbeNativeFirePatch
+    {
+        private static IEnumerable<MethodBase> TargetMethods()
+            => Patch_Verb_WarmupComplete_RimKataOpeningSingleShot.TargetMethods();
+
+        // Begin after the gameplay context was installed and finish before it
+        // completes the cycle. Removing this source removes the entire observer.
+        [HarmonyPriority(Priority.Last)]
+        private static void Prefix(MethodBase __originalMethod, Verb __instance,
+            out RimKataNativeFireProbe.Timer __state)
+            => __state = RimKataNativeFireProbe.Enter(__originalMethod, __instance);
+
+        [HarmonyPriority(Priority.First)]
+        private static void Finalizer(RimKataNativeFireProbe.Timer __state, Exception __exception)
+            => RimKataNativeFireProbe.Exit(__state, __exception != null);
     }
 
     // Independent windows include collection and buffer work outside JobTracker.
